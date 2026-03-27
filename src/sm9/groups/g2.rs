@@ -3,10 +3,10 @@
 //! G2 是定义在 Fp2 上的扭曲线：y² = x³ + b'，其中 b' = b/v（即 5/v）
 //! 使用 Jacobian 射影坐标，支持 Miller loop 所需的线函数计算。
 
-use crypto_bigint::U256;
+use crypto_bigint::{U256, CtGt};
 
 use crate::error::Error;
-use crate::sm9::fields::fp::{fp_to_bytes, Fp};
+use crate::sm9::fields::fp::{fp_to_bytes, Fp, FIELD_MODULUS};
 use crate::sm9::fields::fp12::LineEval;
 use crate::sm9::fields::fp2::{
     fp2_add, fp2_inv, fp2_mul, fp2_mul_u, fp2_neg, fp2_square, fp2_sub, Fp2,
@@ -259,7 +259,7 @@ impl G2Jacobian {
         let addend = *p;
         let mut started = false;
 
-        for byte in &k.to_be_bytes() {
+        for byte in k.to_be_bytes().as_ref() {
             for bit in (0..8).rev() {
                 if started {
                     result = result.double();
@@ -308,9 +308,6 @@ impl G2Affine {
         let x1: [u8; 32] = bytes[32..64].try_into().unwrap();
         let y0: [u8; 32] = bytes[64..96].try_into().unwrap();
         let y1: [u8; 32] = bytes[96..128].try_into().unwrap();
-
-        use crate::sm9::fields::fp::FIELD_MODULUS;
-        use crypto_bigint::subtle::ConstantTimeGreater;
 
         for b in [&x0, &x1, &y0, &y1] {
             let v = U256::from_be_slice(b);

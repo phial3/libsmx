@@ -13,8 +13,8 @@ use subtle::{Choice, ConditionallySelectable};
 impl ConditionallySelectable for Fp2 {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         Fp2 {
-            c0: Fp::conditional_select(&a.c0, &b.c0, choice),
-            c1: Fp::conditional_select(&a.c1, &b.c1, choice),
+            c0: ConditionallySelectable::conditional_select(&a.c0, &b.c0, choice),
+            c1: ConditionallySelectable::conditional_select(&a.c1, &b.c1, choice),
         }
     }
 }

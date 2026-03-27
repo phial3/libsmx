@@ -7,8 +7,8 @@
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crypto_bigint::{Zero, U256};
-use rand_core::RngCore;
+use crypto_bigint::U256;
+use rand_core::Rng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::Error;
@@ -47,7 +47,8 @@ pub struct EphemeralKey {
 
 impl EphemeralKey {
     /// 生成临时密钥对
-    pub fn generate<R: RngCore>(rng: &mut R) -> Self {
+    /// 生成临时密钥对
+    pub fn generate<R: Rng>(rng: &mut R) -> Self {
         loop {
             let mut r_bytes = [0u8; 32];
             rng.fill_bytes(&mut r_bytes);
@@ -74,7 +75,7 @@ impl EphemeralKey {
         let r_jac = JacobianPoint::scalar_mul_g(r);
         let r_aff = r_jac.to_affine().map_err(|_| Error::InvalidPrivateKey)?;
         Ok(EphemeralKey {
-            r_bytes: r.to_be_bytes(),
+            r_bytes: r.to_be_bytes().into(),
             r_point: r_aff.to_bytes(),
         })
     }
@@ -326,20 +327,18 @@ mod tests {
 
     #[allow(dead_code)]
     struct FakeRng(#[allow(dead_code)] [u8; 32]);
-    impl RngCore for FakeRng {
-        fn next_u32(&mut self) -> u32 {
-            0
+    impl rand_core::TryRng for FakeRng {
+        type Error = core::convert::Infallible;
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(0)
         }
-        fn next_u64(&mut self) -> u64 {
-            0
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Ok(0)
         }
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
             for (i, b) in dest.iter_mut().enumerate() {
                 *b = self.0[i % 32];
             }
-        }
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-            self.fill_bytes(dest);
             Ok(())
         }
     }

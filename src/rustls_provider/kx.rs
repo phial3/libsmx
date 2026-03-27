@@ -58,32 +58,24 @@ impl ActiveKeyExchange for Sm2KeyExchange {
 
 pub(crate) struct Sm2Rng;
 
-impl rand_core::RngCore for Sm2Rng {
-    fn next_u32(&mut self) -> u32 {
+impl rand_core::TryRng for Sm2Rng {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         let mut bytes = [0u8; 4];
-        getrandom::getrandom(&mut bytes).expect("getrandom failed");
-        u32::from_le_bytes(bytes)
+        getrandom::fill(&mut bytes).expect("getrandom failed");
+        Ok(u32::from_le_bytes(bytes))
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         let mut bytes = [0u8; 8];
-        getrandom::getrandom(&mut bytes).expect("getrandom failed");
-        u64::from_le_bytes(bytes)
+        getrandom::fill(&mut bytes).expect("getrandom failed");
+        Ok(u64::from_le_bytes(bytes))
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        getrandom::getrandom(dest).expect("getrandom failed");
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        getrandom::getrandom(dest).map_err(|e| {
-            // Reason: rand_core::Error::new 接受 NonZeroU32，直接用 getrandom 错误码
-            use core::num::NonZeroU32;
-            rand_core::Error::from(
-                NonZeroU32::new(e.raw_os_error().unwrap_or(1) as u32)
-                    .unwrap_or(NonZeroU32::new(1).unwrap()),
-            )
-        })
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        getrandom::fill(dest).expect("getrandom failed");
+        Ok(())
     }
 }
 

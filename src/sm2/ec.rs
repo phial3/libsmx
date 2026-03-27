@@ -3,7 +3,7 @@
 //! 使用 Jacobian 射影坐标（X:Y:Z），仿射坐标满足 x = X/Z², y = Y/Z³。
 //! 避免热路径中的 Fp 求逆运算，性能优于仿射坐标加法。
 
-use crypto_bigint::U256;
+use crypto_bigint::{U256, CtGt};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::error::Error;
@@ -43,9 +43,9 @@ pub struct JacobianPoint {
 impl ConditionallySelectable for JacobianPoint {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         JacobianPoint {
-            x: Fp::conditional_select(&a.x, &b.x, choice),
-            y: Fp::conditional_select(&a.y, &b.y, choice),
-            z: Fp::conditional_select(&a.z, &b.z, choice),
+            x: ConditionallySelectable::conditional_select(&a.x, &b.x, choice),
+            y: ConditionallySelectable::conditional_select(&a.y, &b.y, choice),
+            z: ConditionallySelectable::conditional_select(&a.z, &b.z, choice),
         }
     }
 }
@@ -214,7 +214,7 @@ impl JacobianPoint {
         let mut result = JacobianPoint::INFINITY;
 
         // 固定 256 次迭代，不跳过前导零
-        for byte in &k.to_be_bytes() {
+        for byte in k.to_be_bytes().as_ref() {
             for b in (0..8).rev() {
                 // 始终执行倍点（与标量位无关）
                 result = result.double();
@@ -333,12 +333,12 @@ fn scalar_mul_g_window(k: &U256) -> JacobianPoint {
     }
 
     let mut result = JacobianPoint::INFINITY;
-    for byte in &k.to_be_bytes() {
+    for byte in k.to_be_bytes().as_ref() {
         // ── 高 4 位窗口 ─────────────────────────────────────────────────────
         for _ in 0..4 {
             result = result.double();
         }
-        let window = byte >> 4;
+        let window: u8 = byte >> 4;
         // 常量时间表查找：遍历 1..=15，用 ct_eq 选出 table[window]
         let mut sel = JacobianPoint::INFINITY;
         for j in 1u8..=15 {
@@ -352,7 +352,7 @@ fn scalar_mul_g_window(k: &U256) -> JacobianPoint {
         for _ in 0..4 {
             result = result.double();
         }
-        let window = byte & 0xF;
+        let window: u8 = byte & 0xF;
         let mut sel = JacobianPoint::INFINITY;
         for j in 1u8..=15 {
             let eq = window.ct_eq(&j);
@@ -391,7 +391,6 @@ impl AffinePoint {
         let y_bytes: [u8; 32] = bytes[33..65].try_into().unwrap();
 
         // 检查坐标在 [0, p-1] 范围内
-        use crypto_bigint::subtle::ConstantTimeGreater;
         let x_val = U256::from_be_slice(&x_bytes);
         let y_val = U256::from_be_slice(&y_bytes);
         if bool::from(x_val.ct_gt(&FIELD_MODULUS))
@@ -431,7 +430,6 @@ impl AffinePoint {
         }
         let x_bytes: [u8; 32] = bytes[1..33].try_into().unwrap();
 
-        use crypto_bigint::subtle::ConstantTimeGreater;
         let x_val = U256::from_be_slice(&x_bytes);
         if bool::from(x_val.ct_gt(&FIELD_MODULUS)) || x_val == FIELD_MODULUS {
             return Err(Error::InvalidPublicKey);

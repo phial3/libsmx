@@ -3,7 +3,7 @@
 //! G1 是定义在 Fp 上的 BN256 曲线：y² = x³ + b，a=0
 //! 使用 Jacobian 射影坐标进行高效运算。
 
-use crypto_bigint::U256;
+use crypto_bigint::{U256, CtGt};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::error::Error;
@@ -43,9 +43,9 @@ pub struct G1Jacobian {
 impl ConditionallySelectable for G1Jacobian {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         G1Jacobian {
-            x: Fp::conditional_select(&a.x, &b.x, choice),
-            y: Fp::conditional_select(&a.y, &b.y, choice),
-            z: Fp::conditional_select(&a.z, &b.z, choice),
+            x: ConditionallySelectable::conditional_select(&a.x, &b.x, choice),
+            y: ConditionallySelectable::conditional_select(&a.y, &b.y, choice),
+            z: ConditionallySelectable::conditional_select(&a.z, &b.z, choice),
         }
     }
 }
@@ -181,7 +181,7 @@ impl G1Jacobian {
         let mut result = G1Jacobian::INFINITY;
 
         // 固定 256 次迭代，不跳过前导零
-        for byte in &k.to_be_bytes() {
+        for byte in k.to_be_bytes().as_ref() {
             for b in (0..8).rev() {
                 result = result.double();
                 let sum = G1Jacobian::add(&result, p);
@@ -223,7 +223,6 @@ impl G1Affine {
         let x_bytes: [u8; 32] = bytes[1..33].try_into().unwrap();
         let y_bytes: [u8; 32] = bytes[33..65].try_into().unwrap();
 
-        use crypto_bigint::subtle::ConstantTimeGreater;
         let x_val = U256::from_be_slice(&x_bytes);
         let y_val = U256::from_be_slice(&y_bytes);
         if bool::from(x_val.ct_gt(&FIELD_MODULUS))

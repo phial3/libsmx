@@ -17,8 +17,8 @@ pub mod utils;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crypto_bigint::{Zero, U256};
-use rand_core::RngCore;
+use crypto_bigint::U256;
+use rand_core::Rng;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -135,7 +135,7 @@ impl Sm9EncPubKey {
 /// 生成 SM9 签名主密钥对 (ks, Ppub-s)
 ///
 /// ks ∈ [1, n-2]，Ppub-s = ks·P2
-pub fn generate_sign_master_keypair<R: RngCore>(rng: &mut R) -> (Sm9MasterPrivKey, Sm9SignPubKey) {
+pub fn generate_sign_master_keypair<R: Rng>(rng: &mut R) -> (Sm9MasterPrivKey, Sm9SignPubKey) {
     loop {
         let mut ks_bytes = [0u8; 32];
         rng.fill_bytes(&mut ks_bytes);
@@ -194,7 +194,7 @@ pub fn generate_sign_user_key(
 /// ke ∈ [1, n-2]，Ppub-e = ke·P2（G2 上，128 字节）
 /// Reason: 加密主公钥在 G2 上，以保证 QB = h1·P2+Ppub-e 在 G2 上，
 ///   使得 C1=r·QB 与解密时 e(de, C1) 数学自洽。
-pub fn generate_enc_master_keypair<R: RngCore>(rng: &mut R) -> (Sm9MasterPrivKey, Sm9EncPubKey) {
+pub fn generate_enc_master_keypair<R: Rng>(rng: &mut R) -> (Sm9MasterPrivKey, Sm9EncPubKey) {
     loop {
         let mut ke_bytes = [0u8; 32];
         rng.fill_bytes(&mut ke_bytes);
@@ -255,7 +255,7 @@ pub fn generate_enc_user_key(
 /// # 参数
 /// - `msg`: 消息
 /// - `da`: 签名私钥（G1 点）
-pub fn sm9_sign<R: RngCore>(
+pub fn sm9_sign<R: Rng>(
     msg: &[u8],
     da: &Sm9SignPrivKey,
     sign_pub: &Sm9SignPubKey,
@@ -384,7 +384,7 @@ pub fn sm9_verify(
 ///
 /// 需要 `alloc` feature
 #[cfg(feature = "alloc")]
-pub fn sm9_encrypt<R: RngCore>(
+pub fn sm9_encrypt<R: Rng>(
     id: &[u8],
     message: &[u8],
     enc_pub: &Sm9EncPubKey,
@@ -555,20 +555,18 @@ mod tests {
     use super::*;
 
     struct FakeRng([u8; 32]);
-    impl RngCore for FakeRng {
-        fn next_u32(&mut self) -> u32 {
-            0
+    impl rand_core::TryRng for FakeRng {
+        type Error = core::convert::Infallible;
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(0)
         }
-        fn next_u64(&mut self) -> u64 {
-            0
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Ok(0)
         }
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
             for (i, b) in dest.iter_mut().enumerate() {
                 *b = self.0[i % 32];
             }
-        }
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-            self.fill_bytes(dest);
             Ok(())
         }
     }

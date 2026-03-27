@@ -12,8 +12,8 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use crypto_bigint::{Zero, U256};
-use rand_core::RngCore;
+use crypto_bigint::U256;
+use rand_core::Rng;
 
 use crate::error::Error;
 use crate::sm9::fields::fp::{fn_from_bytes, fn_inv, fn_mul, fn_to_bytes, Fn, GROUP_ORDER};
@@ -36,7 +36,7 @@ use super::{bls_sign, BlsKeyShare, BlsPrivKey, BlsSignature};
 ///
 /// # 错误
 /// - `Error::InvalidInput`：参数不合法（total < threshold+1，或 threshold=0）
-pub fn bls_threshold_keygen<R: RngCore>(
+pub fn bls_threshold_keygen<R: Rng>(
     sk: &BlsPrivKey,
     threshold: usize,
     total: usize,
@@ -71,7 +71,7 @@ pub fn bls_threshold_keygen<R: RngCore>(
         let i_fn = fn_from_bytes(&{
             let mut b = [0u8; 32];
             let i_u256 = U256::from(i as u64);
-            b.copy_from_slice(&i_u256.to_be_bytes());
+            b.copy_from_slice(i_u256.to_be_bytes().as_ref());
             b
         });
 
@@ -191,12 +191,10 @@ pub fn bls_combine_signatures(
 mod tests {
     use super::*;
     use crate::bls::{bls_keygen, bls_verify};
-    use rand_core::OsRng;
 
     #[test]
-    fn test_threshold_2_of_3() {
-        let mut rng = OsRng;
-        // 生成主密钥
+    fn test_bls_threshold_keygen_roundtrip() {
+        let mut rng = rand::rng();
         let (sk, pk) = bls_keygen(&mut rng);
         let msg = b"threshold test message";
 
@@ -223,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_threshold_1_of_2() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         // threshold=1, total=2：需要 2 份
         let (sk, pk) = bls_keygen(&mut rng);
         let msg = b"simple threshold";
@@ -241,8 +239,21 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_threshold_params() {
-        let mut rng = OsRng;
+    fn test_lagrange_coefficients() {
+        let mut rng = rand::rng();
+        let (_sk, _pk) = bls_keygen(&mut rng);
+        let indices = [1, 2, 3];
+        let mut sum = Fn::ZERO;
+        for i in indices {
+            let l = lagrange_coefficient(i, &indices);
+            sum = crate::sm9::fields::fp::fn_add(&sum, &l);
+        }
+        assert_eq!(sum, Fn::ONE, "Lagrange 系数之和应为 1");
+    }
+
+    #[test]
+    fn test_threshold_invalid_inputs() {
+        let mut rng = rand::rng();
         let (sk, _pk) = bls_keygen(&mut rng);
         // total < threshold+1
         assert!(bls_threshold_keygen(&sk, 3, 2, &mut rng).is_err());

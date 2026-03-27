@@ -19,8 +19,8 @@ pub mod key_exchange;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crypto_bigint::{Zero, U256};
-use rand_core::RngCore;
+use crypto_bigint::U256;
+use rand_core::Rng;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -78,7 +78,7 @@ impl PrivateKey {
 ///
 /// 符合 GB/T 32918.1-2016 §6.1
 /// 需要提供 `rand_core::RngCore` 实现（如 `rand::rngs::OsRng`）。
-pub fn generate_keypair<R: RngCore>(rng: &mut R) -> (PrivateKey, [u8; 65]) {
+pub fn generate_keypair<R: Rng>(rng: &mut R) -> (PrivateKey, [u8; 65]) {
     loop {
         let mut d_bytes = [0u8; 32];
         rng.fill_bytes(&mut d_bytes);
@@ -199,7 +199,7 @@ pub fn sign_with_k(e: &[u8; 32], pri_key: &PrivateKey, k: &U256) -> Result<[u8; 
 /// # 合规说明
 /// 内部自动计算 `Z = SM3(ENTL||ID||a||b||Gx||Gy||Px||Py)` 和 `e = SM3(Z||M)`，
 /// 符合 GB/T 32918.2-2016 §5.5。
-pub fn sign_message<R: RngCore>(
+pub fn sign_message<R: Rng>(
     msg: &[u8],
     id: &[u8],
     pri_key: &PrivateKey,
@@ -236,7 +236,7 @@ pub fn verify_message(
 /// # 合规说明
 /// 此函数接受预计算好的消息摘要 `e = SM3(Z||M)`。
 /// 调用方应先用 `get_z` + `get_e` 计算 e，确保满足 GB/T 32918.2-2016 §5.5。
-pub fn sign<R: RngCore>(e: &[u8; 32], pri_key: &PrivateKey, rng: &mut R) -> [u8; 64] {
+pub fn sign<R: Rng>(e: &[u8; 32], pri_key: &PrivateKey, rng: &mut R) -> [u8; 64] {
     loop {
         let mut k_bytes = [0u8; 32];
         rng.fill_bytes(&mut k_bytes);
@@ -307,7 +307,7 @@ pub fn verify(e: &[u8; 32], pub_key: &[u8; 65], sig: &[u8; 64]) -> Result<(), Er
 ///
 /// 需要 `alloc` feature。
 #[cfg(feature = "alloc")]
-pub fn encrypt<R: RngCore>(
+pub fn encrypt<R: Rng>(
     pub_key: &[u8; 65],
     message: &[u8],
     rng: &mut R,
@@ -431,23 +431,22 @@ mod tests {
     use super::*;
 
     struct FakeRng([u8; 32]);
-    impl RngCore for FakeRng {
-        fn next_u32(&mut self) -> u32 {
-            0
+    impl rand_core::TryRng for FakeRng {
+        type Error = core::convert::Infallible;
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(0)
         }
-        fn next_u64(&mut self) -> u64 {
-            0
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Ok(0)
         }
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
             for (i, b) in dest.iter_mut().enumerate() {
                 *b = self.0[i % 32];
             }
-        }
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-            self.fill_bytes(dest);
             Ok(())
         }
     }
+
 
     #[test]
     fn test_get_z_deterministic() {

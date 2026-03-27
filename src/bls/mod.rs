@@ -14,8 +14,8 @@
 pub mod hash_to_curve;
 pub mod threshold;
 
-use crypto_bigint::{Zero, U256};
-use rand_core::RngCore;
+use crypto_bigint::U256;
+use rand_core::Rng;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -91,7 +91,7 @@ impl BlsKeyShare {
 ///
 /// # 返回
 /// `(私钥, 公钥)` 对
-pub fn bls_keygen<R: RngCore>(rng: &mut R) -> (BlsPrivKey, BlsPubKey) {
+pub fn bls_keygen<R: Rng>(rng: &mut R) -> (BlsPrivKey, BlsPubKey) {
     loop {
         let mut scalar = [0u8; 32];
         rng.fill_bytes(&mut scalar);
@@ -296,11 +296,10 @@ impl BlsPubKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_core::OsRng;
 
     #[test]
     fn test_bls_sign_verify_roundtrip() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         let (sk, pk) = bls_keygen(&mut rng);
         let msg = b"hello bls";
         let sig = bls_sign(&sk, msg).expect("签名应成功");
@@ -309,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_bls_verify_wrong_msg_fails() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         let (sk, pk) = bls_keygen(&mut rng);
         let sig = bls_sign(&sk, b"msg1").expect("签名应成功");
         assert!(
@@ -320,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_bls_verify_wrong_key_fails() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         let (sk1, _pk1) = bls_keygen(&mut rng);
         let (_sk2, pk2) = bls_keygen(&mut rng);
         let msg = b"hello";
@@ -330,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_bls_aggregate_verify() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         let (sk1, pk1) = bls_keygen(&mut rng);
         let (sk2, pk2) = bls_keygen(&mut rng);
         let msg1 = b"message1";
@@ -344,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_bls_fast_aggregate_verify() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         let (sk1, pk1) = bls_keygen(&mut rng);
         let (sk2, pk2) = bls_keygen(&mut rng);
         let msg = b"shared message";
@@ -356,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_bls_signature_serialization() {
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
         let (sk, _pk) = bls_keygen(&mut rng);
         let sig = bls_sign(&sk, b"test").expect("签名应成功");
         let bytes = sig.to_bytes();

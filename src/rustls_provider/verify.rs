@@ -6,9 +6,12 @@ use rustls::crypto::{SignatureScheme, WebPkiSupportedAlgorithms};
 use crate::sm2::{der::sig_from_der, verify_message, DEFAULT_ID};
 
 /// rustls 支持的 SM2_SM3 签名验证算法集合
-pub static SUPPORTED_SM2_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
-    all: &[&SM2_SM3_ALG],
-    mapping: &[(SignatureScheme::SM2_SM3, &[&SM2_SM3_ALG])],
+pub static SUPPORTED_SM2_ALGS: WebPkiSupportedAlgorithms = match WebPkiSupportedAlgorithms::new(
+    &[&SM2_SM3_ALG],
+    &[(SignatureScheme::SM2_SM3, &[&SM2_SM3_ALG])],
+) {
+    Ok(s) => s,
+    Err(_) => panic!("SM2 algs consistency check failed"),
 };
 
 static SM2_SM3_ALG: Sm2Sm3Algorithm = Sm2Sm3Algorithm;
