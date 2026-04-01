@@ -139,17 +139,6 @@ impl PrivateKey {
     ) -> Result<cert::GmCertificate, Error> {
         cert::generate_self_signed_cert(self, subject, validity, serial_number, id, rng)
     }
-
-    /// 生成证书请求 (CSR)
-    pub fn generate_csr<R: Rng>(
-        &self,
-        subject: &[u8],
-        id: &[u8],
-        rng: &mut R,
-    ) -> Result<cert::CertificationRequest, Error> {
-        let pub_key = self.public_key();
-        cert::generate_csr(subject, &pub_key, self, id, rng)
-    }
 }
 
 // ── 密钥生成 ──────────────────────────────────────────────────────────────────
