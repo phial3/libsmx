@@ -95,8 +95,11 @@ impl GmCertificate {
     }
 
     /// 验证证书有效期
-    pub fn verify_validity(&self, current_time: &[u8]) -> Result<(), Error> {
-        verify_certificate_validity(self, current_time)
+    ///
+    /// # 参数
+    /// - `current_timestamp`: 当前时间的 Unix 时间戳（秒）
+    pub fn verify_validity(&self, current_timestamp: u64) -> Result<(), Error> {
+        verify_certificate_validity(self, current_timestamp)
     }
 
     /// 验证自签名证书
@@ -306,25 +309,126 @@ pub fn parse_validity(validity_der: &[u8]) -> Result<ValidityPeriod, Error> {
     })
 }
 
+/// 将 ASN.1 时间格式（UTCTime/GeneralizedTime）解析为 Unix 时间戳
+///
+/// 支持格式：
+/// - UTCTime: YYMMDDHHMMSSZ (13字节，2位年份)
+/// - GeneralizedTime: YYYYMMDDHHMMSSZ (15字节，4位年份)
+///
+/// 注意：这是一个简化实现，不考虑时区和闰秒
+#[cfg(feature = "alloc")]
+pub fn parse_asn1_time_to_timestamp(time: &[u8]) -> Result<u64, Error> {
+    let err = || Error::InvalidCertificate;
+
+    // 验证格式：必须以 Z 结尾
+    if time.len() < 13 || time[time.len() - 1] != b'Z' {
+        return Err(err());
+    }
+
+    let time_str = core::str::from_utf8(&time[..time.len() - 1]).map_err(|_| err())?;
+
+    // 根据长度判断格式
+    let (year, month, day, hour, minute, second): (u32, u32, u32, u32, u32, u32);
+
+    if time_str.len() == 12 {
+        // UTCTime: YYMMDDHHMMSS
+        let yy: u32 = time_str[0..2].parse().map_err(|_| err())?;
+        month = time_str[2..4].parse().map_err(|_| err())?;
+        day = time_str[4..6].parse().map_err(|_| err())?;
+        hour = time_str[6..8].parse().map_err(|_| err())?;
+        minute = time_str[8..10].parse().map_err(|_| err())?;
+        second = time_str[10..12].parse().map_err(|_| err())?;
+
+        // 将 2位年份转换为 4位年份 (RFC 5280: 50-99 -> 1950-1999, 00-49 -> 2000-2049)
+        year = if yy >= 50 { 1900 + yy } else { 2000 + yy };
+    } else if time_str.len() == 14 {
+        // GeneralizedTime: YYYYMMDDHHMMSS
+        year = time_str[0..4].parse().map_err(|_| err())?;
+        month = time_str[4..6].parse().map_err(|_| err())?;
+        day = time_str[6..8].parse().map_err(|_| err())?;
+        hour = time_str[8..10].parse().map_err(|_| err())?;
+        minute = time_str[10..12].parse().map_err(|_| err())?;
+        second = time_str[12..14].parse().map_err(|_| err())?;
+    } else {
+        return Err(err());
+    }
+
+    // 验证日期范围
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day)
+        || hour > 23 || minute > 59 || second > 59
+    {
+        return Err(err());
+    }
+
+    // 简化的 Unix 时间戳计算（从 1970-01-01 00:00:00 UTC 开始的秒数）
+    // 这是一个近似计算，不考虑闰秒和复杂的历法规则
+    let days_since_epoch = days_since_1970(year, month, day);
+    let timestamp = days_since_epoch * 86400
+        + (hour as u64) * 3600
+        + (minute as u64) * 60
+        + (second as u64);
+
+    Ok(timestamp)
+}
+
+/// 计算从 1970-01-01 到指定日期的天数
+#[cfg(feature = "alloc")]
+fn days_since_1970(year: u32, month: u32, day: u32) -> u64 {
+    // 计算从公元1年1月1日到指定日期的天数
+    fn days_since_year_1(y: u32, m: u32, d: u32) -> u64 {
+        let y = y as i64 - 1;
+        let leap_years = y / 4 - y / 100 + y / 400;
+        let days_in_year = y * 365 + leap_years;
+
+        let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut days_in_month_acc = 0;
+        for i in 1..m {
+            days_in_month_acc += days_in_month[i as usize];
+        }
+
+        // 闰年调整
+        let is_leap = (y + 1) % 4 == 0 && ((y + 1) % 100 != 0 || (y + 1) % 400 == 0);
+        if is_leap && m > 2 {
+            days_in_month_acc += 1;
+        }
+
+        days_in_year as u64 + days_in_month_acc + (d as u64 - 1)
+    }
+
+    // 1970-01-01 对应的天数
+    const DAYS_1970_01_01: u64 = 719162;
+
+    days_since_year_1(year, month, day) - DAYS_1970_01_01
+}
+
 /// 验证证书有效期
-/// 
-/// 检查当前时间是否在证书的有效期内
-/// 注意：此函数需要外部提供当前时间（以 UTCTime 格式）
+///
+/// 检查当前时间（Unix 时间戳，秒）是否在证书的有效期内
+///
+/// # 参数
+/// - `cert`: 国密证书
+/// - `current_timestamp`: 当前时间的 Unix 时间戳（秒）
+///
+/// # 返回
+/// - `Ok(())`: 证书在有效期内
+/// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
 #[cfg(feature = "alloc")]
 pub fn verify_certificate_validity(
     cert: &GmCertificate,
-    current_time: &[u8], // YYMMDDHHMMSSZ 格式
+    current_timestamp: u64,
 ) -> Result<(), Error> {
     let validity = parse_validity(&cert.validity)?;
-    
-    // 比较时间（字典序比较，因为都是 ASCII 格式）
-    if current_time < validity.not_before.as_slice() {
+
+    let not_before = parse_asn1_time_to_timestamp(&validity.not_before)?;
+    let not_after = parse_asn1_time_to_timestamp(&validity.not_after)?;
+
+    if current_timestamp < not_before {
         return Err(Error::InvalidCertificate); // 证书尚未生效
     }
-    if current_time > validity.not_after.as_slice() {
+    if current_timestamp > not_after {
         return Err(Error::InvalidCertificate); // 证书已过期
     }
-    
+
     Ok(())
 }
 
@@ -907,14 +1011,14 @@ mod tests {
             signature: vec![0x00; 64],
         };
         
-        // 测试有效期内的时间
-        assert!(verify_certificate_validity(&cert, b"250101000000Z").is_ok());
-        
-        // 测试过期时间
-        assert!(verify_certificate_validity(&cert, b"400101000000Z").is_err());
-        
-        // 测试尚未生效时间
-        assert!(verify_certificate_validity(&cert, b"100101000000Z").is_err());
+        // 测试有效期内的时间 (2025-01-01 00:00:00 UTC = 1735689600)
+        assert!(verify_certificate_validity(&cert, 1735689600).is_ok());
+
+        // 测试过期时间 (2040-01-01 00:00:00 UTC = 2208988800)
+        assert!(verify_certificate_validity(&cert, 2208988800).is_err());
+
+        // 测试尚未生效时间 (2010-01-01 00:00:00 UTC = 1262304000)
+        assert!(verify_certificate_validity(&cert, 1262304000).is_err());
     }
 
     // -- 自签名证书测试 --------------------------------------------------------
