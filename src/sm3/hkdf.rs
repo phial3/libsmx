@@ -16,10 +16,10 @@
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use super::hmac_sm3;
-use super::DIGEST_LEN;
 #[cfg(feature = "alloc")]
 use crate::error::Error;
+
+use super::{hmac_sm3, DIGEST_LEN};
 
 /// HKDF-SM3 Extract
 ///

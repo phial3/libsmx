@@ -42,6 +42,10 @@ pub enum Error {
     /// SM9 签名验证失败
     Sm9VerifyFailed,
 
+    // ── 证书错误 ────────────────────────────────────────────────────────────
+    /// 无效的证书（格式错误）
+    InvalidCertificate,
+
     // ── 通用错误 ────────────────────────────────────────────────────────────
     /// 输入数据格式无效
     InvalidInput,
@@ -65,6 +69,7 @@ impl fmt::Display for Error {
             Error::Sm9DecryptFailed => write!(f, "SM9 decryption failed"),
             Error::Sm9VerifyFailed => write!(f, "SM9 signature verification failed"),
             Error::InvalidInput => write!(f, "invalid input"),
+            Error::InvalidCertificate => write!(f, "invalid certificate"),
         }
     }
 }

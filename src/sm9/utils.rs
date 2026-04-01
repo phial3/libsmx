@@ -90,18 +90,7 @@ fn hash_to_range(z: &[u8], hid: u8, n: &U256) -> U256 {
 /// 需要 `alloc` feature
 #[cfg(feature = "alloc")]
 pub fn sm9_kdf(z: &[u8], klen: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(klen);
-    let mut ct = 1u32;
-    while out.len() < klen {
-        let mut h = Sm3Hasher::new();
-        h.update(z);
-        h.update(&ct.to_be_bytes());
-        let digest = h.finalize();
-        let remaining = klen - out.len();
-        out.extend_from_slice(&digest[..digest.len().min(remaining)]);
-        ct += 1;
-    }
-    out
+    crate::kdf::kdf(z, klen)
 }
 
 /// SM9 加密 KDF（对 Fp12 元素的 KDF）

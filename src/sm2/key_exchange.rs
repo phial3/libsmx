@@ -252,7 +252,7 @@ fn compute_shared(
     kdf_input.extend_from_slice(&yv);
     kdf_input.extend_from_slice(&z_a);
     kdf_input.extend_from_slice(&z_b);
-    let key = crate::sm2::kdf::kdf(&kdf_input, klen);
+    let key = crate::kdf::kdf(&kdf_input, klen);
 
     // KDF 输出全零时返回错误（防弱密钥）
     if key.iter().all(|&b| b == 0) {

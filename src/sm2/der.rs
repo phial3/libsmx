@@ -187,7 +187,7 @@ fn parse_length(data: &[u8]) -> Option<(usize, &[u8])> {
 }
 
 /// 解析一个 TLV（tag-length-value），返回 (value_bytes, 剩余字节)
-fn parse_tlv(data: &[u8], expected_tag: u8) -> Option<(&[u8], &[u8])> {
+pub fn parse_tlv(data: &[u8], expected_tag: u8) -> Option<(&[u8], &[u8])> {
     let (tag, rest) = data.split_first()?;
     if *tag != expected_tag {
         return None;

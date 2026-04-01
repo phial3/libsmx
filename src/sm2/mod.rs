@@ -13,7 +13,6 @@
 pub mod der;
 pub mod ec;
 pub mod field;
-pub mod kdf;
 pub mod key_exchange;
 
 #[cfg(feature = "alloc")]
@@ -344,7 +343,7 @@ pub fn encrypt<R: Rng>(
         let mut z_input = [0u8; 64];
         z_input[..32].copy_from_slice(&x2);
         z_input[32..].copy_from_slice(&y2);
-        let t = kdf::kdf(&z_input, message.len());
+        let t = crate::kdf::kdf(&z_input, message.len());
 
         // t 全零时重新选 k
         if t.iter().all(|&b| b == 0) {
@@ -403,7 +402,7 @@ pub fn decrypt(pri_key: &PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, Error
     let mut z_input = [0u8; 64];
     z_input[..32].copy_from_slice(&x2);
     z_input[32..].copy_from_slice(&y2);
-    let t = kdf::kdf(&z_input, c2.len());
+    let t = crate::kdf::kdf(&z_input, c2.len());
 
     if t.iter().all(|&b| b == 0) {
         return Err(Error::DecryptFailed);
