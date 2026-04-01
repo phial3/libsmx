@@ -199,6 +199,19 @@ pub fn parse_tlv(data: &[u8], expected_tag: u8) -> Option<(&[u8], &[u8])> {
     Some((&rest[..len], &rest[len..]))
 }
 
+/// 解析任意一个 TLV（不检查 tag），返回 (full_tlv_bytes, 剩余字节)
+pub fn parse_tlv_any_full(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (_tag, rest) = data.split_first()?;
+    let (first, _) = rest.split_first()?;
+    let len_len = if *first < 0x80 { 1 } else if *first == 0x81 { 2 } else if *first == 0x82 { 3 } else { return None; };
+    let (len, _) = parse_length(rest)?;
+    let total_len = 1 + len_len + len;
+    if data.len() < total_len {
+        return None;
+    }
+    Some((&data[..total_len], &data[total_len..]))
+}
+
 // ── 私钥 DER 解析 ─────────────────────────────────────────────────────────────
 
 /// 从 SEC1 DER 解析 SM2 私钥（RFC 5915）
@@ -235,6 +248,70 @@ pub fn private_key_from_sec1_der(der: &[u8]) -> Result<PrivateKey, Error> {
     let key_arr: &[u8; 32] = key_bytes.try_into().map_err(|_| err())?;
 
     PrivateKey::from_bytes(key_arr)
+}
+
+/// 将私钥编码为 SEC1 DER 格式（RFC 5915）
+///
+/// 格式：
+/// ```text
+/// ECPrivateKey ::= SEQUENCE {
+///     version    INTEGER { ecPrivkeyVer1(1) },
+///     privateKey OCTET STRING,          -- 32 字节原始私钥
+///     [0] ECParameters OPTIONAL,
+///     [1] BIT STRING OPTIONAL
+/// }
+/// ```
+#[cfg(feature = "alloc")]
+pub fn private_key_to_sec1_der(priv_key: &PrivateKey) -> Vec<u8> {
+    // version INTEGER = 1：02 01 01
+    // privateKey OCTET STRING：04 20 <32 bytes>
+    let mut der = Vec::with_capacity(2 + 3 + 2 + 32);
+    der.push(0x30);
+    der.push(0x25);
+    der.push(0x02);
+    der.push(0x01);
+    der.push(0x01);
+    der.push(0x04);
+    der.push(0x20);
+    der.extend_from_slice(priv_key.as_bytes());
+    der
+}
+
+/// 将私钥编码为 PKCS#8 DER 格式（RFC 5958）
+///
+/// 格式：
+/// ```text
+/// PrivateKeyInfo ::= SEQUENCE {
+///     version              INTEGER (0),
+///     algorithm            AlgorithmIdentifier SEQUENCE { ... },
+///     privateKey           OCTET STRING (SEC1 DER)
+/// }
+/// ```
+#[cfg(feature = "alloc")]
+pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
+    let sec1 = private_key_to_sec1_der(priv_key);
+    // AlgorithmIdentifier：包含 id-ecPublicKey 和 SM2 OID
+    let alg_id: &[u8] = &[
+        0x30, 0x13, // SEQUENCE (19 bytes)
+        0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
+        0x06, 0x08, 0x2a, 0x81, 0x1c, 0xcf, 0x55, 0x01, 0x82, 0x2d, // SM2 OID
+    ];
+    // version INTEGER = 0：02 01 00
+    let version: &[u8] = &[0x02, 0x01, 0x00];
+    // privateKey OCTET STRING 包装 sec1
+    let mut priv_oct = Vec::with_capacity(2 + sec1.len());
+    priv_oct.push(0x04);
+    priv_oct.push(sec1.len() as u8);
+    priv_oct.extend_from_slice(&sec1);
+    // inner = version + alg_id + priv_oct
+    let inner_len = version.len() + alg_id.len() + priv_oct.len();
+    let mut der = Vec::with_capacity(2 + inner_len);
+    der.push(0x30);
+    der.push(inner_len as u8);
+    der.extend_from_slice(version);
+    der.extend_from_slice(alg_id);
+    der.extend_from_slice(&priv_oct);
+    der
 }
 
 /// 从 PKCS#8 DER 解析 SM2 私钥（RFC 5958）
@@ -319,6 +396,42 @@ pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
     der.extend_from_slice(&alg);
     der.extend_from_slice(&bit_str);
     der
+}
+
+/// 从 SubjectPublicKeyInfo DER 解析 SM2 公钥
+///
+/// 格式（RFC 5480）：
+/// ```text
+/// SEQUENCE {
+///   SEQUENCE {
+///     OID 1.2.840.10045.2.1  (id-ecPublicKey)
+///     OID 1.2.156.10197.1.301 (SM2)
+///   }
+///   BIT STRING 0x00 || pub_key (65 字节)
+/// }
+/// ```
+///
+/// # 错误
+/// DER 格式不合法或公钥格式不合法时返回 `Error::InvalidPublicKey`
+pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
+    let err = || Error::InvalidPublicKey;
+    
+    let (seq_body, _) = parse_tlv(der, 0x30).ok_or_else(err)?;
+    let (_, rest) = parse_tlv(seq_body, 0x30).ok_or_else(err)?;
+    let (bit_str_bytes, _) = parse_tlv(rest, 0x03).ok_or_else(err)?;
+    
+    if bit_str_bytes.is_empty() || bit_str_bytes[0] != 0 {
+        return Err(err());
+    }
+    
+    let pub_key = &bit_str_bytes[1..];
+    if pub_key.len() != 65 {
+        return Err(err());
+    }
+    
+    let mut result = [0u8; 65];
+    result.copy_from_slice(pub_key);
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -454,6 +567,26 @@ mod tests {
         let key = private_key_from_pkcs8_der(&der).expect("PKCS#8 解析应成功");
         assert_eq!(key.as_bytes(), &RAW_KEY);
     }
+    
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_private_key_to_sec1_der() {
+        use crate::sm2::PrivateKey;
+        let key = PrivateKey::from_bytes(&RAW_KEY).unwrap();
+        let der = private_key_to_sec1_der(&key);
+        let recovered = private_key_from_sec1_der(&der).expect("SEC1 解析应成功");
+        assert_eq!(recovered.as_bytes(), &RAW_KEY);
+    }
+    
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_private_key_to_pkcs8_der() {
+        use crate::sm2::PrivateKey;
+        let key = PrivateKey::from_bytes(&RAW_KEY).unwrap();
+        let der = private_key_to_pkcs8_der(&key);
+        let recovered = private_key_from_pkcs8_der(&der).expect("PKCS#8 解析应成功");
+        assert_eq!(recovered.as_bytes(), &RAW_KEY);
+    }
 
     #[test]
     fn test_sec1_der_invalid_tag() {
@@ -514,6 +647,17 @@ mod tests {
         // 确认公钥原始字节出现在 SPKI 中
         let pos = spki.windows(65).position(|w| w == pub_key);
         assert!(pos.is_some(), "SPKI 应包含原始公钥字节");
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_spki_der_roundtrip() {
+        use crate::sm2::PrivateKey;
+        let pri = PrivateKey::from_bytes(&RAW_KEY).unwrap();
+        let pub_key = pri.public_key();
+        let spki = public_key_to_spki_der(&pub_key);
+        let recovered = public_key_from_spki_der(&spki).expect("SPKI 解析应成功");
+        assert_eq!(recovered, pub_key);
     }
 
     #[cfg(feature = "alloc")]

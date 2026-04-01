@@ -63,9 +63,6 @@ pub mod bls;
 pub mod fpe;
 
 #[cfg(feature = "alloc")]
-pub mod cert;
-
-#[cfg(feature = "alloc")]
 pub mod kdf;
 
 #[cfg(feature = "rustls-provider")]

@@ -16,6 +16,9 @@ pub mod field;
 pub mod key_exchange;
 
 #[cfg(feature = "alloc")]
+pub mod cert;
+
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 use crypto_bigint::U256;

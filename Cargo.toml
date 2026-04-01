@@ -39,10 +39,13 @@ rand_core = { version = "0.10", default-features = false }
 rustls    = { git = "https://github.com/rustls/rustls.git", branch = "main", optional = true, default-features = false }
 pki-types = { package = "rustls-pki-types", version = "1", optional = true, features = ["alloc"] }
 getrandom = { version = "0.4", optional = true }
+pem-rfc7468 = { version = "1.0", optional = true }
+x509-cert = { version = "=0.3.0-rc.4", optional = true }
+der = { version = "0.8", optional = true, features = ["alloc"] }
 
 [features]
 default = ["alloc"]
-alloc = []
+alloc = ["der", "pem-rfc7468", "x509-cert"]
 std = ["alloc"]
 # rustls CryptoProvider 集成（RFC 8998 国密 TLS 套件）
 rustls-provider = ["alloc", "dep:rustls", "dep:pki-types", "dep:getrandom"]
