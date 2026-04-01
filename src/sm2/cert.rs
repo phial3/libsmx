@@ -13,6 +13,8 @@
 //! - X.509 标准证书支持（使用 x509-cert）
 
 #[cfg(feature = "alloc")]
+use alloc::vec;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 use crate::error::Error;
@@ -153,11 +155,8 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
     let mut components = Vec::new();
     
     if cert.version > 0 {
-        let mut version_der = Vec::new();
-        version_der.push(0x02);
-        version_der.push(1);
-        version_der.push(cert.version as u8);
-        let mut version_wrapper = Vec::new();
+        let version_der = vec![0x02, 0x01, cert.version as u8];
+        let mut version_wrapper = Vec::with_capacity(2 + version_der.len());
         version_wrapper.push(0xA0);
         version_wrapper.push(version_der.len() as u8);
         version_wrapper.extend(version_der);
@@ -865,15 +864,11 @@ pub fn generate_self_signed_cert<R: Rng>(
     ];
     
     // 构建 TBSCertificate (待签名部分)
-    let mut tbs = Vec::new();
-    
+    let mut tbs = Vec::with_capacity(128);
+
     // version [0] INTEGER 2
-    tbs.push(0xA0);
-    tbs.push(0x03);
-    tbs.push(0x02);
-    tbs.push(0x01);
-    tbs.push(0x02);
-    
+    tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
+
     // serialNumber INTEGER
     tbs.push(0x02);
     tbs.push(serial_number.len() as u8);
@@ -918,15 +913,11 @@ pub fn verify_self_signed_cert(cert: &GmCertificate, id: &[u8]) -> Result<(), Er
     let pub_key = extract_sm2_public_key(cert)?;
     
     // 重建 TBSCertificate
-    let mut tbs = Vec::new();
-    
+    let mut tbs = Vec::with_capacity(256);
+
     // version [0] INTEGER 2
-    tbs.push(0xA0);
-    tbs.push(0x03);
-    tbs.push(0x02);
-    tbs.push(0x01);
-    tbs.push(0x02);
-    
+    tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
+
     // serialNumber
     tbs.push(0x02);
     tbs.push(cert.serial_number.len() as u8);
