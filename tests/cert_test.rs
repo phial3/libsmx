@@ -18,7 +18,7 @@ mod tests {
                 0x17, 0x0d, 0x33, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime
             ],
             subject: vec![0x31, 0x11, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x08, 0x55, 0x73, 0x65, 0x72, 0x4E, 0x61, 0x6D, 0x65],
-            subject_public_key_info: cert::public_key_to_spki_der(pub_key),
+            subject_public_key_info: public_key_to_spki_der(pub_key),
             signature: vec![0x00, 0x01, 0x02, 0x03],
         }
     }
@@ -95,12 +95,12 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(111111111);
         let (priv_key, _) = generate_keypair(&mut rng);
         
-        let sec1_der = cert::private_key_to_sec1_der(&priv_key);
+        let sec1_der = private_key_to_sec1_der(&priv_key);
         fs::write(priv_key_sec1_der_file, &sec1_der).expect("写入 SEC1 DER 应成功");
         assert!(Path::new(priv_key_sec1_der_file).exists());
         println!("✅ 测试 4.1：私钥 SEC1 DER - 通过 ({} 字节)", sec1_der.len());
         
-        let recovered = cert::private_key_from_sec1_der(&sec1_der)
+        let recovered = private_key_from_sec1_der(&sec1_der)
             .expect("SEC1 解析应成功");
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
         println!("✅ 测试 4.2：私钥 SEC1 DER 往返 - 通过");
@@ -131,12 +131,12 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(222222222);
         let (priv_key, _) = generate_keypair(&mut rng);
         
-        let pkcs8_der = cert::private_key_to_pkcs8_der(&priv_key);
+        let pkcs8_der = private_key_to_pkcs8_der(&priv_key);
         fs::write(priv_key_pkcs8_der_file, &pkcs8_der).expect("写入 PKCS#8 DER 应成功");
         assert!(Path::new(priv_key_pkcs8_der_file).exists());
         println!("✅ 测试 5.1：私钥 PKCS#8 DER - 通过 ({} 字节)", pkcs8_der.len());
         
-        let recovered = cert::private_key_from_pkcs8_der(&pkcs8_der)
+        let recovered = private_key_from_pkcs8_der(&pkcs8_der)
             .expect("PKCS#8 解析应成功");
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
         println!("✅ 测试 5.2：私钥 PKCS#8 DER 往返 - 通过");
@@ -167,7 +167,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(333333333);
         let (_, pub_key) = generate_keypair(&mut rng);
         
-        let spki_der = cert::public_key_to_spki_der(&pub_key);
+        let spki_der = public_key_to_spki_der(&pub_key);
         fs::write(pub_key_spki_der_file, &spki_der).expect("写入 SPKI DER 应成功");
         assert!(Path::new(pub_key_spki_der_file).exists());
         println!("✅ 测试 6.1：公钥 SPKI DER - 通过 ({} 字节)", spki_der.len());
@@ -245,21 +245,21 @@ mod tests {
         let cert_pem = cert::generate_gm_certificate_pem(&cert).expect("PEM 证书生成应成功");
         fs::write(cert_pem_file, &cert_pem).expect("写入 PEM 文件应成功");
         
-        let priv_sec1_der = cert::private_key_to_sec1_der(&issuer_priv);
+        let priv_sec1_der = private_key_to_sec1_der(&issuer_priv);
         fs::write(priv_key_sec1_der_file, &priv_sec1_der).expect("写入 SEC1 DER 应成功");
         
         let priv_sec1_pem = cert::private_key_to_sec1_pem(&issuer_priv)
             .expect("SEC1 PEM 编码应成功");
         fs::write(priv_key_sec1_pem_file, &priv_sec1_pem).expect("写入 SEC1 PEM 应成功");
         
-        let priv_pkcs8_der = cert::private_key_to_pkcs8_der(&issuer_priv);
+        let priv_pkcs8_der = private_key_to_pkcs8_der(&issuer_priv);
         fs::write(priv_key_pkcs8_der_file, &priv_pkcs8_der).expect("写入 PKCS#8 DER 应成功");
         
         let priv_pkcs8_pem = cert::private_key_to_pkcs8_pem(&issuer_priv)
             .expect("PKCS#8 PEM 编码应成功");
         fs::write(priv_key_pkcs8_pem_file, &priv_pkcs8_pem).expect("写入 PKCS#8 PEM 应成功");
         
-        let pub_spki_der = cert::public_key_to_spki_der(&issuer_pub);
+        let pub_spki_der = public_key_to_spki_der(&issuer_pub);
         fs::write(pub_key_spki_der_file, &pub_spki_der).expect("写入 SPKI DER 应成功");
         
         let pub_spki_pem = cert::public_key_to_spki_pem(&issuer_pub)

@@ -18,6 +18,17 @@ pub mod key_exchange;
 #[cfg(feature = "alloc")]
 pub mod cert;
 
+// 重新导出 der 模块的密钥编解码函数
+#[cfg(feature = "alloc")]
+pub use der::{
+    private_key_from_pkcs8_der, 
+    private_key_from_sec1_der,
+    private_key_to_pkcs8_der, 
+    private_key_to_sec1_der, 
+    public_key_from_spki_der,
+    public_key_to_spki_der,
+};
+
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
@@ -71,6 +82,73 @@ impl PrivateKey {
             .to_affine()
             .expect("valid private key produces valid public key");
         pub_aff.to_bytes()
+    }
+}
+
+// 证书相关方法（需要 alloc feature）
+#[cfg(feature = "alloc")]
+impl PrivateKey {
+    /// 将私钥编码为 SEC1 DER 格式
+    pub fn to_sec1_der(&self) -> Vec<u8> {
+        der::private_key_to_sec1_der(self)
+    }
+
+    /// 将私钥编码为 PKCS#8 DER 格式
+    pub fn to_pkcs8_der(&self) -> Vec<u8> {
+        der::private_key_to_pkcs8_der(self)
+    }
+
+    /// 将私钥编码为 SEC1 PEM 格式
+    pub fn to_sec1_pem(&self) -> Result<Vec<u8>, Error> {
+        cert::private_key_to_sec1_pem(self)
+    }
+
+    /// 将私钥编码为 PKCS#8 PEM 格式
+    pub fn to_pkcs8_pem(&self) -> Result<Vec<u8>, Error> {
+        cert::private_key_to_pkcs8_pem(self)
+    }
+
+    /// 从 SEC1 DER 解析私钥
+    pub fn from_sec1_der(der: &[u8]) -> Result<Self, Error> {
+        der::private_key_from_sec1_der(der)
+    }
+
+    /// 从 PKCS#8 DER 解析私钥
+    pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, Error> {
+        der::private_key_from_pkcs8_der(der)
+    }
+
+    /// 从 SEC1 PEM 解析私钥
+    pub fn from_sec1_pem(pem: &[u8]) -> Result<Self, Error> {
+        cert::private_key_from_sec1_pem(pem)
+    }
+
+    /// 从 PKCS#8 PEM 解析私钥
+    pub fn from_pkcs8_pem(pem: &[u8]) -> Result<Self, Error> {
+        cert::private_key_from_pkcs8_pem(pem)
+    }
+
+    /// 生成自签名证书
+    pub fn generate_self_signed_cert<R: Rng>(
+        &self,
+        subject: &[u8],
+        validity: &[u8],
+        serial_number: &[u8],
+        id: &[u8],
+        rng: &mut R,
+    ) -> Result<cert::GmCertificate, Error> {
+        cert::generate_self_signed_cert(self, subject, validity, serial_number, id, rng)
+    }
+
+    /// 生成证书请求 (CSR)
+    pub fn generate_csr<R: Rng>(
+        &self,
+        subject: &[u8],
+        id: &[u8],
+        rng: &mut R,
+    ) -> Result<cert::CertificationRequest, Error> {
+        let pub_key = self.public_key();
+        cert::generate_csr(subject, &pub_key, self, id, rng)
     }
 }
 

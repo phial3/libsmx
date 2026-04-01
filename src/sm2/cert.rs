@@ -65,6 +65,44 @@ pub struct GmCertificate {
     pub signature: Vec<u8>,
 }
 
+#[cfg(feature = "alloc")]
+impl GmCertificate {
+    /// 从 DER 格式解析证书
+    pub fn from_der(der: &[u8]) -> Result<Self, Error> {
+        parse_gm_certificate(der)
+    }
+
+    /// 将证书编码为 DER 格式
+    pub fn to_der(&self) -> Vec<u8> {
+        generate_gm_certificate(self)
+    }
+
+    /// 从 PEM 格式解析证书
+    pub fn from_pem(pem: &[u8]) -> Result<Self, Error> {
+        parse_gm_certificate_pem(pem)
+    }
+
+    /// 将证书编码为 PEM 格式
+    pub fn to_pem(&self) -> Result<Vec<u8>, Error> {
+        generate_gm_certificate_pem(self)
+    }
+
+    /// 提取 SM2 公钥
+    pub fn extract_sm2_public_key(&self) -> Result<[u8; 65], Error> {
+        extract_sm2_public_key(self)
+    }
+
+    /// 验证证书有效期
+    pub fn verify_validity(&self, current_time: &[u8]) -> Result<(), Error> {
+        verify_certificate_validity(self, current_time)
+    }
+
+    /// 验证自签名证书
+    pub fn verify_self_signed(&self, id: &[u8]) -> Result<(), Error> {
+        verify_self_signed_cert(self, id)
+    }
+}
+
 /// 解析国密证书
 #[cfg(feature = "alloc")]
 pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
@@ -330,7 +368,7 @@ pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
 #[cfg(feature = "alloc")]
 pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Error> {
     let der = generate_gm_certificate(cert);
-    let pem = encode_string("CERTIFICATE", Default::default(), &der)
+    let pem = encode_string(pem_labels::CERTIFICATE, Default::default(), &der)
         .map_err(|_| Error::InvalidCertificate)?;
     Ok(pem.as_bytes().to_vec())
 }
@@ -382,23 +420,21 @@ pub fn verify_certificate_data(
 
 // -- 密钥 DER/PEM 编解码 ----------------------------------------------------------
 
-/// 将私钥编码为 SEC1 DER 格式
+/// PEM 标签常量
 #[cfg(feature = "alloc")]
-pub fn private_key_to_sec1_der(priv_key: &PrivateKey) -> Vec<u8> {
-    der::private_key_to_sec1_der(priv_key)
-}
-
-/// 将私钥编码为 PKCS#8 DER 格式
-#[cfg(feature = "alloc")]
-pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
-    der::private_key_to_pkcs8_der(priv_key)
+mod pem_labels {
+    pub const EC_PRIVATE_KEY: &str = "EC PRIVATE KEY";
+    pub const PRIVATE_KEY: &str = "PRIVATE KEY";
+    pub const PUBLIC_KEY: &str = "PUBLIC KEY";
+    pub const CERTIFICATE: &str = "CERTIFICATE";
+    pub const CERTIFICATE_REQUEST: &str = "CERTIFICATE REQUEST";
 }
 
 /// 将私钥编码为 SEC1 PEM 格式
 #[cfg(feature = "alloc")]
 pub fn private_key_to_sec1_pem(priv_key: &PrivateKey) -> Result<Vec<u8>, Error> {
-    let der = private_key_to_sec1_der(priv_key);
-    let pem = encode_string("EC PRIVATE KEY", Default::default(), &der)
+    let der = der::private_key_to_sec1_der(priv_key);
+    let pem = encode_string(pem_labels::EC_PRIVATE_KEY, Default::default(), &der)
         .map_err(|_| Error::InvalidPrivateKey)?;
     Ok(pem.as_bytes().to_vec())
 }
@@ -406,55 +442,31 @@ pub fn private_key_to_sec1_pem(priv_key: &PrivateKey) -> Result<Vec<u8>, Error> 
 /// 将私钥编码为 PKCS#8 PEM 格式
 #[cfg(feature = "alloc")]
 pub fn private_key_to_pkcs8_pem(priv_key: &PrivateKey) -> Result<Vec<u8>, Error> {
-    let der = private_key_to_pkcs8_der(priv_key);
-    let pem = encode_string("PRIVATE KEY", Default::default(), &der)
+    let der = der::private_key_to_pkcs8_der(priv_key);
+    let pem = encode_string(pem_labels::PRIVATE_KEY, Default::default(), &der)
         .map_err(|_| Error::InvalidPrivateKey)?;
     Ok(pem.as_bytes().to_vec())
-}
-
-/// 从 SEC1 DER 解析私钥
-#[cfg(feature = "alloc")]
-pub fn private_key_from_sec1_der(der: &[u8]) -> Result<PrivateKey, Error> {
-    der::private_key_from_sec1_der(der)
-}
-
-/// 从 PKCS#8 DER 解析私钥
-#[cfg(feature = "alloc")]
-pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
-    der::private_key_from_pkcs8_der(der)
 }
 
 /// 从 SEC1 PEM 解析私钥
 #[cfg(feature = "alloc")]
 pub fn private_key_from_sec1_pem(pem: &[u8]) -> Result<PrivateKey, Error> {
     let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidPrivateKey)?;
-    private_key_from_sec1_der(&der)
+    der::private_key_from_sec1_der(&der)
 }
 
 /// 从 PKCS#8 PEM 解析私钥
 #[cfg(feature = "alloc")]
 pub fn private_key_from_pkcs8_pem(pem: &[u8]) -> Result<PrivateKey, Error> {
     let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidPrivateKey)?;
-    private_key_from_pkcs8_der(&der)
-}
-
-/// 将公钥编码为 SPKI DER 格式
-#[cfg(feature = "alloc")]
-pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
-    der::public_key_to_spki_der(pub_key)
-}
-
-/// 从 SPKI DER 解析公钥
-#[cfg(feature = "alloc")]
-pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
-    der::public_key_from_spki_der(der)
+    der::private_key_from_pkcs8_der(&der)
 }
 
 /// 将公钥编码为 SPKI PEM 格式
 #[cfg(feature = "alloc")]
 pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<Vec<u8>, Error> {
-    let der = public_key_to_spki_der(pub_key);
-    let pem = encode_string("PUBLIC KEY", Default::default(), &der)
+    let der = der::public_key_to_spki_der(pub_key);
+    let pem = encode_string(pem_labels::PUBLIC_KEY, Default::default(), &der)
         .map_err(|_| Error::InvalidPublicKey)?;
     Ok(pem.as_bytes().to_vec())
 }
@@ -463,7 +475,7 @@ pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<Vec<u8>, Error> {
 #[cfg(feature = "alloc")]
 pub fn public_key_from_spki_pem(pem: &[u8]) -> Result<[u8; 65], Error> {
     let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidPublicKey)?;
-    public_key_from_spki_der(&der)
+    der::public_key_from_spki_der(&der)
 }
 
 /// 将公钥转换为压缩格式 (33字节)
@@ -569,6 +581,34 @@ pub struct CertificationRequest {
     pub signature: Vec<u8>,
 }
 
+#[cfg(feature = "alloc")]
+impl CertificationRequest {
+    /// 从 DER 格式解析 CSR
+    pub fn from_der(der: &[u8]) -> Result<Self, Error> {
+        parse_csr(der)
+    }
+
+    /// 将 CSR 编码为 DER 格式
+    pub fn to_der(&self) -> Vec<u8> {
+        csr_to_der(self)
+    }
+
+    /// 从 PEM 格式解析 CSR
+    pub fn from_pem(pem: &[u8]) -> Result<Self, Error> {
+        parse_csr_pem(pem)
+    }
+
+    /// 将 CSR 编码为 PEM 格式
+    pub fn to_pem(&self) -> Result<Vec<u8>, Error> {
+        csr_to_pem(self)
+    }
+
+    /// 提取公钥
+    pub fn extract_public_key(&self) -> Result<[u8; 65], Error> {
+        extract_pubkey_from_spki(&self.info.subject_public_key_info)
+    }
+}
+
 /// 生成证书请求信息 (CertificationRequestInfo) DER 编码
 /// 
 /// 格式 (PKCS#10):
@@ -597,7 +637,7 @@ pub fn generate_csr_info(
     components.extend_from_slice(subject);
     
     // subjectPublicKeyInfo (SPKI)
-    let spki = public_key_to_spki_der(pub_key);
+    let spki = der::public_key_to_spki_der(pub_key);
     components.extend_from_slice(&spki);
     
     // attributes [0] (空集合)
@@ -653,7 +693,7 @@ pub fn generate_csr<R: Rng>(
         info: CertificationRequestInfo {
             version: 0,
             subject: subject.to_vec(),
-            subject_public_key_info: public_key_to_spki_der(pub_key),
+            subject_public_key_info: der::public_key_to_spki_der(pub_key),
             attributes: alloc::vec![0xA0, 0x00],
         },
         signature_algorithm: sig_alg,
@@ -708,16 +748,75 @@ pub fn csr_to_der(csr: &CertificationRequest) -> Vec<u8> {
 /// 从 SPKI DER 中提取公钥
 #[cfg(feature = "alloc")]
 fn extract_pubkey_from_spki(spki: &[u8]) -> Result<[u8; 65], Error> {
-    public_key_from_spki_der(spki)
+    der::public_key_from_spki_der(spki)
 }
 
 /// 生成 CSR PEM 格式
 #[cfg(feature = "alloc")]
 pub fn csr_to_pem(csr: &CertificationRequest) -> Result<Vec<u8>, Error> {
     let der = csr_to_der(csr);
-    let pem = encode_string("CERTIFICATE REQUEST", Default::default(), &der)
+    let pem = encode_string(pem_labels::CERTIFICATE_REQUEST, Default::default(), &der)
         .map_err(|_| Error::InvalidCertificate)?;
     Ok(pem.as_bytes().to_vec())
+}
+
+/// 从 DER 解析 CSR
+#[cfg(feature = "alloc")]
+pub fn parse_csr(der: &[u8]) -> Result<CertificationRequest, Error> {
+    let err = || Error::InvalidCertificate;
+
+    let (seq_body, _) = der::parse_tlv(der, 0x30).ok_or_else(err)?;
+
+    // 解析 CertificationRequestInfo
+    let (info_tlv, rest) = der::parse_tlv_any_full(seq_body).ok_or_else(err)?;
+
+    // 从 info_tlv 解析各个字段
+    let (info_seq, _) = der::parse_tlv(info_tlv, 0x30).ok_or_else(err)?;
+
+    // version INTEGER
+    let (ver_bytes, info_rest) = der::parse_tlv(info_seq, 0x02).ok_or_else(err)?;
+    let version = if ver_bytes.len() == 1 {
+        ver_bytes[0] as u32
+    } else {
+        return Err(err());
+    };
+
+    // subject Name
+    let (subject, info_rest) = der::parse_tlv_any_full(info_rest).ok_or_else(err)?;
+
+    // subjectPKInfo
+    let (subject_public_key_info, info_rest) = der::parse_tlv_any_full(info_rest).ok_or_else(err)?;
+
+    // attributes [0]
+    let (attributes, _) = der::parse_tlv_any_full(info_rest).ok_or_else(err)?;
+
+    // 解析 signatureAlgorithm
+    let (signature_algorithm, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+
+    // 解析 signatureValue (BIT STRING)
+    let (sig_bit_str, _) = der::parse_tlv(rest, 0x03).ok_or_else(err)?;
+    if sig_bit_str.is_empty() || sig_bit_str[0] != 0 {
+        return Err(err());
+    }
+    let signature = sig_bit_str[1..].to_vec();
+
+    Ok(CertificationRequest {
+        info: CertificationRequestInfo {
+            version,
+            subject: subject.to_vec(),
+            subject_public_key_info: subject_public_key_info.to_vec(),
+            attributes: attributes.to_vec(),
+        },
+        signature_algorithm: signature_algorithm.to_vec(),
+        signature,
+    })
+}
+
+/// 从 PEM 解析 CSR
+#[cfg(feature = "alloc")]
+pub fn parse_csr_pem(pem: &[u8]) -> Result<CertificationRequest, Error> {
+    let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+    parse_csr(&der)
 }
 
 /// 计算公钥指纹 (SM3)
@@ -756,7 +855,7 @@ pub fn generate_self_signed_cert<R: Rng>(
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
     let pub_key = priv_key.public_key();
-    let spki = public_key_to_spki_der(&pub_key);
+    let spki = der::public_key_to_spki_der(&pub_key);
     
     // SM2 签名算法标识符
     let sig_alg: Vec<u8> = alloc::vec![
@@ -881,7 +980,7 @@ mod tests {
                 0x17, 0x0d, 0x33, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime
             ],
             subject: vec![0x31, 0x11, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x08, 0x55, 0x73, 0x65, 0x72, 0x4E, 0x61, 0x6D, 0x65],
-            subject_public_key_info: public_key_to_spki_der(&pub_key),
+            subject_public_key_info: der::public_key_to_spki_der(&pub_key),
             signature: vec![0x00, 0x01, 0x02, 0x03],
         };
         
@@ -910,8 +1009,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
         
-        let der = private_key_to_sec1_der(&priv_key);
-        let recovered = private_key_from_sec1_der(&der).expect("SEC1 解析应成功");
+        let der = der::private_key_to_sec1_der(&priv_key);
+        let recovered = der::private_key_from_sec1_der(&der).expect("SEC1 解析应成功");
         
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
     }
@@ -922,8 +1021,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
         
-        let der = private_key_to_pkcs8_der(&priv_key);
-        let recovered = private_key_from_pkcs8_der(&der).expect("PKCS#8 解析应成功");
+        let der = der::private_key_to_pkcs8_der(&priv_key);
+        let recovered = der::private_key_from_pkcs8_der(&der).expect("PKCS#8 解析应成功");
         
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
     }
@@ -934,8 +1033,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
         
-        let der = public_key_to_spki_der(&pub_key);
-        let recovered = public_key_from_spki_der(&der).expect("SPKI 解析应成功");
+        let der = der::public_key_to_spki_der(&pub_key);
+        let recovered = der::public_key_from_spki_der(&der).expect("SPKI 解析应成功");
         
         assert_eq!(pub_key, recovered);
     }
@@ -1078,7 +1177,7 @@ mod tests {
             issuer: vec![0x31, 0x00],
             validity,
             subject: vec![0x31, 0x00],
-            subject_public_key_info: public_key_to_spki_der(&pub_key),
+            subject_public_key_info: der::public_key_to_spki_der(&pub_key),
             signature: vec![0x00; 64],
         };
         
