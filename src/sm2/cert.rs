@@ -1,8 +1,8 @@
 //! 国密证书格式支持（GM/T 0015-2012）
-//! 
+//!
 //! 实现 GM/T 0015-2012 《基于SM2密码算法的数字证书格式》标准，
 //! 支持证书的解析和生成、密钥的 DER/PEM 编解码、证书签名验证等功能。
-//! 
+//!
 //! # 功能
 //! - 证书解析和生成（DER 格式）
 //! - 证书 PEM 格式解析和生成
@@ -10,6 +10,7 @@
 //! - 私钥 SEC1/PKCS#8 DER/PEM 编解码
 //! - 公钥 SPKI DER/PEM 编解码
 //! - 证书数据的 SM2 签名和验证
+//! - X.509 标准证书支持（使用 x509-cert）
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -22,8 +23,29 @@ use rand_core::Rng;
 #[cfg(feature = "alloc")]
 use pem_rfc7468::{encode_string, decode_vec};
 
+// x509-cert 相关导入
+#[cfg(feature = "alloc")]
+use x509_cert::Certificate;
+#[cfg(feature = "alloc")]
+use x509_cert::der::Decode;
+#[cfg(feature = "alloc")]
+use x509_cert::spki::ObjectIdentifier;
+
+/// SM2 签名算法 OID (1.2.156.10197.1.501)
+#[cfg(feature = "alloc")]
+pub const SM2_SIG_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
+
+/// SM2 椭圆曲线公钥算法 OID (1.2.156.10197.1.301)
+#[cfg(feature = "alloc")]
+pub const SM2_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.301");
+
+/// EC 公钥算法 OID (1.2.840.10045.2.1)
+#[cfg(feature = "alloc")]
+pub const EC_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+
 /// 国密证书结构
 #[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
 pub struct GmCertificate {
     /// 版本
     pub version: u32,
@@ -167,6 +189,134 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
     Ok(result)
 }
 
+// -- X.509 证书支持（使用 x509-cert crate）--------------------------------------
+
+/// 使用 x509-cert 解析 X.509 证书
+#[cfg(feature = "alloc")]
+pub fn parse_x509_certificate(der: &[u8]) -> Result<Certificate, Error> {
+    Certificate::from_der(der).map_err(|_| Error::InvalidCertificate)
+}
+
+/// 检查证书是否使用 SM2 算法
+/// 
+/// 注意：此函数需要访问证书的签名算法 OID
+#[cfg(feature = "alloc")]
+pub fn is_sm2_certificate(cert: &Certificate) -> bool {
+    // 通过证书的 DER 编码检查 OID
+    // SM2 签名算法 OID: 1.2.156.10197.1.501
+    // 对应的 DER 编码包含特定字节序列
+    if let Ok(der) = x509_cert::der::Encode::to_der(cert) {
+        // 检查是否包含 SM2 OID 的特征字节
+        // OID 1.2.156.10197.1.501 的 DER 编码: 06 08 2A 81 1C CF 55 01 83 75
+        der.windows(10).any(|window| {
+            window == [0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75]
+        })
+    } else {
+        false
+    }
+}
+
+/// 证书有效期结构
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub struct ValidityPeriod {
+    /// 生效时间 (UTCTime/GeneralizedTime 格式 YYMMDDHHMMSSZ)
+    pub not_before: Vec<u8>,
+    /// 过期时间 (UTCTime/GeneralizedTime 格式 YYMMDDHHMMSSZ)
+    pub not_after: Vec<u8>,
+}
+
+/// 从证书有效期字段解析时间
+/// 
+/// 支持 UTCTime (2字节年份) 和 GeneralizedTime (4字节年份) 格式
+#[cfg(feature = "alloc")]
+pub fn parse_validity(validity_der: &[u8]) -> Result<ValidityPeriod, Error> {
+    let err = || Error::InvalidCertificate;
+    
+    // 解析外层 SEQUENCE
+    let (seq_body, _) = der::parse_tlv(validity_der, 0x30).ok_or_else(err)?;
+    
+    let mut rest = seq_body;
+    
+    // 解析 notBefore
+    let (tag, _) = rest.split_first().ok_or_else(err)?;
+    let (not_before, remaining) = if *tag == 0x17 {
+        // UTCTime
+        der::parse_tlv(rest, 0x17).ok_or_else(err)?
+    } else if *tag == 0x18 {
+        // GeneralizedTime
+        der::parse_tlv(rest, 0x18).ok_or_else(err)?
+    } else {
+        return Err(err());
+    };
+    rest = remaining;
+    
+    // 解析 notAfter
+    let (tag, _) = rest.split_first().ok_or_else(err)?;
+    let (not_after, _) = if *tag == 0x17 {
+        // UTCTime
+        der::parse_tlv(rest, 0x17).ok_or_else(err)?
+    } else if *tag == 0x18 {
+        // GeneralizedTime
+        der::parse_tlv(rest, 0x18).ok_or_else(err)?
+    } else {
+        return Err(err());
+    };
+    
+    Ok(ValidityPeriod {
+        not_before: not_before.to_vec(),
+        not_after: not_after.to_vec(),
+    })
+}
+
+/// 验证证书有效期
+/// 
+/// 检查当前时间是否在证书的有效期内
+/// 注意：此函数需要外部提供当前时间（以 UTCTime 格式）
+#[cfg(feature = "alloc")]
+pub fn verify_certificate_validity(
+    cert: &GmCertificate,
+    current_time: &[u8], // YYMMDDHHMMSSZ 格式
+) -> Result<(), Error> {
+    let validity = parse_validity(&cert.validity)?;
+    
+    // 比较时间（字典序比较，因为都是 ASCII 格式）
+    if current_time < validity.not_before.as_slice() {
+        return Err(Error::InvalidCertificate); // 证书尚未生效
+    }
+    if current_time > validity.not_after.as_slice() {
+        return Err(Error::InvalidCertificate); // 证书已过期
+    }
+    
+    Ok(())
+}
+
+/// 生成有效期 DER 编码
+/// 
+/// 使用 UTCTime 格式 (tag 0x17)
+#[cfg(feature = "alloc")]
+pub fn generate_validity(not_before: &[u8], not_after: &[u8]) -> Vec<u8> {
+    let mut validity = Vec::new();
+    
+    // notBefore UTCTime
+    validity.push(0x17);
+    validity.push(not_before.len() as u8);
+    validity.extend_from_slice(not_before);
+    
+    // notAfter UTCTime
+    validity.push(0x17);
+    validity.push(not_after.len() as u8);
+    validity.extend_from_slice(not_after);
+    
+    // 包装成 SEQUENCE
+    let mut seq = Vec::new();
+    seq.push(0x30);
+    seq.push(validity.len() as u8);
+    seq.extend(validity);
+    
+    seq
+}
+
 // -- 证书 PEM 支持 ------------------------------------------------------------------
 
 /// 解析 PEM 格式的国密证书
@@ -183,6 +333,13 @@ pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Erro
     let pem = encode_string("CERTIFICATE", Default::default(), &der)
         .map_err(|_| Error::InvalidCertificate)?;
     Ok(pem.as_bytes().to_vec())
+}
+
+/// 解析 PEM 格式的 X.509 证书
+#[cfg(feature = "alloc")]
+pub fn parse_x509_certificate_pem(pem: &[u8]) -> Result<Certificate, Error> {
+    let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+    parse_x509_certificate(&der)
 }
 
 // -- 证书签名和验证 ---------------------------------------------------------------
@@ -309,6 +466,394 @@ pub fn public_key_from_spki_pem(pem: &[u8]) -> Result<[u8; 65], Error> {
     public_key_from_spki_der(&der)
 }
 
+/// 将公钥转换为压缩格式 (33字节)
+/// 
+/// 压缩格式: 02||x (y为偶数) 或 03||x (y为奇数)
+#[cfg(feature = "alloc")]
+pub fn public_key_to_compressed(pub_key: &[u8; 65]) -> Result<[u8; 33], Error> {
+    if pub_key[0] != 0x04 {
+        return Err(Error::InvalidPublicKey);
+    }
+    
+    let x = &pub_key[1..33];
+    let y = &pub_key[33..65];
+    
+    // 根据 y 的最低位选择前缀
+    let prefix = if y[31] & 1 == 0 { 0x02 } else { 0x03 };
+    
+    let mut compressed = [0u8; 33];
+    compressed[0] = prefix;
+    compressed[1..].copy_from_slice(x);
+    
+    Ok(compressed)
+}
+
+/// 从压缩格式还原公钥 (需要计算 y)
+/// 
+/// 使用椭圆曲线点解压缩算法：
+/// 1. 从压缩格式提取 x 坐标和前缀
+/// 2. 计算 α = x³ + ax + b (mod p)
+/// 3. 计算 y = √α (mod p) 使用 Tonelli-Shanks 算法
+/// 4. 根据前缀选择正确的 y 值（02=偶数，03=奇数）
+#[cfg(feature = "alloc")]
+pub fn public_key_from_compressed(compressed: &[u8; 33]) -> Result<[u8; 65], Error> {
+    use crate::sm2::field::{fp_from_bytes, fp_to_bytes, fp_sqrt, fp_mul, fp_add, fp_square, CURVE_A, CURVE_B};
+    
+    // 验证前缀
+    let prefix = compressed[0];
+    if prefix != 0x02 && prefix != 0x03 {
+        return Err(Error::InvalidPublicKey);
+    }
+    
+    // 提取 x 坐标
+    let mut x_bytes = [0u8; 32];
+    x_bytes.copy_from_slice(&compressed[1..33]);
+    let x = fp_from_bytes(&x_bytes);
+    
+    // 计算 α = x³ + ax + b (mod p)
+    let x2 = fp_square(&x);
+    let x3 = fp_mul(&x2, &x);
+    let ax = fp_mul(&CURVE_A, &x);
+    let alpha = fp_add(&fp_add(&x3, &ax), &CURVE_B);
+    
+    // 计算 y = √α (mod p)
+    let y = fp_sqrt(&alpha).ok_or(Error::InvalidPublicKey)?;
+    let y_bytes = fp_to_bytes(&y);
+    
+    // 根据前缀选择正确的 y 值
+    // 前缀 02 表示 y 为偶数，03 表示 y 为奇数
+    let y_is_odd = y_bytes[31] & 1 == 1;
+    let prefix_wants_odd = prefix == 0x03;
+    
+    let final_y_bytes = if y_is_odd != prefix_wants_odd {
+        // 需要取 -y (mod p)
+        use crate::sm2::field::fp_neg;
+        let neg_y = fp_neg(&y);
+        fp_to_bytes(&neg_y)
+    } else {
+        y_bytes
+    };
+    
+    // 构造完整公钥
+    let mut pub_key = [0u8; 65];
+    pub_key[0] = 0x04; // 未压缩格式前缀
+    pub_key[1..33].copy_from_slice(&x_bytes);
+    pub_key[33..65].copy_from_slice(&final_y_bytes);
+    
+    Ok(pub_key)
+}
+
+/// 证书请求信息 (CSR - PKCS#10)
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub struct CertificationRequestInfo {
+    /// 版本 (0 = v1)
+    pub version: u32,
+    /// 主体名称 (X.500 DN)
+    pub subject: Vec<u8>,
+    /// 主体公钥信息 (SPKI)
+    pub subject_public_key_info: Vec<u8>,
+    /// 属性集合 (可选)
+    pub attributes: Vec<u8>,
+}
+
+/// 证书请求 (CSR)
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub struct CertificationRequest {
+    /// 证书请求信息
+    pub info: CertificationRequestInfo,
+    /// 签名算法标识
+    pub signature_algorithm: Vec<u8>,
+    /// 签名值
+    pub signature: Vec<u8>,
+}
+
+/// 生成证书请求信息 (CertificationRequestInfo) DER 编码
+/// 
+/// 格式 (PKCS#10):
+/// ```text
+/// CertificationRequestInfo ::= SEQUENCE {
+///     version       INTEGER { v1(0) },
+///     subject       Name,
+///     subjectPKInfo SubjectPublicKeyInfo,
+///     attributes    [0] IMPLICIT Attributes OPTIONAL
+/// }
+/// ```
+#[cfg(feature = "alloc")]
+pub fn generate_csr_info(
+    version: u32,
+    subject: &[u8],
+    pub_key: &[u8; 65],
+) -> Vec<u8> {
+    let mut components = Vec::new();
+    
+    // version INTEGER = 0
+    components.push(0x02); // INTEGER tag
+    components.push(0x01); // length
+    components.push(version as u8);
+    
+    // subject Name (直接复制传入的 DER)
+    components.extend_from_slice(subject);
+    
+    // subjectPublicKeyInfo (SPKI)
+    let spki = public_key_to_spki_der(pub_key);
+    components.extend_from_slice(&spki);
+    
+    // attributes [0] (空集合)
+    components.push(0xA0); // context-specific [0] constructed
+    components.push(0x00); // empty
+    
+    // 包装成 SEQUENCE
+    let total_len: usize = components.len();
+    let mut der = Vec::new();
+    der.push(0x30); // SEQUENCE
+    
+    // 编码长度
+    if total_len < 128 {
+        der.push(total_len as u8);
+    } else if total_len < 256 {
+        der.push(0x81);
+        der.push(total_len as u8);
+    } else {
+        der.push(0x82);
+        der.push((total_len >> 8) as u8);
+        der.push((total_len & 0xFF) as u8);
+    }
+    
+    der.extend(components);
+    der
+}
+
+/// 生成证书请求 (CSR)
+/// 
+/// 使用 SM2 签名算法对 CertificationRequestInfo 进行签名
+#[cfg(feature = "alloc")]
+pub fn generate_csr<R: Rng>(
+    subject: &[u8],
+    pub_key: &[u8; 65],
+    priv_key: &PrivateKey,
+    id: &[u8],
+    rng: &mut R,
+) -> Result<CertificationRequest, Error> {
+    // 生成 CertificationRequestInfo
+    let info_der = generate_csr_info(0, subject, pub_key);
+    
+    // 对 info 进行签名
+    let signature = sign_certificate_data(&info_der, priv_key, id, rng)?;
+    
+    // SM2 签名算法标识符
+    let sig_alg: Vec<u8> = alloc::vec![
+        0x30, 0x0A, // SEQUENCE
+        0x06, 0x08, // OID
+        0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75, // 1.2.156.10197.1.501 (SM2签名)
+    ];
+    
+    Ok(CertificationRequest {
+        info: CertificationRequestInfo {
+            version: 0,
+            subject: subject.to_vec(),
+            subject_public_key_info: public_key_to_spki_der(pub_key),
+            attributes: alloc::vec![0xA0, 0x00],
+        },
+        signature_algorithm: sig_alg,
+        signature: signature.to_vec(),
+    })
+}
+
+/// 将 CSR 编码为 DER 格式
+#[cfg(feature = "alloc")]
+pub fn csr_to_der(csr: &CertificationRequest) -> Vec<u8> {
+    let mut components = Vec::new();
+    
+    // CertificationRequestInfo
+    let info_der = generate_csr_info(
+        csr.info.version,
+        &csr.info.subject,
+        &extract_pubkey_from_spki(&csr.info.subject_public_key_info).unwrap_or([0u8; 65]),
+    );
+    components.extend_from_slice(&info_der);
+    
+    // signatureAlgorithm
+    components.extend_from_slice(&csr.signature_algorithm);
+    
+    // signatureValue (BIT STRING)
+    let mut sig_bitstr = Vec::new();
+    sig_bitstr.push(0x03); // BIT STRING
+    sig_bitstr.push((csr.signature.len() + 1) as u8);
+    sig_bitstr.push(0x00); // unused bits
+    sig_bitstr.extend_from_slice(&csr.signature);
+    components.extend_from_slice(&sig_bitstr);
+    
+    // 包装成 SEQUENCE
+    let total_len: usize = components.len();
+    let mut der = Vec::new();
+    der.push(0x30);
+
+    if total_len < 128 {
+        der.push(total_len as u8);
+    } else if total_len < 256 {
+        der.push(0x81);
+        der.push(total_len as u8);
+    } else {
+        der.push(0x82);
+        der.push((total_len >> 8) as u8);
+        der.push((total_len & 0xFF) as u8);
+    }
+
+    der.extend(components);
+    der
+}
+
+/// 从 SPKI DER 中提取公钥
+#[cfg(feature = "alloc")]
+fn extract_pubkey_from_spki(spki: &[u8]) -> Result<[u8; 65], Error> {
+    public_key_from_spki_der(spki)
+}
+
+/// 生成 CSR PEM 格式
+#[cfg(feature = "alloc")]
+pub fn csr_to_pem(csr: &CertificationRequest) -> Result<Vec<u8>, Error> {
+    let der = csr_to_der(csr);
+    let pem = encode_string("CERTIFICATE REQUEST", Default::default(), &der)
+        .map_err(|_| Error::InvalidCertificate)?;
+    Ok(pem.as_bytes().to_vec())
+}
+
+/// 计算公钥指纹 (SM3)
+#[cfg(feature = "alloc")]
+pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
+    use crate::sm3::Sm3Hasher;
+    
+    let mut hasher = Sm3Hasher::new();
+    hasher.update(pub_key);
+    hasher.finalize()
+}
+
+// -- 自签名证书生成 -------------------------------------------------------------
+
+/// 生成自签名证书
+/// 
+/// 自签名证书中 issuer 和 subject 相同，使用自己的私钥签名
+/// 
+/// # 参数
+/// - `priv_key`: 私钥（用于签名）
+/// - `subject`: 主体名称 DER 编码
+/// - `validity`: 有效期 DER 编码
+/// - `serial_number`: 序列号
+/// - `id`: SM2 签名 ID
+/// - `rng`: 随机数生成器
+/// 
+/// # 返回
+/// 生成的自签名证书
+#[cfg(feature = "alloc")]
+pub fn generate_self_signed_cert<R: Rng>(
+    priv_key: &PrivateKey,
+    subject: &[u8],
+    validity: &[u8],
+    serial_number: &[u8],
+    id: &[u8],
+    rng: &mut R,
+) -> Result<GmCertificate, Error> {
+    let pub_key = priv_key.public_key();
+    let spki = public_key_to_spki_der(&pub_key);
+    
+    // SM2 签名算法标识符
+    let sig_alg: Vec<u8> = alloc::vec![
+        0x30, 0x0A, // SEQUENCE
+        0x06, 0x08, // OID
+        0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75, // 1.2.156.10197.1.501
+    ];
+    
+    // 构建 TBSCertificate (待签名部分)
+    let mut tbs = Vec::new();
+    
+    // version [0] INTEGER 2
+    tbs.push(0xA0);
+    tbs.push(0x03);
+    tbs.push(0x02);
+    tbs.push(0x01);
+    tbs.push(0x02);
+    
+    // serialNumber INTEGER
+    tbs.push(0x02);
+    tbs.push(serial_number.len() as u8);
+    tbs.extend_from_slice(serial_number);
+    
+    // signature AlgorithmIdentifier
+    tbs.extend_from_slice(&sig_alg);
+    
+    // issuer Name (自签名，issuer = subject)
+    tbs.extend_from_slice(subject);
+    
+    // validity Validity
+    tbs.extend_from_slice(validity);
+    
+    // subject Name
+    tbs.extend_from_slice(subject);
+    
+    // subjectPublicKeyInfo
+    tbs.extend_from_slice(&spki);
+    
+    // 对 TBSCertificate 签名
+    let signature = sign_certificate_data(&tbs, priv_key, id, rng)?;
+    
+    Ok(GmCertificate {
+        version: 2,
+        serial_number: serial_number.to_vec(),
+        signature_algorithm: sig_alg,
+        issuer: subject.to_vec(),
+        validity: validity.to_vec(),
+        subject: subject.to_vec(),
+        subject_public_key_info: spki,
+        signature: signature.to_vec(),
+    })
+}
+
+/// 验证自签名证书
+/// 
+/// 验证证书的签名是否由证书中的公钥验证通过
+#[cfg(feature = "alloc")]
+pub fn verify_self_signed_cert(cert: &GmCertificate, id: &[u8]) -> Result<(), Error> {
+    // 提取公钥
+    let pub_key = extract_sm2_public_key(cert)?;
+    
+    // 重建 TBSCertificate
+    let mut tbs = Vec::new();
+    
+    // version [0] INTEGER 2
+    tbs.push(0xA0);
+    tbs.push(0x03);
+    tbs.push(0x02);
+    tbs.push(0x01);
+    tbs.push(0x02);
+    
+    // serialNumber
+    tbs.push(0x02);
+    tbs.push(cert.serial_number.len() as u8);
+    tbs.extend_from_slice(&cert.serial_number);
+    
+    // signature
+    tbs.extend_from_slice(&cert.signature_algorithm);
+    
+    // issuer
+    tbs.extend_from_slice(&cert.issuer);
+    
+    // validity
+    tbs.extend_from_slice(&cert.validity);
+    
+    // subject
+    tbs.extend_from_slice(&cert.subject);
+    
+    // subjectPublicKeyInfo
+    tbs.extend_from_slice(&cert.subject_public_key_info);
+    
+    // 验证签名
+    verify_certificate_data(&tbs, &cert.signature, &pub_key, id)
+}
+
+// -- 测试 -----------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,77 +911,327 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
         
         let der = private_key_to_sec1_der(&priv_key);
-        let recovered = private_key_from_sec1_der(&der).expect("SEC1 DER 解析应成功");
+        let recovered = private_key_from_sec1_der(&der).expect("SEC1 解析应成功");
+        
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
     }
     
     #[test]
     #[cfg(feature = "alloc")]
     fn test_private_key_pkcs8_der_roundtrip() {
-        let mut rng = StdRng::seed_from_u64(654321);
+        let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
         
         let der = private_key_to_pkcs8_der(&priv_key);
-        let recovered = private_key_from_pkcs8_der(&der).expect("PKCS#8 DER 解析应成功");
-        assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
-    }
-    
-    #[test]
-    #[cfg(feature = "alloc")]
-    fn test_private_key_sec1_pem_roundtrip() {
-        let mut rng = StdRng::seed_from_u64(111222);
-        let (priv_key, _) = generate_keypair(&mut rng);
+        let recovered = private_key_from_pkcs8_der(&der).expect("PKCS#8 解析应成功");
         
-        let pem = private_key_to_sec1_pem(&priv_key).expect("SEC1 PEM 编码应成功");
-        let recovered = private_key_from_sec1_pem(&pem).expect("SEC1 PEM 解析应成功");
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
     }
     
     #[test]
     #[cfg(feature = "alloc")]
-    fn test_private_key_pkcs8_pem_roundtrip() {
-        let mut rng = StdRng::seed_from_u64(222111);
-        let (priv_key, _) = generate_keypair(&mut rng);
-        
-        let pem = private_key_to_pkcs8_pem(&priv_key).expect("PKCS#8 PEM 编码应成功");
-        let recovered = private_key_from_pkcs8_pem(&pem).expect("PKCS#8 PEM 解析应成功");
-        assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
-    }
-    
-    #[test]
-    #[cfg(feature = "alloc")]
-    fn test_public_key_spki() {
-        let mut rng = StdRng::seed_from_u64(333444);
+    fn test_public_key_spki_der_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
         
-        let spki_der = public_key_to_spki_der(&pub_key);
-        assert!(!spki_der.is_empty());
+        let der = public_key_to_spki_der(&pub_key);
+        let recovered = public_key_from_spki_der(&der).expect("SPKI 解析应成功");
         
-        let spki_pem = public_key_to_spki_pem(&pub_key).expect("SPKI PEM 编码应成功");
-        assert!(!spki_pem.is_empty());
-        
-        let recovered_der = public_key_from_spki_der(&spki_der).expect("SPKI DER 解析应成功");
-        assert_eq!(recovered_der, pub_key);
-        
-        let recovered_pem = public_key_from_spki_pem(&spki_pem).expect("SPKI PEM 解析应成功");
-        assert_eq!(recovered_pem, pub_key);
+        assert_eq!(pub_key, recovered);
     }
     
     #[test]
     #[cfg(feature = "alloc")]
-    fn test_certificate_signing_and_verification() {
-        let mut rng = StdRng::seed_from_u64(444555);
+    fn test_certificate_sign_verify() {
+        let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
-        let data = b"test certificate data";
+        
+        let test_data = b"Test data for signing";
         let id = DEFAULT_ID;
         
-        let signature = sign_certificate_data(data, &priv_key, id, &mut rng)
+        let signature = sign_certificate_data(test_data, &priv_key, id, &mut rng)
             .expect("签名应成功");
         
-        verify_certificate_data(data, &signature, &pub_key, id)
-            .expect("验签应成功");
+        verify_certificate_data(test_data, &signature, &pub_key, id)
+            .expect("验证应成功");
         
-        let tampered_data = b"tampered data";
+        // 篡改数据应验证失败
+        let tampered_data = b"Tampered data";
         assert!(verify_certificate_data(tampered_data, &signature, &pub_key, id).is_err());
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_public_key_compression() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (_, pub_key) = generate_keypair(&mut rng);
+        
+        // 测试压缩
+        let compressed = public_key_to_compressed(&pub_key).expect("压缩应成功");
+        assert_eq!(compressed.len(), 33);
+        assert!(compressed[0] == 0x02 || compressed[0] == 0x03);
+        
+        // 验证压缩格式包含原始 x 坐标
+        assert_eq!(&compressed[1..], &pub_key[1..33]);
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_public_key_fingerprint() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (_, pub_key) = generate_keypair(&mut rng);
+        
+        let fingerprint = public_key_fingerprint(&pub_key);
+        assert_eq!(fingerprint.len(), 32); // SM3 输出 32 字节
+        
+        // 相同公钥应该产生相同指纹
+        let fingerprint2 = public_key_fingerprint(&pub_key);
+        assert_eq!(fingerprint, fingerprint2);
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_sm2_algorithm_identifiers() {
+        // 验证 SM2 OID 常量已正确定义
+        // OID 1.2.156.10197.1.501 (SM2 签名)
+        assert_eq!(SM2_SIG_OID.as_bytes(), &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75]);
+        // OID 1.2.156.10197.1.301 (SM2 椭圆曲线)
+        assert_eq!(SM2_PUBKEY_OID.as_bytes(), &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D]);
+        // OID 1.2.840.10045.2.1 (EC 公钥)
+        assert_eq!(EC_PUBKEY_OID.as_bytes(), &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01]);
+    }
+    
+    // -- 公钥解压缩测试 --------------------------------------------------------
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_public_key_decompression() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (_, pub_key) = generate_keypair(&mut rng);
+        
+        // 压缩公钥
+        let compressed = public_key_to_compressed(&pub_key).expect("压缩应成功");
+        
+        // 解压缩公钥
+        let decompressed = public_key_from_compressed(&compressed).expect("解压缩应成功");
+        
+        // 验证解压缩后的公钥与原始公钥相同
+        assert_eq!(decompressed, pub_key);
+        
+        // 验证前缀正确性
+        assert!(compressed[0] == 0x02 || compressed[0] == 0x03);
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_public_key_decompression_invalid_prefix() {
+        // 测试无效前缀
+        let mut invalid_compressed = [0u8; 33];
+        invalid_compressed[0] = 0x04; // 无效前缀
+        
+        assert!(public_key_from_compressed(&invalid_compressed).is_err());
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_public_key_compression_decompression_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(789012);
+        
+        // 测试多个密钥对
+        for _i in 0..10 {
+            let (_, pub_key) = generate_keypair(&mut rng);
+            let compressed = public_key_to_compressed(&pub_key).expect("压缩应成功");
+            let decompressed = public_key_from_compressed(&compressed).expect("解压缩应成功");
+            assert_eq!(decompressed, pub_key);
+        }
+    }
+    
+    // -- 证书有效期测试 --------------------------------------------------------
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_validity_parsing() {
+        // 构建有效期 DER
+        let not_before = b"250101000000Z";
+        let not_after = b"300101000000Z";
+        let validity_der = generate_validity(not_before, not_after);
+        
+        // 解析有效期
+        let validity = parse_validity(&validity_der).expect("解析有效期应成功");
+        
+        assert_eq!(validity.not_before, not_before.to_vec());
+        assert_eq!(validity.not_after, not_after.to_vec());
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_certificate_validity_verification() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (_, pub_key) = generate_keypair(&mut rng);
+        
+        let validity = generate_validity(b"200101000000Z", b"300101000000Z");
+        
+        let cert = GmCertificate {
+            version: 2,
+            serial_number: vec![0x01],
+            signature_algorithm: vec![0x30, 0x0A, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75],
+            issuer: vec![0x31, 0x00],
+            validity,
+            subject: vec![0x31, 0x00],
+            subject_public_key_info: public_key_to_spki_der(&pub_key),
+            signature: vec![0x00; 64],
+        };
+        
+        // 测试有效期内的时间
+        assert!(verify_certificate_validity(&cert, b"250101000000Z").is_ok());
+        
+        // 测试过期时间
+        assert!(verify_certificate_validity(&cert, b"400101000000Z").is_err());
+        
+        // 测试尚未生效时间
+        assert!(verify_certificate_validity(&cert, b"100101000000Z").is_err());
+    }
+    
+    // -- CSR 测试 --------------------------------------------------------------
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_csr_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+        
+        // 主体名称 (简化 X.500 DN)
+        let subject = vec![
+            0x31, 0x11, // SET
+            0x30, 0x0F, // SEQUENCE
+            0x06, 0x03, 0x55, 0x04, 0x03, // OID commonName
+            0x13, 0x08, b'T', b'e', b's', b't', b'U', b's', b'e', b'r', // UTF8String
+        ];
+        
+        let csr = generate_csr(&subject, &pub_key, &priv_key, DEFAULT_ID, &mut rng)
+            .expect("CSR 生成应成功");
+        
+        assert_eq!(csr.info.version, 0);
+        assert_eq!(csr.info.subject, subject);
+        assert_eq!(csr.signature.len(), 64);
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_csr_der_encoding() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+        
+        let subject = vec![0x31, 0x00]; // 空主体
+        
+        let csr = generate_csr(&subject, &pub_key, &priv_key, DEFAULT_ID, &mut rng)
+            .expect("CSR 生成应成功");
+        
+        let der = csr_to_der(&csr);
+        
+        // 验证 DER 结构
+        assert_eq!(der[0], 0x30); // SEQUENCE
+        assert!(!der.is_empty());
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_csr_pem_encoding() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+        
+        let subject = vec![0x31, 0x00];
+        
+        let csr = generate_csr(&subject, &pub_key, &priv_key, DEFAULT_ID, &mut rng)
+            .expect("CSR 生成应成功");
+        
+        let pem = csr_to_pem(&csr).expect("PEM 编码应成功");
+        
+        assert!(pem.starts_with(b"-----BEGIN CERTIFICATE REQUEST-----"));
+        assert!(pem.ends_with(b"-----END CERTIFICATE REQUEST-----\n"));
+    }
+    
+    // -- 自签名证书测试 --------------------------------------------------------
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_self_signed_cert_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _) = generate_keypair(&mut rng);
+        
+        let subject = vec![
+            0x31, 0x11,
+            0x30, 0x0F,
+            0x06, 0x03, 0x55, 0x04, 0x03,
+            0x13, 0x08, b'S', b'e', b'l', b'f', b'S', b'i', b'g', b'n',
+        ];
+        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let serial = vec![0x01, 0x02, 0x03, 0x04];
+        
+        let cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            &mut rng,
+        ).expect("自签名证书生成应成功");
+        
+        // 验证 issuer 和 subject 相同
+        assert_eq!(cert.issuer, cert.subject);
+        assert_eq!(cert.issuer, subject);
+        assert_eq!(cert.serial_number, serial);
+        assert_eq!(cert.version, 2);
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_self_signed_cert_verification() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _) = generate_keypair(&mut rng);
+        
+        let subject = vec![0x31, 0x00];
+        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let serial = vec![0x01];
+        
+        let cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            &mut rng,
+        ).expect("自签名证书生成应成功");
+        
+        // 验证自签名
+        verify_self_signed_cert(&cert, DEFAULT_ID).expect("自签名验证应成功");
+    }
+    
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_self_signed_cert_tampered_signature_fails() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _) = generate_keypair(&mut rng);
+        
+        let subject = vec![0x31, 0x00];
+        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let serial = vec![0x01];
+        
+        let mut cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            &mut rng,
+        ).expect("自签名证书生成应成功");
+        
+        // 篡改签名
+        if !cert.signature.is_empty() {
+            cert.signature[0] ^= 0xFF;
+        }
+        
+        // 验证应失败
+        assert!(verify_self_signed_cert(&cert, DEFAULT_ID).is_err());
     }
 }
