@@ -514,13 +514,38 @@ fn find_signer_certificate(
                 .cloned()
                 .ok_or(Error::InvalidSignature)
         }
-        SignerIdentifier::SubjectKeyIdentifier(_ski) => {
-            // TODO: 实现 SKI 匹配
-            certificates.first()
+        SignerIdentifier::SubjectKeyIdentifier(ski) => {
+            // 通过 SKI 查找匹配的证书
+            // SKI (Subject Key Identifier) 是证书中公钥的标识符
+            certificates.iter()
+                .find(|cert| {
+                    // 尝试从证书中提取公钥并计算 SKI
+                    if let Ok(pub_key) = crate::sm2::cert::extract_sm2_public_key(cert) {
+                        let cert_ski = compute_subject_key_identifier(&pub_key);
+                        cert_ski.as_slice() == ski.as_slice()
+                    } else {
+                        false
+                    }
+                })
                 .cloned()
                 .ok_or(Error::InvalidSignature)
         }
     }
+}
+
+/// 计算 Subject Key Identifier (SKI)
+///
+/// 根据 RFC 5280 建议，SKI 可以通过以下方式计算：
+/// 1. 公钥的 SHA-1 哈希（160 位）
+/// 2. 公钥的 SHA-1 哈希的前 64 位
+/// 3. 公钥和持有者信息组合后的哈希
+///
+/// 这里使用公钥的 SHA-1 哈希（前 20 字节）作为 SKI。
+fn compute_subject_key_identifier(pub_key: &[u8; 65]) -> Vec<u8> {
+    // 使用 SM3 计算公钥哈希（国密环境使用 SM3 替代 SHA-1）
+    let hash = crate::sm2::cert::public_key_fingerprint(pub_key);
+    // 取前 20 字节作为 SKI（与 SHA-1 输出长度一致）
+    hash[..20].to_vec()
 }
 
 /// 解析签名属性（生产级）
