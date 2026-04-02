@@ -18,6 +18,9 @@ pub mod key_exchange;
 #[cfg(feature = "alloc")]
 pub mod cert;
 
+#[cfg(feature = "alloc")]
+pub mod cms;
+
 // 重新导出 der 模块的密钥编解码函数
 #[cfg(feature = "alloc")]
 pub use der::{
