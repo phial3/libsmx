@@ -39,16 +39,16 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::error::Error;
-use crate::sm2::{PrivateKey, sign, verify};
 use crate::sm2::der;
+use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
 
-use pem_rfc7468::{encode_string, decode_vec};
+use pem_rfc7468::{decode_vec, encode_string};
 
 // x509-cert 相关导入
-use x509_cert::Certificate;
 use x509_cert::der::Decode;
 use x509_cert::spki::ObjectIdentifier;
+use x509_cert::Certificate;
 
 // ====================================================================================
 // 常量定义
@@ -68,20 +68,6 @@ pub const SM2_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.1
 ///
 /// 通用椭圆曲线公钥算法 OID，与 SM2 算法 OID 配合使用
 pub const EC_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
-
-/// PEM 标签常量
-///
-/// 定义各种密钥和证书的 PEM 编码标签
-mod pem_labels {
-    /// SEC1 格式私钥标签
-    pub const EC_PRIVATE_KEY: &str = "EC PRIVATE KEY";
-    /// PKCS#8 格式私钥标签
-    pub const PRIVATE_KEY: &str = "PRIVATE KEY";
-    /// SPKI 格式公钥标签
-    pub const PUBLIC_KEY: &str = "PUBLIC KEY";
-    /// X.509 证书标签
-    pub const CERTIFICATE: &str = "CERTIFICATE";
-}
 
 // ====================================================================================
 // 数据结构
@@ -290,23 +276,23 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
 
     // 解析序列号
     let (serial, rest) = der::parse_tlv(rest, 0x02).ok_or_else(err)?;
-    
+
     // 解析签名算法
     let (sig_alg, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
-    
+
     // 解析签发者
     let (issuer, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
-    
+
     // 解析有效期（存储完整 TLV）
     let (validity_tlv, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
     if validity_tlv.is_empty() || validity_tlv[0] != 0x30 {
         return Err(err());
     }
     let validity = validity_tlv;
-    
+
     // 解析主体
     let (subject, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
-    
+
     // 解析主体公钥信息
     let (spki, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
 
@@ -649,8 +635,11 @@ pub fn parse_asn1_time_to_timestamp(time: &[u8]) -> Result<u64, Error> {
     }
 
     // 验证日期范围
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day)
-        || hour > 23 || minute > 59 || second > 59
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
     {
         return Err(err());
     }
@@ -658,10 +647,8 @@ pub fn parse_asn1_time_to_timestamp(time: &[u8]) -> Result<u64, Error> {
     // 简化的 Unix 时间戳计算（从 1970-01-01 00:00:00 UTC 开始的秒数）
     // 这是一个近似计算，不考虑闰秒和复杂的历法规则
     let days_since_epoch = days_since_1970(year, month, day);
-    let timestamp = days_since_epoch * 86400
-        + (hour as u64) * 3600
-        + (minute as u64) * 60
-        + (second as u64);
+    let timestamp =
+        days_since_epoch * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
 
     Ok(timestamp)
 }
@@ -848,7 +835,7 @@ pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
 /// - `Err(Error::InvalidCertificate)`: 编码失败
 pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Error> {
     let der = generate_gm_certificate(cert);
-    let pem = encode_string(pem_labels::CERTIFICATE, Default::default(), &der)
+    let pem = encode_string("CERTIFICATE", Default::default(), &der)
         .map_err(|_| Error::InvalidCertificate)?;
     Ok(pem.as_bytes().to_vec())
 }
@@ -932,8 +919,7 @@ pub fn verify_certificate_data(
     let z = crate::sm2::get_z(id, pub_key);
     let e = crate::sm2::get_e(&z, data);
 
-    let sig_array: [u8; 64] = signature.try_into()
-        .map_err(|_| Error::InvalidSignature)?;
+    let sig_array: [u8; 64] = signature.try_into().map_err(|_| Error::InvalidSignature)?;
 
     verify(&e, pub_key, &sig_array)
 }
@@ -947,81 +933,6 @@ pub fn verify_certificate_data(
 /// 将 SM2 私钥编码为 SEC1（RFC 5915）格式的 PEM。
 ///
 /// ## SEC1 格式
-///
-/// ```text
-/// -----BEGIN EC PRIVATE KEY-----
-/// Base64编码的DER数据
-/// -----END EC PRIVATE KEY-----
-/// ```
-///
-/// # 参数
-/// - `priv_key`: SM2 私钥
-///
-/// # 返回
-/// - `Ok(Vec<u8>)`: PEM 编码的私钥
-/// - `Err(Error::InvalidCertificate)`: 编码失败
-pub fn private_key_to_sec1_pem(priv_key: &PrivateKey) -> Result<Vec<u8>, Error> {
-    let der = der::private_key_to_sec1_der(priv_key);
-    let pem = encode_string(pem_labels::EC_PRIVATE_KEY, Default::default(), &der)
-        .map_err(|_| Error::InvalidCertificate)?;
-    Ok(pem.as_bytes().to_vec())
-}
-
-/// 将私钥编码为 PKCS#8 PEM 格式
-///
-/// 将 SM2 私钥编码为 PKCS#8（RFC 5958）格式的 PEM。
-///
-/// ## PKCS#8 格式
-///
-/// ```text
-/// -----BEGIN PRIVATE KEY-----
-/// Base64编码的DER数据
-/// -----END PRIVATE KEY-----
-/// ```
-///
-/// # 参数
-/// - `priv_key`: SM2 私钥
-///
-/// # 返回
-/// - `Ok(Vec<u8>)`: PEM 编码的私钥
-/// - `Err(Error::InvalidCertificate)`: 编码失败
-pub fn private_key_to_pkcs8_pem(priv_key: &PrivateKey) -> Result<Vec<u8>, Error> {
-    let der = der::private_key_to_pkcs8_der(priv_key);
-    let pem = encode_string(pem_labels::PRIVATE_KEY, Default::default(), &der)
-        .map_err(|_| Error::InvalidCertificate)?;
-    Ok(pem.as_bytes().to_vec())
-}
-
-/// 从 SEC1 PEM 解析私钥
-///
-/// 从 SEC1 格式的 PEM 解析 SM2 私钥。
-///
-/// # 参数
-/// - `pem`: SEC1 PEM 编码的私钥数据
-///
-/// # 返回
-/// - `Ok(PrivateKey)`: 解析成功的私钥
-/// - `Err(Error::InvalidCertificate)`: 解析失败
-pub fn private_key_from_sec1_pem(pem: &[u8]) -> Result<PrivateKey, Error> {
-    let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
-    der::private_key_from_sec1_der(&der)
-}
-
-/// 从 PKCS#8 PEM 解析私钥
-///
-/// 从 PKCS#8 格式的 PEM 解析 SM2 私钥。
-///
-/// # 参数
-/// - `pem`: PKCS#8 PEM 编码的私钥数据
-///
-/// # 返回
-/// - `Ok(PrivateKey)`: 解析成功的私钥
-/// - `Err(Error::InvalidCertificate)`: 解析失败
-pub fn private_key_from_pkcs8_pem(pem: &[u8]) -> Result<PrivateKey, Error> {
-    let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
-    der::private_key_from_pkcs8_der(&der)
-}
-
 /// 将公钥编码为 SPKI PEM 格式
 ///
 /// 将 SM2 公钥编码为 SPKI（SubjectPublicKeyInfo）格式的 PEM。
@@ -1042,7 +953,7 @@ pub fn private_key_from_pkcs8_pem(pem: &[u8]) -> Result<PrivateKey, Error> {
 /// - `Err(Error::InvalidCertificate)`: 编码失败
 pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<Vec<u8>, Error> {
     let der = der::public_key_to_spki_der(pub_key);
-    let pem = encode_string(pem_labels::PUBLIC_KEY, Default::default(), &der)
+    let pem = encode_string("PUBLIC KEY", Default::default(), &der)
         .map_err(|_| Error::InvalidCertificate)?;
     Ok(pem.as_bytes().to_vec())
 }
@@ -1127,7 +1038,7 @@ pub fn public_key_to_compressed(pub_key: &[u8; 65]) -> Result<[u8; 33], Error> {
 ///
 /// 需要启用 `alloc` feature 以使用有限域运算。
 pub fn public_key_from_compressed(compressed: &[u8; 33]) -> Result<[u8; 65], Error> {
-    use crate::sm2::field::{fp_from_bytes, fp_to_bytes, fp_sqrt};
+    use crate::sm2::field::{fp_from_bytes, fp_sqrt, fp_to_bytes};
 
     let prefix = compressed[0];
     if prefix != 0x02 && prefix != 0x03 {
@@ -1273,31 +1184,30 @@ pub fn generate_self_signed_cert<R: Rng>(
 
     // 构建 TBS 证书内容
     let mut tbs = Vec::with_capacity(256);
-    
+
     // 版本 (v3)
     tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
-    
+
     // 序列号
     tbs.push(0x02);
     tbs.push(serial_number.len() as u8);
     tbs.extend_from_slice(serial_number);
-    
+
     // 签名算法 (SM2)
     let sig_alg = vec![
-        0x30, 0x0A,
-        0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
+        0x30, 0x0A, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
     ];
     tbs.extend(&sig_alg);
-    
+
     // 签发者 = 主体
     tbs.extend_from_slice(subject);
-    
+
     // 有效期
     tbs.extend_from_slice(validity);
-    
+
     // 主体
     tbs.extend_from_slice(subject);
-    
+
     // 公钥信息
     tbs.extend(&spki);
 
@@ -1462,13 +1372,9 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         assert_eq!(cert.issuer, cert.subject);
         assert_eq!(cert.issuer, subject);
@@ -1488,7 +1394,9 @@ mod tests {
         let cert = GmCertificate {
             version: 2,
             serial_number: serial,
-            signature_algorithm: vec![0x30, 0x0A, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75],
+            signature_algorithm: vec![
+                0x30, 0x0A, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
+            ],
             issuer: vec![0x31, 0x00],
             validity,
             subject,
@@ -1514,15 +1422,12 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
-        verify_self_signed_cert(&cert, DEFAULT_ID).expect("Self-signed verification should succeed");
+        verify_self_signed_cert(&cert, DEFAULT_ID)
+            .expect("Self-signed verification should succeed");
     }
 
     // -- 密钥编解码测试 ------------------------------------------------------
@@ -1578,7 +1483,8 @@ mod tests {
         let (_, pub_key) = generate_keypair(&mut rng);
 
         let compressed = public_key_to_compressed(&pub_key).expect("Compression should succeed");
-        let decompressed = public_key_from_compressed(&compressed).expect("Decompression should succeed");
+        let decompressed =
+            public_key_from_compressed(&compressed).expect("Decompression should succeed");
 
         assert_eq!(pub_key, decompressed);
     }
@@ -1589,8 +1495,75 @@ mod tests {
         let (_, pub_key) = generate_keypair(&mut rng);
 
         let compressed = public_key_to_compressed(&pub_key).expect("Compression should succeed");
-        let decompressed = public_key_from_compressed(&compressed).expect("Decompression should succeed");
+        let decompressed =
+            public_key_from_compressed(&compressed).expect("Decompression should succeed");
 
         assert_eq!(pub_key, decompressed);
+    }
+
+    // -- 公钥 PEM 编解码测试 -------------------------------------------------
+
+    #[test]
+    fn test_public_key_spki_pem_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (_, pub_key) = generate_keypair(&mut rng);
+
+        // 编码为 PEM
+        let pem = public_key_to_spki_pem(&pub_key).expect("PEM encoding should succeed");
+        assert!(pem.starts_with(b"-----BEGIN PUBLIC KEY-----"));
+        assert!(pem.ends_with(b"-----END PUBLIC KEY-----\n"));
+
+        // 从 PEM 解析
+        let recovered = public_key_from_spki_pem(&pem).expect("PEM parsing should succeed");
+        assert_eq!(pub_key, recovered);
+    }
+
+    // -- 公钥指纹测试 --------------------------------------------------------
+
+    #[test]
+    fn test_public_key_fingerprint() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (_, pub_key) = generate_keypair(&mut rng);
+
+        let fingerprint = public_key_fingerprint(&pub_key);
+        assert_eq!(fingerprint.len(), 32); // SM3 输出为 32 字节
+
+        // 相同公钥应该产生相同指纹
+        let fingerprint2 = public_key_fingerprint(&pub_key);
+        assert_eq!(fingerprint, fingerprint2);
+
+        // 不同公钥应该产生不同指纹（概率极高）
+        let (_, pub_key2) = generate_keypair(&mut rng);
+        let fingerprint3 = public_key_fingerprint(&pub_key2);
+        assert_ne!(fingerprint, fingerprint3);
+    }
+
+    // -- 证书 PEM 编解码测试 -------------------------------------------------
+
+    #[test]
+    fn test_certificate_pem_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let subject = vec![0x31, 0x00];
+        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let serial = vec![0x01];
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        // 编码为 PEM
+        let pem = generate_gm_certificate_pem(&cert).expect("PEM encoding should succeed");
+        assert!(pem.starts_with(b"-----BEGIN CERTIFICATE-----"));
+        assert!(pem.ends_with(b"-----END CERTIFICATE-----\n"));
+
+        // 从 PEM 解析
+        let recovered = parse_gm_certificate_pem(&pem).expect("PEM parsing should succeed");
+        assert_eq!(cert.version, recovered.version);
+        assert_eq!(cert.serial_number, recovered.serial_number);
+        assert_eq!(cert.issuer, recovered.issuer);
+        assert_eq!(cert.subject, recovered.subject);
     }
 }

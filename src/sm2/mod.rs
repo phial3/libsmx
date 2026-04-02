@@ -35,6 +35,9 @@ pub use der::{
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
+#[cfg(feature = "alloc")]
+use pem_rfc7468::{encode_string, decode_vec};
+
 use crypto_bigint::U256;
 use rand_core::Rng;
 use subtle::ConstantTimeEq;
@@ -102,13 +105,23 @@ impl PrivateKey {
     }
 
     /// 将私钥编码为 SEC1 PEM 格式
+    ///
+    /// 将 SM2 私钥编码为 SEC1（RFC 5915）格式的 PEM。
     pub fn to_sec1_pem(&self) -> Result<Vec<u8>, Error> {
-        cert::private_key_to_sec1_pem(self)
+        let der = der::private_key_to_sec1_der(self);
+        let pem = encode_string("EC PRIVATE KEY", Default::default(), &der)
+            .map_err(|_| Error::InvalidCertificate)?;
+        Ok(pem.as_bytes().to_vec())
     }
 
     /// 将私钥编码为 PKCS#8 PEM 格式
+    ///
+    /// 将 SM2 私钥编码为 PKCS#8（RFC 5958）格式的 PEM。
     pub fn to_pkcs8_pem(&self) -> Result<Vec<u8>, Error> {
-        cert::private_key_to_pkcs8_pem(self)
+        let der = der::private_key_to_pkcs8_der(self);
+        let pem = encode_string("PRIVATE KEY", Default::default(), &der)
+            .map_err(|_| Error::InvalidCertificate)?;
+        Ok(pem.as_bytes().to_vec())
     }
 
     /// 从 SEC1 DER 解析私钥
@@ -122,25 +135,19 @@ impl PrivateKey {
     }
 
     /// 从 SEC1 PEM 解析私钥
+    ///
+    /// 从 SEC1 格式的 PEM 解析 SM2 私钥。
     pub fn from_sec1_pem(pem: &[u8]) -> Result<Self, Error> {
-        cert::private_key_from_sec1_pem(pem)
+        let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+        der::private_key_from_sec1_der(&der)
     }
 
     /// 从 PKCS#8 PEM 解析私钥
+    ///
+    /// 从 PKCS#8 格式的 PEM 解析 SM2 私钥。
     pub fn from_pkcs8_pem(pem: &[u8]) -> Result<Self, Error> {
-        cert::private_key_from_pkcs8_pem(pem)
-    }
-
-    /// 生成自签名证书
-    pub fn generate_self_signed_cert<R: Rng>(
-        &self,
-        subject: &[u8],
-        validity: &[u8],
-        serial_number: &[u8],
-        id: &[u8],
-        rng: &mut R,
-    ) -> Result<cert::GmCertificate, Error> {
-        cert::generate_self_signed_cert(self, subject, validity, serial_number, id, rng)
+        let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+        der::private_key_from_pkcs8_der(&der)
     }
 }
 

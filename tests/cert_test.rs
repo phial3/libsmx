@@ -105,13 +105,13 @@ mod tests {
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
         println!("✅ 测试 4.2：私钥 SEC1 DER 往返 - 通过");
         
-        let sec1_pem = cert::private_key_to_sec1_pem(&priv_key)
+        let sec1_pem = priv_key.to_sec1_pem()
             .expect("SEC1 PEM 编码应成功");
         fs::write(priv_key_sec1_pem_file, &sec1_pem).expect("写入 SEC1 PEM 应成功");
         assert!(Path::new(priv_key_sec1_pem_file).exists());
         println!("✅ 测试 4.3：私钥 SEC1 PEM - 通过");
         
-        let recovered_pem = cert::private_key_from_sec1_pem(&sec1_pem)
+        let recovered_pem = PrivateKey::from_sec1_pem(&sec1_pem)
             .expect("SEC1 PEM 解析应成功");
         assert_eq!(priv_key.as_bytes(), recovered_pem.as_bytes());
         println!("✅ 测试 4.4：私钥 SEC1 PEM 往返 - 通过");
@@ -141,13 +141,13 @@ mod tests {
         assert_eq!(priv_key.as_bytes(), recovered.as_bytes());
         println!("✅ 测试 5.2：私钥 PKCS#8 DER 往返 - 通过");
         
-        let pkcs8_pem = cert::private_key_to_pkcs8_pem(&priv_key)
+        let pkcs8_pem = priv_key.to_pkcs8_pem()
             .expect("PKCS#8 PEM 编码应成功");
         fs::write(priv_key_pkcs8_pem_file, &pkcs8_pem).expect("写入 PKCS#8 PEM 应成功");
         assert!(Path::new(priv_key_pkcs8_pem_file).exists());
         println!("✅ 测试 5.3：私钥 PKCS#8 PEM - 通过");
         
-        let recovered_pem = cert::private_key_from_pkcs8_pem(&pkcs8_pem)
+        let recovered_pem = PrivateKey::from_pkcs8_pem(&pkcs8_pem)
             .expect("PKCS#8 PEM 解析应成功");
         assert_eq!(priv_key.as_bytes(), recovered_pem.as_bytes());
         println!("✅ 测试 5.4：私钥 PKCS#8 PEM 往返 - 通过");
@@ -248,14 +248,14 @@ mod tests {
         let priv_sec1_der = private_key_to_sec1_der(&issuer_priv);
         fs::write(priv_key_sec1_der_file, &priv_sec1_der).expect("写入 SEC1 DER 应成功");
         
-        let priv_sec1_pem = cert::private_key_to_sec1_pem(&issuer_priv)
+        let priv_sec1_pem = issuer_priv.to_sec1_pem()
             .expect("SEC1 PEM 编码应成功");
         fs::write(priv_key_sec1_pem_file, &priv_sec1_pem).expect("写入 SEC1 PEM 应成功");
         
         let priv_pkcs8_der = private_key_to_pkcs8_der(&issuer_priv);
         fs::write(priv_key_pkcs8_der_file, &priv_pkcs8_der).expect("写入 PKCS#8 DER 应成功");
         
-        let priv_pkcs8_pem = cert::private_key_to_pkcs8_pem(&issuer_priv)
+        let priv_pkcs8_pem = issuer_priv.to_pkcs8_pem()
             .expect("PKCS#8 PEM 编码应成功");
         fs::write(priv_key_pkcs8_pem_file, &priv_pkcs8_pem).expect("写入 PKCS#8 PEM 应成功");
         
