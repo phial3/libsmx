@@ -14,8 +14,8 @@ mod tests {
             issuer: vec![0x31, 0x11, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x08, 0x43, 0x41, 0x43, 0x45, 0x52, 0x54, 0x49, 0x46],
             validity: vec![
                 0x30, 0x1e,  // SEQUENCE, length 30
-                0x17, 0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime
-                0x17, 0x0d, 0x33, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime
+                0x17, 0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime: 200101000000Z
+                0x17, 0x0d, 0x33, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime: 300101000000Z
             ],
             subject: vec![0x31, 0x11, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x08, 0x55, 0x73, 0x65, 0x72, 0x4E, 0x61, 0x6D, 0x65],
             subject_public_key_info: public_key_to_spki_der(pub_key),
@@ -302,5 +302,101 @@ mod tests {
         let _ = fs::remove_file(pub_key_spki_der_file);
         let _ = fs::remove_file(pub_key_spki_pem_file);
         let _ = fs::remove_file(signature_file);
+    }
+
+    #[test]
+    fn test_verify_certificate_validity() {
+        let mut rng = StdRng::seed_from_u64(123456789);
+        let (_priv_key, pub_key) = generate_keypair(&mut rng);
+        let cert = create_test_cert(&pub_key);
+
+        // 测试在有效期内 (2001-01-01 到 2030-01-01)
+        let valid_time = 1609459200u64; // 2021-01-01 00:00:00 UTC
+        cert.verify_validity(valid_time).expect("证书应在有效期内");
+        println!("✅ 测试 9.1：证书有效期验证 - 通过");
+
+        // 测试过期前
+        let before_valid = 946684800u64; // 2000-01-01 00:00:00 UTC (证书生效前)
+        assert!(cert.verify_validity(before_valid).is_err());
+        println!("✅ 测试 9.2：证书生效前验证 - 通过");
+
+        // 测试过期后 (证书在 2030-01-01 00:00:00 UTC 过期)
+        let after_expired = 1893456001u64; // 2030-01-01 00:00:01 UTC (过期后 1 秒)
+        assert!(cert.verify_validity(after_expired).is_err());
+        println!("✅ 测试 9.3：证书过期后验证 - 通过");
+
+        // 验证刚好在过期时间点 (应该仍然有效，因为是 <= not_after)
+        let at_expiration = 1893456000u64; // 2030-01-01 00:00:00 UTC
+        assert!(cert.verify_validity(at_expiration).is_ok());
+        println!("✅ 测试 9.4：证书在过期时间点验证 - 通过");
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_verify_certificate_validity_system_time() {
+        use std::time::{SystemTime, Duration};
+
+        let mut rng = StdRng::seed_from_u64(123456789);
+        let (_priv_key, pub_key) = generate_keypair(&mut rng);
+        let cert = create_test_cert(&pub_key);
+
+        // 使用 SystemTime 验证 (2001-01-01 到 2030-01-01)
+        // 创建一个在有效期内的 SystemTime (2021-01-01)
+        let valid_system_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1609459200);
+        cert.verify_validity_system_time(valid_system_time).expect("证书应在有效期内");
+        println!("✅ 测试 10.1：SystemTime 证书有效期验证 - 通过");
+
+        // 测试过期前
+        let before_valid = SystemTime::UNIX_EPOCH + Duration::from_secs(946684800);
+        assert!(cert.verify_validity_system_time(before_valid).is_err());
+        println!("✅ 测试 10.2：SystemTime 证书生效前验证 - 通过");
+
+        // 测试过期后 (证书在 2030-01-01 00:00:00 UTC 过期)
+        let after_expired = SystemTime::UNIX_EPOCH + Duration::from_secs(1893456001); // 过期后 1 秒
+        assert!(cert.verify_validity_system_time(after_expired).is_err());
+        println!("✅ 测试 10.3：SystemTime 证书过期后验证 - 通过");
+
+        // 验证刚好在过期时间点 (应该仍然有效，因为是 <= not_after)
+        let at_expiration = SystemTime::UNIX_EPOCH + Duration::from_secs(1893456000);
+        assert!(cert.verify_validity_system_time(at_expiration).is_ok());
+        println!("✅ 测试 10.4：SystemTime 证书在过期时间点验证 - 通过");
+    }
+
+    #[test]
+    fn test_generate_validity_from_times() {
+        use x509_cert::time::Time;
+        use std::time::{SystemTime, Duration};
+
+        // 创建两个时间点
+        let not_before_sys = SystemTime::UNIX_EPOCH + Duration::from_secs(1609459200); // 2021-01-01
+        let not_after_sys = SystemTime::UNIX_EPOCH + Duration::from_secs(1640995200);  // 2022-01-01
+
+        let not_before = Time::try_from(not_before_sys).expect("转换时间应成功");
+        let not_after = Time::try_from(not_after_sys).expect("转换时间应成功");
+
+        // 生成有效期 DER
+        let validity_der = cert::generate_validity_from_times(not_before, not_after);
+
+        // 验证 DER 结构
+        assert_eq!(validity_der[0], 0x30); // SEQUENCE tag
+        assert!(validity_der.len() > 2);
+        println!("✅ 测试 11：从 Time 生成有效期 DER - 通过 ({} 字节)", validity_der.len());
+
+        // 验证包含两个时间字段
+        // 解析 SEQUENCE 长度
+        let seq_len = validity_der[1] as usize;
+        assert!(seq_len > 0);
+
+        // 验证第一个时间字段 (UTCTime 0x17 或 GeneralizedTime 0x18)
+        let first_tag = validity_der[2];
+        assert!(first_tag == 0x17 || first_tag == 0x18);
+
+        // 验证第二个时间字段
+        let first_time_len = validity_der[3] as usize;
+        let second_tag_pos = 2 + 2 + first_time_len; // tag + len + content
+        let second_tag = validity_der[second_tag_pos];
+        assert!(second_tag == 0x17 || second_tag == 0x18);
+
+        println!("✅ 测试 11.1：有效期 DER 结构验证 - 通过");
     }
 }

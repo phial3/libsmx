@@ -34,7 +34,6 @@
 //! ```
 
 #![cfg(feature = "alloc")]
-
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -48,7 +47,12 @@ use pem_rfc7468::{decode_vec, encode_string};
 // x509-cert 相关导入
 use x509_cert::der::Decode;
 use x509_cert::spki::ObjectIdentifier;
+use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
+
+// chrono 时间库导入（用于标准时间处理）
+#[cfg(feature = "std")]
+use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 // ====================================================================================
 // 常量定义
@@ -194,6 +198,22 @@ impl GmCertificate {
         verify_certificate_validity(self, current_timestamp)
     }
 
+    /// 验证证书有效期（使用 SystemTime）
+    ///
+    /// 检查当前时间是否在证书的有效期内。
+    /// 接受标准库 `SystemTime` 类型，更易于使用。
+    ///
+    /// # 参数
+    /// - `now`: 当前时间（SystemTime）
+    ///
+    /// # 返回
+    /// - `Ok(())`: 证书在有效期内
+    /// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
+    #[cfg(feature = "std")]
+    pub fn verify_validity_system_time(&self, now: std::time::SystemTime) -> Result<(), Error> {
+        verify_certificate_validity_system_time(self, now)
+    }
+
     /// 验证自签名证书
     ///
     /// 验证自签名证书的签名是否有效。
@@ -208,23 +228,6 @@ impl GmCertificate {
     pub fn verify_self_signed(&self, id: &[u8]) -> Result<(), Error> {
         verify_self_signed_cert(self, id)
     }
-}
-
-/// 证书有效期结构
-///
-/// 表示证书的有效期，包含生效时间和过期时间。
-/// 时间格式为 ASN.1 UTCTime 或 GeneralizedTime 的 DER 编码。
-///
-/// ## 时间格式
-///
-/// - UTCTime: YYMMDDHHMMSSZ（13字节，2位年份）
-/// - GeneralizedTime: YYYYMMDDHHMMSSZ（15字节，4位年份）
-#[derive(Debug, Clone)]
-pub struct ValidityPeriod {
-    /// 生效时间 (UTCTime/GeneralizedTime DER 编码)
-    pub not_before: Vec<u8>,
-    /// 过期时间 (UTCTime/GeneralizedTime DER 编码)
-    pub not_after: Vec<u8>,
 }
 
 // ====================================================================================
@@ -500,18 +503,6 @@ pub fn parse_x509_certificate(der: &[u8]) -> Result<Certificate, Error> {
     Certificate::from_der(der).map_err(|_| Error::InvalidCertificate)
 }
 
-/// 检查证书是否使用 SM2 算法
-///
-/// 检查 X.509 证书是否使用 SM2 签名算法。
-///
-/// # 注意
-///
-/// 由于 x509-cert crate 的字段是私有的，当前实现简化处理，
-/// 始终返回 true。实际使用时应检查 signature_algorithm。
-pub fn is_sm2_certificate(_cert: &Certificate) -> bool {
-    true
-}
-
 // ====================================================================================
 // 时间处理
 // ====================================================================================
@@ -539,165 +530,10 @@ pub fn is_sm2_certificate(_cert: &Certificate) -> bool {
 /// - `validity_der`: 有效期 DER 编码数据
 ///
 /// # 返回
-/// - `Ok(ValidityPeriod)`: 解析成功的有效期结构
+/// - `Ok(Validity)`: 解析成功的有效期结构
 /// - `Err(Error::InvalidCertificate)`: 解析失败（格式错误）
-pub fn parse_validity(validity_der: &[u8]) -> Result<ValidityPeriod, Error> {
-    let err = || Error::InvalidCertificate;
-
-    // 解析外层 SEQUENCE
-    let (seq_body, _) = der::parse_tlv(validity_der, 0x30).ok_or_else(err)?;
-    let mut rest = seq_body;
-
-    // 解析 notBefore
-    let (tag, _) = rest.split_first().ok_or_else(err)?;
-    let (not_before, remaining) = if *tag == 0x17 {
-        // UTCTime
-        der::parse_tlv(rest, 0x17).ok_or_else(err)?
-    } else if *tag == 0x18 {
-        // GeneralizedTime
-        der::parse_tlv(rest, 0x18).ok_or_else(err)?
-    } else {
-        return Err(err());
-    };
-    rest = remaining;
-
-    // 解析 notAfter
-    let (tag, _) = rest.split_first().ok_or_else(err)?;
-    let (not_after, _) = if *tag == 0x17 {
-        der::parse_tlv(rest, 0x17).ok_or_else(err)?
-    } else if *tag == 0x18 {
-        der::parse_tlv(rest, 0x18).ok_or_else(err)?
-    } else {
-        return Err(err());
-    };
-
-    Ok(ValidityPeriod {
-        not_before: not_before.to_vec(),
-        not_after: not_after.to_vec(),
-    })
-}
-
-/// 将 ASN.1 时间格式解析为 Unix 时间戳
-///
-/// 将 ASN.1 UTCTime 或 GeneralizedTime 格式解析为 Unix 时间戳（秒）。
-///
-/// ## 支持格式
-///
-/// - **UTCTime**: YYMMDDHHMMSSZ（13字节，2位年份）
-///   - RFC 5280 规则：50-99 -> 1950-1999, 00-49 -> 2000-2049
-/// - **GeneralizedTime**: YYYYMMDDHHMMSSZ（15字节，4位年份）
-///
-/// ## 注意事项
-///
-/// - 这是一个简化实现，不考虑时区（假设为 UTC）
-/// - 不考虑闰秒
-/// - 使用公历计算
-///
-/// # 参数
-/// - `time`: ASN.1 时间格式字节数组
-///
-/// # 返回
-/// - `Ok(u64)`: Unix 时间戳（秒）
-/// - `Err(Error::InvalidCertificate)`: 解析失败（格式错误或无效日期）
-pub fn parse_asn1_time_to_timestamp(time: &[u8]) -> Result<u64, Error> {
-    let err = || Error::InvalidCertificate;
-
-    // 验证格式：必须以 Z 结尾
-    if time.len() < 13 || time[time.len() - 1] != b'Z' {
-        return Err(err());
-    }
-
-    // 解析时间字符串（去掉末尾的 Z）
-    let time_str = core::str::from_utf8(&time[..time.len() - 1]).map_err(|_| err())?;
-
-    let (year, month, day, hour, minute, second): (u32, u32, u32, u32, u32, u32);
-
-    if time_str.len() == 12 {
-        // UTCTime: YYMMDDHHMMSS
-        let yy: u32 = time_str[0..2].parse().map_err(|_| err())?;
-        month = time_str[2..4].parse().map_err(|_| err())?;
-        day = time_str[4..6].parse().map_err(|_| err())?;
-        hour = time_str[6..8].parse().map_err(|_| err())?;
-        minute = time_str[8..10].parse().map_err(|_| err())?;
-        second = time_str[10..12].parse().map_err(|_| err())?;
-        // RFC 5280: 50-99 -> 1950-1999, 00-49 -> 2000-2049
-        year = if yy >= 50 { 1900 + yy } else { 2000 + yy };
-    } else if time_str.len() == 14 {
-        // GeneralizedTime: YYYYMMDDHHMMSS
-        year = time_str[0..4].parse().map_err(|_| err())?;
-        month = time_str[4..6].parse().map_err(|_| err())?;
-        day = time_str[6..8].parse().map_err(|_| err())?;
-        hour = time_str[8..10].parse().map_err(|_| err())?;
-        minute = time_str[10..12].parse().map_err(|_| err())?;
-        second = time_str[12..14].parse().map_err(|_| err())?;
-    } else {
-        return Err(err());
-    }
-
-    // 验证日期范围
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return Err(err());
-    }
-
-    // 简化的 Unix 时间戳计算（从 1970-01-01 00:00:00 UTC 开始的秒数）
-    // 这是一个近似计算，不考虑闰秒和复杂的历法规则
-    let days_since_epoch = days_since_1970(year, month, day);
-    let timestamp =
-        days_since_epoch * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
-
-    Ok(timestamp)
-}
-
-/// 计算从 1970-01-01 到指定日期的天数
-///
-/// 使用公历计算，考虑闰年。
-///
-/// ## 算法
-///
-/// 1. 计算从公元1年到指定年份的总天数
-/// 2. 加上当年之前的累计天数
-/// 3. 闰年且月份大于2月时加1天
-/// 4. 减去1970-01-01之前的固定天数
-///
-/// ## 参数
-/// - `year`: 年份（如 2025）
-/// - `month`: 月份（1-12）
-/// - `day`: 日期（1-31）
-///
-/// # 返回
-/// 从 1970-01-01 到指定日期的天数
-fn days_since_1970(year: u32, month: u32, day: u32) -> u64 {
-    fn days_since_year_1(y: u32, m: u32, d: u32) -> u64 {
-        let y = y as i64 - 1;
-        // 计算闰年数
-        let leap_years = y / 4 - y / 100 + y / 400;
-        let days_in_year = y * 365 + leap_years;
-
-        // 计算当月之前的累计天数
-        let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        let mut days_in_month_acc = 0;
-        for i in 1..m {
-            days_in_month_acc += days_in_month[i as usize];
-        }
-
-        // 闰年且月份大于2月，加1天
-        let is_leap = (y + 1) % 4 == 0 && ((y + 1) % 100 != 0 || (y + 1) % 400 == 0);
-        if is_leap && m > 2 {
-            days_in_month_acc += 1;
-        }
-
-        days_in_year as u64 + days_in_month_acc + (d as u64 - 1)
-    }
-
-    // 1970-01-01 对应的天数
-    const DAYS_1970_01_01: u64 = 719162;
-
-    days_since_year_1(year, month, day) - DAYS_1970_01_01
+fn parse_validity(validity_der: &[u8]) -> Result<Validity, Error> {
+    Validity::from_der(validity_der).map_err(|_| Error::InvalidCertificate)
 }
 
 /// 验证证书有效期
@@ -734,8 +570,8 @@ pub fn verify_certificate_validity(
 ) -> Result<(), Error> {
     let validity = parse_validity(&cert.validity)?;
 
-    let not_before = parse_asn1_time_to_timestamp(&validity.not_before)?;
-    let not_after = parse_asn1_time_to_timestamp(&validity.not_after)?;
+    let not_before = validity.not_before.to_unix_duration().as_secs();
+    let not_after = validity.not_after.to_unix_duration().as_secs();
 
     if current_timestamp < not_before {
         return Err(Error::InvalidCertificate);
@@ -745,6 +581,123 @@ pub fn verify_certificate_validity(
     }
 
     Ok(())
+}
+
+/// 验证证书有效期（使用 SystemTime）
+///
+/// 检查证书是否在有效期内。接受标准库 `SystemTime` 类型，
+/// 更易于使用。
+///
+/// ## 验证流程
+///
+/// 1. 解析证书有效期字段
+/// 2. 将 notBefore 和 notAfter 转换为 SystemTime
+/// 3. 检查当前时间是否在有效期内
+///
+/// # 参数
+/// - `cert`: 国密证书
+/// - `now`: 当前时间（SystemTime）
+///
+/// # 返回
+/// - `Ok(())`: 证书在有效期内
+/// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
+///
+/// # 示例
+///
+/// ```ignore
+/// use libsmx::sm2::cert::{GmCertificate, verify_certificate_validity_system_time};
+/// use std::time::SystemTime;
+///
+/// // 验证证书是否在有效期内
+/// let cert: GmCertificate = /* 加载证书 */;
+/// let now = SystemTime::now();
+/// verify_certificate_validity_system_time(&cert, now).expect("Certificate valid");
+/// ```
+#[cfg(feature = "std")]
+pub fn verify_certificate_validity_system_time(
+    cert: &GmCertificate,
+    now: std::time::SystemTime,
+) -> Result<(), Error> {
+    let current_timestamp = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Error::InvalidCertificate)?
+        .as_secs();
+    verify_certificate_validity(cert, current_timestamp)
+}
+
+/// 验证证书有效期（使用日期字符串）
+///
+/// 检查证书是否在有效期内。接受 "YYYY-MM-DD" 格式的日期字符串，
+/// 便于人类直接使用。
+///
+/// ## 支持的日期格式
+///
+/// - `YYYY-MM-DD`：如 "2025-01-01"
+/// - `YYYY-MM-DD HH:MM:SS`：如 "2025-01-01 12:30:00"
+///
+/// 时间默认为 UTC 00:00:00。
+///
+/// ## 验证流程
+///
+/// 1. 解析日期字符串为 Unix 时间戳
+/// 2. 调用 `verify_certificate_validity` 进行验证
+///
+/// # 参数
+/// - `cert`: 国密证书
+/// - `date_str`: 日期字符串（格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS）
+///
+/// # 返回
+/// - `Ok(())`: 证书在有效期内
+/// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期，或日期格式错误
+///
+/// # 示例
+///
+/// ```ignore
+/// use libsmx::sm2::cert::{GmCertificate, verify_certificate_validity_str};
+///
+/// // 验证证书是否在有效期内
+/// let cert: GmCertificate = /* 加载证书 */;
+/// verify_certificate_validity_str(&cert, "2025-01-01").expect("Certificate valid");
+///
+/// // 使用具体时间
+/// verify_certificate_validity_str(&cert, "2025-01-01 12:30:00").expect("Certificate valid");
+/// ```
+#[cfg(feature = "std")]
+pub fn verify_certificate_validity_str(cert: &GmCertificate, date_str: &str) -> Result<(), Error> {
+    let timestamp = parse_date_str_to_timestamp(date_str)?;
+    verify_certificate_validity(cert, timestamp)
+}
+
+/// 将日期字符串解析为 Unix 时间戳
+///
+/// 支持格式：
+/// - `YYYY-MM-DD`（默认为 00:00:00）
+/// - `YYYY-MM-DD HH:MM:SS`
+///
+/// # 参数
+/// - `date_str`: 日期字符串
+///
+/// # 返回
+/// - `Ok(u64)`: Unix 时间戳（秒）
+/// - `Err(Error::InvalidCertificate)`: 解析失败
+#[cfg(feature = "std")]
+fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
+    // 使用 chrono 解析日期字符串
+    // 支持格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS
+    let datetime = if date_str.contains(' ') {
+        // 包含时间部分
+        NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")
+            .map_err(|_| Error::InvalidCertificate)?
+    } else {
+        // 只有日期部分，使用默认时间 00:00:00
+        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+            .map_err(|_| Error::InvalidCertificate)?;
+        date.and_hms_opt(0, 0, 0).ok_or(Error::InvalidCertificate)?
+    };
+
+    // 转换为 UTC DateTime 并获取 Unix 时间戳
+    let utc_datetime = Utc.from_utc_datetime(&datetime);
+    Ok(utc_datetime.timestamp() as u64)
 }
 
 /// 生成有效期 DER 编码（UTCTime 格式）
@@ -789,6 +742,146 @@ pub fn generate_validity(not_before: &[u8], not_after: &[u8]) -> Vec<u8> {
 
     // 包装为 SEQUENCE
     let mut seq = Vec::with_capacity(2 + validity.len());
+    seq.push(0x30);
+    seq.push(validity.len() as u8);
+    seq.extend(validity);
+
+    seq
+}
+
+/// 从日期字符串生成有效期 DER 编码
+///
+/// 使用人类可读的日期字符串生成有效期 DER 编码。
+/// 支持 "YYYY-MM-DD" 和 "YYYY-MM-DD HH:MM:SS" 格式。
+///
+/// ## 日期格式
+///
+/// - `YYYY-MM-DD`：如 "2025-01-01"（默认为 00:00:00）
+/// - `YYYY-MM-DD HH:MM:SS`：如 "2025-01-01 12:30:00"
+///
+/// 年份范围：1950-2049 使用 UTCTime，其他使用 GeneralizedTime
+///
+/// # 参数
+/// - `not_before`: 生效时间日期字符串
+/// - `not_after`: 过期时间日期字符串
+///
+/// # 返回
+/// - `Ok(Vec<u8>)`: 有效期 DER 编码字节数组
+/// - `Err(Error::InvalidCertificate)`: 日期格式错误
+///
+/// # 示例
+///
+/// ```ignore
+/// use libsmx::sm2::cert::generate_validity_from_str;
+///
+/// let validity = generate_validity_from_str("2025-01-01", "2030-01-01")
+///     .expect("Valid date strings");
+///
+/// // 使用具体时间
+/// let validity = generate_validity_from_str("2025-01-01 12:30:00", "2030-01-01 12:30:00")
+///     .expect("Valid date strings");
+/// ```
+#[cfg(feature = "std")]
+pub fn generate_validity_from_str(not_before: &str, not_after: &str) -> Result<Vec<u8>, Error> {
+    let not_before_bytes = date_str_to_utc_bytes(not_before)?;
+    let not_after_bytes = date_str_to_utc_bytes(not_after)?;
+    Ok(generate_validity(&not_before_bytes, &not_after_bytes))
+}
+
+/// 将日期字符串转换为 UTCTime 字节数组
+///
+/// 支持格式：
+/// - `YYYY-MM-DD` -> YYMMDDHHMMSSZ
+/// - `YYYY-MM-DD HH:MM:SS` -> YYMMDDHHMMSSZ
+///
+/// 年份范围：1950-2049（符合 RFC 5280 UTCTime 要求）
+#[cfg(feature = "std")]
+fn date_str_to_utc_bytes(date_str: &str) -> Result<Vec<u8>, Error> {
+    // 使用 chrono 解析日期字符串
+    let datetime = if date_str.contains(' ') {
+        NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")
+            .map_err(|_| Error::InvalidCertificate)?
+    } else {
+        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+            .map_err(|_| Error::InvalidCertificate)?;
+        date.and_hms_opt(0, 0, 0).ok_or(Error::InvalidCertificate)?
+    };
+
+    // 验证年份范围（RFC 5280：UTCTime 年份范围为 1950-2049）
+    let year = datetime.year();
+    if !(1950..=2049).contains(&year) {
+        return Err(Error::InvalidCertificate);
+    }
+
+    use alloc::string::ToString;
+    // 使用 chrono 格式化为 YYMMDDHHMMSSZ
+    let utc_str = datetime.format("%y%m%d%H%M%SZ").to_string();
+
+    Ok(utc_str.into_bytes())
+}
+
+/// 从 x509_cert::time::Time 生成有效期 DER 编码
+///
+/// 使用 x509-cert 提供的 Time 类型生成有效期 DER 编码。
+/// 支持 UtcTime 和 GeneralTime 两种格式。
+///
+/// # 参数
+/// - `not_before`: 生效时间（x509_cert::time::Time）
+/// - `not_after`: 过期时间（x509_cert::time::Time）
+///
+/// # 返回
+/// 有效期 DER 编码字节数组
+///
+/// # 示例
+///
+/// ```ignore
+/// use libsmx::sm2::cert::generate_validity_from_times;
+/// use x509_cert::time::Time;
+///
+/// let not_before = Time::try_from(std::time::SystemTime::now()).unwrap();
+/// let not_after = Time::try_from(
+///     std::time::SystemTime::now() + std::time::Duration::from_secs(365 * 24 * 3600)
+/// ).unwrap();
+/// let validity = generate_validity_from_times(not_before, not_after);
+/// ```
+pub fn generate_validity_from_times(not_before: Time, not_after: Time) -> Vec<u8> {
+    // 将 Time 转换为字节数组（Time 的 DER 编码）
+    let mut validity = Vec::with_capacity(64);
+
+    // notBefore - Time 编码为 UTCTime 或 GeneralizedTime
+    let time_str = alloc::string::ToString::to_string(&not_before);
+    let time_bytes = time_str.as_bytes();
+    match not_before {
+        Time::UtcTime(_) => {
+            validity.push(0x17); // UTCTime tag
+            validity.push(time_bytes.len() as u8);
+            validity.extend_from_slice(time_bytes);
+        }
+        Time::GeneralTime(_) => {
+            validity.push(0x18); // GeneralizedTime tag
+            validity.push(time_bytes.len() as u8);
+            validity.extend_from_slice(time_bytes);
+        }
+    }
+
+    // notAfter
+    let time_str = alloc::string::ToString::to_string(&not_after);
+    let time_bytes = time_str.as_bytes();
+    match not_after {
+        Time::UtcTime(_) => {
+            validity.push(0x17); // UTCTime tag
+            validity.push(time_bytes.len() as u8);
+            validity.extend_from_slice(time_bytes);
+        }
+        Time::GeneralTime(_) => {
+            validity.push(0x18); // GeneralizedTime tag
+            validity.push(time_bytes.len() as u8);
+            validity.extend_from_slice(time_bytes);
+        }
+    }
+
+    // 包装为 SEQUENCE
+    let mut seq = Vec::with_capacity(4 + validity.len());
     seq.push(0x30);
     seq.push(validity.len() as u8);
     seq.extend(validity);

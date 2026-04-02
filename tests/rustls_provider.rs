@@ -25,27 +25,29 @@ use libsmx::sm2::{
 
 // ── 测试用 RNG ────────────────────────────────────────────────────────────────
 
+use core::convert::Infallible;
+use rand_core::TryRng;
+
 struct TestRng;
 
-impl rand_core::RngCore for TestRng {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for TestRng {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         let mut b = [0u8; 4];
-        getrandom::getrandom(&mut b).unwrap();
-        u32::from_le_bytes(b)
+        getrandom::fill(&mut b).unwrap();
+        Ok(u32::from_le_bytes(b))
     }
-    fn next_u64(&mut self) -> u64 {
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         let mut b = [0u8; 8];
-        getrandom::getrandom(&mut b).unwrap();
-        u64::from_le_bytes(b)
+        getrandom::fill(&mut b).unwrap();
+        Ok(u64::from_le_bytes(b))
     }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        getrandom::getrandom(dest).unwrap();
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        getrandom::getrandom(dest).map_err(|_| {
-            use core::num::NonZeroU32;
-            rand_core::Error::from(NonZeroU32::new(1).unwrap())
-        })
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+        getrandom::fill(dest).unwrap();
+        Ok(())
     }
 }
 
