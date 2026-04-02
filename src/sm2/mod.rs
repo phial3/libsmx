@@ -56,6 +56,85 @@ use crate::sm3::Sm3Hasher;
 /// 当调用方无自定义 ID 时，应使用此常量作为 `sign_message` / `verify_message` 的 `id` 参数。
 pub const DEFAULT_ID: &[u8] = b"1234567812345678";
 
+// ====================================================================================
+// OID 常量定义
+// ====================================================================================
+
+/// SM2 椭圆曲线公钥算法 OID (1.2.156.10197.1.301)
+pub const SM2_PUBKEY_OID: &[u8] = &[
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D,
+];
+
+/// SM2withSM3 签名算法 OID (1.2.156.10197.1.501)
+/// 与 SM2_SIGN_OID 相同，用于 X.509 证书签名算法标识
+pub const SM2_WITH_SM3_OID: &[u8] = &[
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
+];
+
+/// SM3 哈希算法 OID (1.2.156.10197.1.401)
+pub const SM3_OID: &[u8] = &[
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x65, 0x01,
+];
+
+/// EC 公钥算法 OID (1.2.840.10045.2.1)
+/// 通用椭圆曲线公钥算法 OID（id-ecPublicKey），与 SM2 算法 OID 配合使用
+pub const EC_PUBKEY_OID: &[u8] = &[
+    0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+];
+
+/// PKCS#7/CMS SignedData OID (1.2.840.113549.1.7.2)
+/// 用于 PKCS#7/CMS 签名数据内容类型
+pub const PKCS7_SIGNED_DATA_OID: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02,
+];
+
+/// id-data OID (1.2.840.113549.1.7.1)
+/// 用于 PKCS#7/CMS 数据内容类型
+pub const ID_DATA_OID: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01,
+];
+
+/// content-type 属性 OID (1.2.840.113549.1.9.3)
+/// 用于 CMS 签名属性 content-type
+pub const CONTENT_TYPE_OID: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03,
+];
+
+/// message-digest 属性 OID (1.2.840.113549.1.9.4)
+/// 用于 CMS 签名属性 message-digest
+pub const MESSAGE_DIGEST_OID: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04,
+];
+
+/// signing-time 属性 OID (1.2.840.113549.1.9.5)
+/// 用于 CMS 签名属性 signing-time
+pub const SIGNING_TIME_OID: &[u8] = &[
+    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05,
+];
+
+/// SM2 椭圆曲线算法标识符（用于 SubjectPublicKeyInfo）
+///
+/// 完整的 AlgorithmIdentifier DER 编码，包含 id-ecPublicKey 和 SM2 曲线参数：
+/// SEQUENCE { OID id-ecPublicKey (1.2.840.10045.2.1), OID SM2 (1.2.156.10197.1.301) }
+pub const SM2_EC_PUBKEY_PARAMETER: &[u8] = &[
+    0x30, 0x13, // SEQUENCE, length = 19
+    0x06, 0x07, // OID, length = 7
+    0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, // id-ecPublicKey (1.2.840.10045.2.1)
+    0x06, 0x08, // OID, length = 8
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D, // SM2 (1.2.156.10197.1.301)
+];
+
+/// SM2withSM3 签名算法标识符（用于 X.509 证书签名算法）
+///
+/// 完整的 AlgorithmIdentifier for SM2withSM3 DER 编码：
+/// SEQUENCE { OID SM2withSM3 (1.2.156.10197.1.501) }
+/// 注意：国密标准中 SM2withSM3 算法标识符不包含 parameters
+pub const SM2_WITH_SM3_ALGORITHM_IDENTIFIER: &[u8] = &[
+    0x30, 0x0A, // SEQUENCE, length = 10
+    0x06, 0x08, // OID, length = 8
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75, // SM2withSM3 (1.2.156.10197.1.501)
+];
+
 // ── 私钥类型 ──────────────────────────────────────────────────────────────────
 
 /// SM2 私钥（32 字节，离开作用域自动清零）

@@ -6,6 +6,16 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    /// commonName OID (2.5.4.3)
+    /// X.501 属性类型 commonName，用于 X.500 可分辨名称
+    /// 注意：此常量包含完整 DER TLV 格式（tag + length + value）
+    const COMMON_NAME_OID: &[u8] = &[
+        0x06, 0x03, 0x55, 0x04, 0x03,
+        // 0x06 = OID tag
+        // 0x03 = length (3 bytes)
+        // 0x55, 0x04, 0x03 = 2.5.4.3
+    ];
+
     /// 构建 X.500 Name (RelativeDistinguishedName)
     ///
     /// 生成包含单个属性（如 commonName）的 X.500 Name DER 编码。
@@ -35,19 +45,14 @@ mod tests {
         name
     }
 
-    /// commonName OID (2.5.4.3)
-    const OID_COMMON_NAME: &[u8] = &[0x06, 0x03, 0x55, 0x04, 0x03];
-
-    /// SM2withSM3 签名算法 OID (1.2.156.10197.1.501)
-    const OID_SM2_WITH_SM3: &[u8] = &[0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D];
-
     /// 创建 SM2withSM3 签名算法标识符 (AlgorithmIdentifier)
     /// SEQUENCE { OID, NULL }
     fn sm2_with_sm3_algorithm() -> Vec<u8> {
-        let mut alg = Vec::with_capacity(2 + OID_SM2_WITH_SM3.len() + 2);
+        let oid = libsmx::sm2::SM2_WITH_SM3_OID;
+        let mut alg = Vec::with_capacity(2 + oid.len() + 2);
         alg.push(0x30); // SEQUENCE
-        alg.push((OID_SM2_WITH_SM3.len() + 2) as u8);
-        alg.extend_from_slice(OID_SM2_WITH_SM3);
+        alg.push((oid.len() + 2) as u8);
+        alg.extend_from_slice(oid);
         alg.extend_from_slice(&[0x05, 0x00]); // NULL
         alg
     }
@@ -58,8 +63,8 @@ mod tests {
     /// 证书有效期为 2001-01-01 到 2030-01-01。
     fn create_test_cert(pub_key: &[u8; 65]) -> cert::GmCertificate {
         // 使用辅助函数构建颁发者和主体名称
-        let issuer = build_name(OID_COMMON_NAME, "TestCA");
-        let subject = build_name(OID_COMMON_NAME, "TestUser");
+        let issuer = build_name(COMMON_NAME_OID, "TestCA");
+        let subject = build_name(COMMON_NAME_OID, "TestUser");
 
         // 使用 UTCTime 字符串生成有效期（200101000000Z 到 300101000000Z）
         let validity = cert::generate_validity(b"010101000000Z", b"300101000000Z");

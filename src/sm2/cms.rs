@@ -51,31 +51,6 @@ use crate::sm2::der;
 use rand_core::Rng;
 
 // ====================================================================================
-// 常量定义
-// ====================================================================================
-
-/// PKCS#7/CMS SignedData OID (1.2.840.113549.1.7.2)
-const OID_PKCS7_SIGNED_DATA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
-
-/// id-data OID (1.2.840.113549.1.7.1)
-const OID_ID_DATA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01];
-
-/// SM3 OID (1.2.156.10197.1.401)
-const OID_SM3: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x65, 0x01];
-
-/// SM2 with SM3 OID (1.2.156.10197.1.501)
-const OID_SM2_WITH_SM3: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x65, 0x01, 0x01];
-
-/// content-type OID (1.2.840.113549.1.9.3)
-const OID_CONTENT_TYPE: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03];
-
-/// message-digest OID (1.2.840.113549.1.9.4)
-const OID_MESSAGE_DIGEST: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04];
-
-/// signing-time OID (1.2.840.113549.1.9.5)
-const OID_SIGNING_TIME: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05];
-
-// ====================================================================================
 // 数据结构
 // ====================================================================================
 
@@ -254,12 +229,12 @@ pub fn create_digital_signature<R: Rng>(
             serial_number: cert.serial_number.clone(),
         },
         digest_algorithm: AlgorithmIdentifier {
-            algorithm: OID_SM3.to_vec(),
+            algorithm: crate::sm2::SM3_OID.to_vec(),
             parameters: Some(vec![0x05, 0x00]), // NULL
         },
         signed_attrs: Some(signed_attrs),
         signature_algorithm: AlgorithmIdentifier {
-            algorithm: OID_SM2_WITH_SM3.to_vec(),
+            algorithm: crate::sm2::SM2_WITH_SM3_OID.to_vec(),
             parameters: None,
         },
         signature: signature.to_vec(),
@@ -270,11 +245,11 @@ pub fn create_digital_signature<R: Rng>(
     let signed_data = SignedData {
         version: 1,
         digest_algorithms: vec![AlgorithmIdentifier {
-            algorithm: OID_SM3.to_vec(),
+            algorithm: crate::sm2::SM3_OID.to_vec(),
             parameters: Some(vec![0x05, 0x00]),
         }],
         encap_content_info: EncapsulatedContentInfo {
-            content_type: OID_ID_DATA.to_vec(),
+            content_type: crate::sm2::ID_DATA_OID.to_vec(),
             content: Some(data.to_vec()),
         },
         certificates: vec![cert.clone()],
@@ -334,10 +309,10 @@ fn encode_content_type_attr() -> Result<Vec<u8>, Error> {
     let mut attr = Vec::new();
 
     // attrType = content-type (1.2.840.113549.1.9.3)
-    attr.extend(encode_oid(OID_CONTENT_TYPE)?);
+    attr.extend(encode_oid(crate::sm2::CONTENT_TYPE_OID)?);
 
     // attrValues = SET { id-data }
-    let id_data_tlv = encode_oid(OID_ID_DATA)?;
+    let id_data_tlv = encode_oid(crate::sm2::ID_DATA_OID)?;
     let set_content = wrap_set(id_data_tlv);
     attr.extend(set_content);
 
@@ -349,7 +324,7 @@ fn encode_message_digest_attr(digest: &[u8; 32]) -> Result<Vec<u8>, Error> {
     let mut attr = Vec::new();
 
     // attrType = message-digest (1.2.840.113549.1.9.4)
-    attr.extend(encode_oid(OID_MESSAGE_DIGEST)?);
+    attr.extend(encode_oid(crate::sm2::MESSAGE_DIGEST_OID)?);
 
     // attrValues = SET { OCTET STRING }
     let digest_tlv = encode_octet_string(digest)?;
@@ -364,7 +339,7 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
     let mut attr = Vec::new();
 
     // attrType = signing-time (1.2.840.113549.1.9.5)
-    attr.extend(encode_oid(OID_SIGNING_TIME)?);
+    attr.extend(encode_oid(crate::sm2::SIGNING_TIME_OID)?);
 
     // attrValues = SET { UTCTime }
     // 使用当前时间的简化表示
@@ -423,7 +398,7 @@ pub fn verify_digital_signature(signed_data_der: &[u8], id: &[u8]) -> Result<Ver
     let content_info = parse_content_info_production(signed_data_der)?;
 
     // 验证 contentType
-    if content_info.content_type != OID_PKCS7_SIGNED_DATA {
+    if content_info.content_type != crate::sm2::PKCS7_SIGNED_DATA_OID {
         return Err(Error::InvalidSignature);
     }
 
@@ -572,12 +547,12 @@ fn parse_signed_attrs_production(data: &[u8]) -> Result<SignedAttributes, Error>
         let (values_set, _) = der::parse_tlv(r, 0x31).ok_or_else(err)?;
 
         // 根据 OID 处理属性
-        if oid == OID_CONTENT_TYPE {
+        if oid == crate::sm2::CONTENT_TYPE_OID {
             // 解析 content-type
             if let Some((val, _)) = der::parse_tlv(values_set, 0x06) {
                 content_type = Some(val.to_vec());
             }
-        } else if oid == OID_MESSAGE_DIGEST {
+        } else if oid == crate::sm2::MESSAGE_DIGEST_OID {
             // 解析 message-digest
             if let Some((val, _)) = der::parse_tlv(values_set, 0x04) {
                 if val.len() == 32 {
@@ -586,7 +561,7 @@ fn parse_signed_attrs_production(data: &[u8]) -> Result<SignedAttributes, Error>
                     message_digest = Some(digest);
                 }
             }
-        } else if oid == OID_SIGNING_TIME {
+        } else if oid == crate::sm2::SIGNING_TIME_OID {
             // 解析 signing-time
             if let Some((val, _)) = der::parse_tlv_any_full(values_set) {
                 signing_time = Some(val.to_vec());
@@ -615,7 +590,7 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     let mut content_info = Vec::new();
 
     // contentType
-    let oid_tlv = encode_oid(OID_PKCS7_SIGNED_DATA)?;
+    let oid_tlv = encode_oid(crate::sm2::PKCS7_SIGNED_DATA_OID)?;
 
     // content [0] EXPLICIT
     let mut content_tlv = vec![0xA0];

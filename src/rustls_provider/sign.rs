@@ -4,13 +4,16 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
 
-use pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
+use pki_types::{
+    AlgorithmIdentifier, PrivateKeyDer, SignatureVerificationAlgorithm, SubjectPublicKeyInfoDer,
+};
 use rustls::crypto::{SignatureScheme, Signer, SigningKey};
 use rustls::error::Error;
 
 use crate::sm2::{
     der::{public_key_to_spki_der, sig_to_der},
-    sign_message, PrivateKey, DEFAULT_ID,
+    sign_message, verify_message, PrivateKey, DEFAULT_ID, SM2_EC_PUBKEY_PARAMETER,
+    SM2_WITH_SM3_ALGORITHM_IDENTIFIER,
 };
 
 /// 从 DER 编码的私钥加载 SM2 签名密钥
@@ -29,6 +32,44 @@ pub(crate) fn load_private_key(
         _ => return Err(Error::General("unsupported SM2 key format".into())),
     };
     Ok(Box::new(Sm2SigningKey { pri_key }))
+}
+
+/// SM2-SM3 签名验证算法
+///
+/// 实现 rustls 的 `SignatureVerificationAlgorithm` trait，
+/// 用于 TLS 握手过程中的证书签名验证。
+#[derive(Debug)]
+pub struct Sm2Sm3Algorithm;
+
+impl SignatureVerificationAlgorithm for Sm2Sm3Algorithm {
+    fn public_key_alg_id(&self) -> AlgorithmIdentifier {
+        AlgorithmIdentifier::from_slice(SM2_EC_PUBKEY_PARAMETER)
+    }
+
+    fn signature_alg_id(&self) -> AlgorithmIdentifier {
+        AlgorithmIdentifier::from_slice(SM2_WITH_SM3_ALGORITHM_IDENTIFIER)
+    }
+
+    fn verify_signature(
+        &self,
+        public_key: &[u8],
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<(), pki_types::InvalidSignature> {
+        // 将 65 字节公钥转换为固定数组
+        let pub_key_arr: &[u8; 65] = public_key
+            .try_into()
+            .map_err(|_| pki_types::InvalidSignature)?;
+
+        // 将签名转换为固定数组（SM2 签名为 64 字节）
+        let sig_arr: &[u8; 64] = signature
+            .try_into()
+            .map_err(|_| pki_types::InvalidSignature)?;
+
+        // SM2 验签（使用默认 ID，GB/T 32918.2）
+        verify_message(message, DEFAULT_ID, pub_key_arr, sig_arr)
+            .map_err(|_| pki_types::InvalidSignature)
+    }
 }
 
 struct Sm2SigningKey {

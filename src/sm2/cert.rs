@@ -46,32 +46,12 @@ use pem_rfc7468::{decode_vec, encode_string};
 
 // x509-cert 相关导入
 use x509_cert::der::Decode;
-use x509_cert::spki::ObjectIdentifier;
 use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
 
 // chrono 时间库导入（用于标准时间处理）
 #[cfg(feature = "std")]
 use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
-
-// ====================================================================================
-// 常量定义
-// ====================================================================================
-
-/// SM2 签名算法 OID (1.2.156.10197.1.501)
-///
-/// 用于标识 SM2 签名算法，在证书和签名结构中使用
-pub const SM2_SIG_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
-
-/// SM2 椭圆曲线公钥算法 OID (1.2.156.10197.1.301)
-///
-/// 用于标识 SM2 椭圆曲线公钥算法
-pub const SM2_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.301");
-
-/// EC 公钥算法 OID (1.2.840.10045.2.1)
-///
-/// 通用椭圆曲线公钥算法 OID，与 SM2 算法 OID 配合使用
-pub const EC_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
 
 // ====================================================================================
 // 数据结构
@@ -451,15 +431,13 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
 
     // 解析第一个 OID (id-ecPublicKey = 1.2.840.10045.2.1)
     let (first_oid, params) = der::parse_tlv(alg_id, 0x06).ok_or_else(err)?;
-    const EC_OID: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
-    if first_oid != EC_OID {
+    if first_oid != crate::sm2::EC_PUBKEY_OID {
         return Err(err());
     }
 
     // 解析第二个 OID (SM2 = 1.2.156.10197.1.301)
     let (second_oid, _) = der::parse_tlv(params, 0x06).ok_or_else(err)?;
-    const SM2_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D];
-    if second_oid != SM2_OID {
+    if second_oid != crate::sm2::SM2_PUBKEY_OID {
         return Err(err());
     }
 
@@ -1286,11 +1264,8 @@ pub fn generate_self_signed_cert<R: Rng>(
     tbs.push(serial_number.len() as u8);
     tbs.extend_from_slice(serial_number);
 
-    // 签名算法 (SM2)
-    let sig_alg = vec![
-        0x30, 0x0A, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
-    ];
-    tbs.extend(&sig_alg);
+    // 签名算法 (SM2withSM3)
+    tbs.extend_from_slice(crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER);
 
     // 签发者 = 主体
     tbs.extend_from_slice(subject);
@@ -1313,7 +1288,7 @@ pub fn generate_self_signed_cert<R: Rng>(
     Ok(GmCertificate {
         version: 2,
         serial_number: serial_number.to_vec(),
-        signature_algorithm: sig_alg,
+        signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
         issuer: subject.to_vec(),
         validity: validity.to_vec(),
         subject: subject.to_vec(),
@@ -1487,9 +1462,7 @@ mod tests {
         let cert = GmCertificate {
             version: 2,
             serial_number: serial,
-            signature_algorithm: vec![
-                0x30, 0x0A, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
-            ],
+            signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
             issuer: vec![0x31, 0x00],
             validity,
             subject,

@@ -161,6 +161,15 @@ fn split_first(data: &[u8]) -> Option<(&u8, &[u8])> {
     data.split_first()
 }
 
+/// 构建 SPKI AlgorithmIdentifier
+///
+/// 返回包含 id-ecPublicKey 和 SM2 OID 的 AlgorithmIdentifier：
+/// SEQUENCE { OID id-ecPublicKey, OID SM2 }
+#[cfg(feature = "alloc")]
+fn algorithm_identifier_spki() -> Vec<u8> {
+    crate::sm2::SM2_EC_PUBKEY_PARAMETER.to_vec()
+}
+
 // ── DER 长度解码 ──────────────────────────────────────────────────────────────
 
 /// 解析 DER 长度字段，返回 (length, 剩余字节)
@@ -291,11 +300,7 @@ pub fn private_key_to_sec1_der(priv_key: &PrivateKey) -> Vec<u8> {
 pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
     let sec1 = private_key_to_sec1_der(priv_key);
     // AlgorithmIdentifier：包含 id-ecPublicKey 和 SM2 OID
-    let alg_id: &[u8] = &[
-        0x30, 0x13, // SEQUENCE (19 bytes)
-        0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
-        0x06, 0x08, 0x2a, 0x81, 0x1c, 0xcf, 0x55, 0x01, 0x82, 0x2d, // SM2 OID
-    ];
+    let alg_id = algorithm_identifier_spki();
     // version INTEGER = 0：02 01 00
     let version: &[u8] = &[0x02, 0x01, 0x00];
     // privateKey OCTET STRING 包装 sec1
@@ -309,7 +314,7 @@ pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
     der.push(0x30);
     der.push(inner_len as u8);
     der.extend_from_slice(version);
-    der.extend_from_slice(alg_id);
+    der.extend_from_slice(&alg_id);
     der.extend_from_slice(&priv_oct);
     der
 }
@@ -366,18 +371,8 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 /// 此格式是 rustls `SigningKey::public_key()` 所需的 `SubjectPublicKeyInfoDer`。
 #[cfg(feature = "alloc")]
 pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
-    // OID 1.2.840.10045.2.1 (id-ecPublicKey): 06 07 2a 86 48 ce 3d 02 01
-    let oid_ec: &[u8] = &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
-    // OID 1.2.156.10197.1.301 (SM2): 06 08 2a 81 1c cf 55 01 82 2d
-    let oid_sm2: &[u8] = &[0x06, 0x08, 0x2a, 0x81, 0x1c, 0xcf, 0x55, 0x01, 0x82, 0x2d];
-
-    // AlgorithmIdentifier SEQUENCE
-    let alg_inner_len = oid_ec.len() + oid_sm2.len();
-    let mut alg = Vec::with_capacity(2 + alg_inner_len);
-    alg.push(0x30);
-    alg.push(alg_inner_len as u8);
-    alg.extend_from_slice(oid_ec);
-    alg.extend_from_slice(oid_sm2);
+    // AlgorithmIdentifier SEQUENCE { OID id-ecPublicKey, OID SM2 }
+    let alg = algorithm_identifier_spki();
 
     // BIT STRING: 0x03 <len> 0x00 <pub_key>
     // Reason: 0x00 是 unused bits 字段，表示最后一字节无填充位
@@ -667,10 +662,9 @@ mod tests {
         let pri = PrivateKey::from_bytes(&RAW_KEY).unwrap();
         let pub_key = pri.public_key();
         let spki = public_key_to_spki_der(&pub_key);
-        // id-ecPublicKey OID bytes
-        let oid_ec: &[u8] = &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+        // 使用 oid 模块的常量验证
         assert!(
-            spki.windows(oid_ec.len()).any(|w| w == oid_ec),
+            spki.windows(crate::sm2::EC_PUBKEY_OID.len()).any(|w| w == crate::sm2::EC_PUBKEY_OID),
             "SPKI 应包含 id-ecPublicKey OID"
         );
     }
