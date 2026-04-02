@@ -6,20 +6,73 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    /// 构建 X.500 Name (RelativeDistinguishedName)
+    ///
+    /// 生成包含单个属性（如 commonName）的 X.500 Name DER 编码。
+    /// Name ::= CHOICE { rdnSequence  RDNSequence }
+    /// RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+    /// RelativeDistinguishedName ::= SET SIZE (1..MAX) OF AttributeTypeAndValue
+    fn build_name(oid: &[u8], value: &str) -> Vec<u8> {
+        let value_bytes = value.as_bytes();
+        let mut name = Vec::with_capacity(32);
+
+        // SET
+        name.push(0x31);
+        name.push((2 + oid.len() + 2 + value_bytes.len()) as u8);
+
+        // SEQUENCE
+        name.push(0x30);
+        name.push((oid.len() + 2 + value_bytes.len()) as u8);
+
+        // OID
+        name.extend_from_slice(oid);
+
+        // PrintableString (简化处理，假设所有字符都可打印)
+        name.push(0x13);
+        name.push(value_bytes.len() as u8);
+        name.extend_from_slice(value_bytes);
+
+        name
+    }
+
+    /// commonName OID (2.5.4.3)
+    const OID_COMMON_NAME: &[u8] = &[0x06, 0x03, 0x55, 0x04, 0x03];
+
+    /// SM2withSM3 签名算法 OID (1.2.156.10197.1.501)
+    const OID_SM2_WITH_SM3: &[u8] = &[0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D];
+
+    /// 创建 SM2withSM3 签名算法标识符 (AlgorithmIdentifier)
+    /// SEQUENCE { OID, NULL }
+    fn sm2_with_sm3_algorithm() -> Vec<u8> {
+        let mut alg = Vec::with_capacity(2 + OID_SM2_WITH_SM3.len() + 2);
+        alg.push(0x30); // SEQUENCE
+        alg.push((OID_SM2_WITH_SM3.len() + 2) as u8);
+        alg.extend_from_slice(OID_SM2_WITH_SM3);
+        alg.extend_from_slice(&[0x05, 0x00]); // NULL
+        alg
+    }
+
+    /// 创建测试用的国密证书
+    ///
+    /// 使用辅助函数构建证书字段，避免直接操作字节。
+    /// 证书有效期为 2001-01-01 到 2030-01-01。
     fn create_test_cert(pub_key: &[u8; 65]) -> cert::GmCertificate {
+        // 使用辅助函数构建颁发者和主体名称
+        let issuer = build_name(OID_COMMON_NAME, "TestCA");
+        let subject = build_name(OID_COMMON_NAME, "TestUser");
+
+        // 使用 UTCTime 字符串生成有效期（200101000000Z 到 300101000000Z）
+        let validity = cert::generate_validity(b"010101000000Z", b"300101000000Z");
+
         cert::GmCertificate {
-            version: 2,
+            version: 2, // v3
             serial_number: vec![0x01, 0x02, 0x03],
-            signature_algorithm: vec![0x30, 0x0C, 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D, 0x05, 0x00],
-            issuer: vec![0x31, 0x11, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x08, 0x43, 0x41, 0x43, 0x45, 0x52, 0x54, 0x49, 0x46],
-            validity: vec![
-                0x30, 0x1e,  // SEQUENCE, length 30
-                0x17, 0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime: 200101000000Z
-                0x17, 0x0d, 0x33, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a,  // UTCTime: 300101000000Z
-            ],
-            subject: vec![0x31, 0x11, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x08, 0x55, 0x73, 0x65, 0x72, 0x4E, 0x61, 0x6D, 0x65],
+            signature_algorithm: sm2_with_sm3_algorithm(),
+            issuer,
+            validity,
+            subject,
             subject_public_key_info: public_key_to_spki_der(pub_key),
-            signature: vec![0x00, 0x01, 0x02, 0x03],
+            signature: vec![0x00; 64], // 占位签名（SM2 签名为 64 字节）
         }
     }
 
