@@ -504,8 +504,8 @@ pub fn encrypt<R: Rng>(
         z_input[32..].copy_from_slice(&y2);
         let t = crate::kdf::kdf(&z_input, message.len());
 
-        // t 全零时重新选 k
-        if t.iter().all(|&b| b == 0) {
+        // t 全零时重新选 k（空消息时跳过此检查）
+        if !t.is_empty() && t.iter().all(|&b| b == 0) {
             continue;
         }
 
@@ -563,7 +563,8 @@ pub fn decrypt(pri_key: &PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, Error
     z_input[32..].copy_from_slice(&y2);
     let t = crate::kdf::kdf(&z_input, c2.len());
 
-    if t.iter().all(|&b| b == 0) {
+    // t 全零时解密失败（空消息时跳过此检查）
+    if !t.is_empty() && t.iter().all(|&b| b == 0) {
         return Err(Error::DecryptFailed);
     }
 

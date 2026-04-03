@@ -85,7 +85,8 @@ mod tests {
     fn test_generate_keypair() {
         let mut rng = StdRng::seed_from_u64(123456789);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
-        
+
+        // 验证私钥和公钥长度
         assert_eq!(priv_key.as_bytes().len(), 32);
         assert_eq!(pub_key.len(), 65);
         println!("✅ 测试 1：生成密钥对 - 通过");

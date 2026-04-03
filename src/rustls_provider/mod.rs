@@ -96,6 +96,7 @@ mod tests {
     use super::SM2_SM3_ALG;
     use crate::sm2::{generate_keypair, sign_message, DEFAULT_ID};
     use alloc::vec::Vec;
+    use pki_types::SignatureVerificationAlgorithm;
 
     fn sign_with_der(message: &[u8]) -> ([u8; 65], Vec<u8>) {
         let mut rng = crate::rustls_provider::kx::Sm2Rng;
