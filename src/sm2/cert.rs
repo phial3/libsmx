@@ -283,18 +283,21 @@ impl GmCertificate {
     pub fn verify_self_signed(&self, id: &[u8]) -> Result<(), Error> {
         // 提取公钥
         let pub_key = self.extract_sm2_public_key()?;
-        
+
         // 获取 TBS 证书数据
         let tbs = self.tbs_certificate();
-        
+
         // 计算 Z 值和消息摘要
         let z = crate::sm2::get_z(id, &pub_key);
         let e = crate::sm2::get_e(&z, &tbs);
-        
+
         // 解析签名
-        let sig_array: [u8; 64] = self.signature.as_slice().try_into()
+        let sig_array: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
             .map_err(|_| Error::InvalidSignature)?;
-        
+
         // 验证签名
         verify(&e, &pub_key, &sig_array)
     }
@@ -320,11 +323,10 @@ impl GmCertificate {
         // 计算 Z 值和消息摘要
         let z = crate::sm2::get_z(id, pub_key);
         let e = crate::sm2::get_e(&z, &self.tbs_certificate());
-        
+
         // 解析签名
-        let sig_array: [u8; 64] = signature.try_into()
-            .map_err(|_| Error::InvalidSignature)?;
-        
+        let sig_array: [u8; 64] = signature.try_into().map_err(|_| Error::InvalidSignature)?;
+
         // 验证签名
         verify(&e, pub_key, &sig_array)
     }
@@ -349,7 +351,7 @@ impl GmCertificate {
         // 版本号（如果存在）
         if self.version > 0 {
             let version_der = vec![0x02, 1, self.version as u8];
-            
+
             // 包装为上下文标签 [0]
             tbs.push(0xA0);
             tbs.push(version_der.len() as u8);
@@ -379,7 +381,7 @@ impl GmCertificate {
         // 包装为 SEQUENCE
         let mut seq = Vec::with_capacity(4 + tbs.len());
         seq.push(0x30);
-        
+
         let len = tbs.len();
         if len < 128 {
             seq.push(len as u8);
@@ -391,7 +393,7 @@ impl GmCertificate {
             seq.push((len >> 8) as u8);
             seq.push((len & 0xFF) as u8);
         }
-        
+
         seq.extend(tbs);
         seq
     }
@@ -459,7 +461,7 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
 
     let (subject, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
     let (spki, _rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
-    
+
     // TBSCertificate 解析完成，_rest_tbs 包含扩展字段（如果有），我们不需要
 
     // 从外层剩余部分解析签名算法和签名值
@@ -544,11 +546,11 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
 
     // 计算 TBSCertificate 的总长度
     let tbs_total_len: usize = tbs_components.iter().map(|c| c.len()).sum();
-    
+
     // 构建 TBSCertificate SEQUENCE
     let mut tbs_certificate = Vec::with_capacity(2 + tbs_total_len);
     tbs_certificate.push(0x30); // SEQUENCE 标签
-    
+
     // 编码 TBSCertificate 长度字段
     if tbs_total_len < 128 {
         tbs_certificate.push(tbs_total_len as u8);
@@ -560,7 +562,7 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
         tbs_certificate.push((tbs_total_len >> 8) as u8);
         tbs_certificate.push((tbs_total_len & 0xFF) as u8);
     }
-    
+
     // 添加 TBSCertificate 的内容
     for component in tbs_components {
         tbs_certificate.extend(component);
@@ -709,23 +711,96 @@ use alloc::string::String;
 /// X.500 可分辨名称属性类型
 ///
 /// 用于构建证书的 issuer 和 subject 字段。
+/// 
+/// 包含 RFC 5280 和 X.500 标准中定义的常用属性。
 #[cfg(feature = "alloc")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum X500AttributeType {
-    /// Common Name (2.5.4.3) - 常用名称
+    /// CN (Common Name) (2.5.4.3) - 常用名称
+    /// 
+    /// 最常用的属性，通常用于域名（服务器证书）或个人姓名（个人证书）。
     CommonName,
-    /// Organization (2.5.4.10) - 组织
+    
+    /// O (Organization) (2.5.4.10) - 组织
+    /// 
+    /// 公司、机构或组织的名称。
     Organization,
-    /// Organizational Unit (2.5.4.11) - 组织单位
+    
+    /// OU (Organizational Unit) (2.5.4.11) - 组织单位
+    /// 
+    /// 组织内的部门或分支机构，如"IT 部门"、"研发中心"等。
     OrganizationalUnit,
-    /// Country (2.5.4.6) - 国家
+    
+    /// C (Country) (2.5.4.6) - 国家
+    /// 
+    /// 两个字母的 ISO 3166-1 国家代码，如"CN"、"US"等。
     Country,
-    /// State/Province (2.5.4.8) - 省/州
+    
+    /// S (State/Province) (2.5.4.8) - 省/州
+    /// 
+    /// 省、州或地区的完整名称，如"Beijing"、"California"等。
     State,
-    /// Locality (2.5.4.7) - 地区
+    
+    /// L (Locality) (2.5.4.7) - 地区
+    /// 
+    /// 城市、区县或具体地理位置，如"Beijing"、"Haidian District"等。
     Locality,
-    /// Serial Number (2.5.4.5) - 序列号
+
+    /// SN (Serial Number) (2.5.4.5) - 序列号
+    /// 
+    /// 个人的序列号标识（如员工号、身份证号等），不是证书序列号。
+    /// 注意：此属性较少使用，主要用于个人身份证书。
     SerialNumber,
+    
+    /// Email Address (1.2.840.113549.1.9.1) - 电子邮箱
+    /// 
+    /// RFC 5280 推荐的电子邮件地址属性，用于标识证书持有者的邮箱。
+    EmailAddress,
+    
+    /// Title (2.5.4.12) - 职称/头衔
+    /// 
+    /// 个人的职位或职称，如"Engineer"、"Manager"、"CEO"等。
+    Title,
+    
+    /// Given Name (2.5.4.42) - 名
+    /// 
+    /// 个人的名字（西方命名法中的 first name）。
+    GivenName,
+    
+    /// Surname (2.5.4.4) - 姓
+    /// 
+    /// 个人的姓氏（西方命名法中的 last name）。
+    Surname,
+    
+    /// Initials (2.5.4.43) - 姓名首字母
+    /// 
+    /// 个人姓名的首字母缩写。
+    Initials,
+    
+    /// Generation Qualifier (2.5.4.44) - 世代限定符
+    /// 
+    /// 用于区分同名人的世代标识，如"Jr."、"Sr."、"III"等。
+    GenerationQualifier,
+    
+    /// Pseudonym (2.5.4.65) - 笔名/化名
+    /// 
+    /// 个人的别名或化名。
+    Pseudonym,
+    
+    /// Postal Code (2.5.4.17) - 邮政编码
+    /// 
+    /// 邮政投递区域的编码。
+    PostalCode,
+    
+    /// Street Address (2.5.4.9) - 街道地址
+    /// 
+    /// 详细的街道地址信息。
+    StreetAddress,
+    
+    /// Business Category (2.5.4.15) - 业务类别
+    /// 
+    /// 组织的业务类型分类。
+    BusinessCategory,
 }
 
 #[cfg(feature = "alloc")]
@@ -733,13 +808,32 @@ impl X500AttributeType {
     /// 获取属性类型的 OID DER 编码
     fn oid_der(&self) -> &'static [u8] {
         match self {
+            // 常用属性
             X500AttributeType::CommonName => &[0x06, 0x03, 0x55, 0x04, 0x03],
             X500AttributeType::Organization => &[0x06, 0x03, 0x55, 0x04, 0x0A],
             X500AttributeType::OrganizationalUnit => &[0x06, 0x03, 0x55, 0x04, 0x0B],
             X500AttributeType::Country => &[0x06, 0x03, 0x55, 0x04, 0x06],
             X500AttributeType::State => &[0x06, 0x03, 0x55, 0x04, 0x08],
             X500AttributeType::Locality => &[0x06, 0x03, 0x55, 0x04, 0x07],
+            
+            // 个人身份属性
             X500AttributeType::SerialNumber => &[0x06, 0x03, 0x55, 0x04, 0x05],
+            X500AttributeType::EmailAddress => &[
+                0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x01,
+            ],
+            X500AttributeType::Title => &[0x06, 0x03, 0x55, 0x04, 0x0C],
+            X500AttributeType::GivenName => &[0x06, 0x03, 0x55, 0x04, 0x2A],
+            X500AttributeType::Surname => &[0x06, 0x03, 0x55, 0x04, 0x04],
+            X500AttributeType::Initials => &[0x06, 0x03, 0x55, 0x04, 0x2B],
+            X500AttributeType::GenerationQualifier => &[0x06, 0x03, 0x55, 0x04, 0x2C],
+            X500AttributeType::Pseudonym => &[0x06, 0x03, 0x55, 0x04, 0x41],
+            
+            // 地址相关属性
+            X500AttributeType::PostalCode => &[0x06, 0x03, 0x55, 0x04, 0x11],
+            X500AttributeType::StreetAddress => &[0x06, 0x03, 0x55, 0x04, 0x09],
+            
+            // 组织相关属性
+            X500AttributeType::BusinessCategory => &[0x06, 0x03, 0x55, 0x04, 0x0F],
         }
     }
 }
@@ -824,9 +918,13 @@ impl X500Attribute {
 /// use libsmx::sm2::cert::{X500Attribute, X500AttributeType, build_x500_name};
 ///
 /// let name = build_x500_name(&[
-///     X500Attribute::new(X500AttributeType::Country, "CN"),
-///     X500Attribute::new(X500AttributeType::Organization, "Example Corp"),
-///     X500Attribute::new(X500AttributeType::CommonName, "www.example.com"),
+///    X500Attribute::new(X500AttributeType::Country, "CN"),
+///    X500Attribute::new(X500AttributeType::State, "Beijing"),
+///    X500Attribute::new(X500AttributeType::Locality, "Haidian"),
+///    X500Attribute::new(X500AttributeType::Organization, "Test Corp"),
+///    X500Attribute::new(X500AttributeType::OrganizationalUnit, "IT"),
+///    X500Attribute::new(X500AttributeType::CommonName, "www.test.com"),
+///    X500Attribute::new(X500AttributeType::EmailAddress, "admin@test.com"),
 /// ]);
 /// ```
 #[cfg(feature = "alloc")]
@@ -879,8 +977,6 @@ pub fn build_x500_name(attributes: &[X500Attribute]) -> Vec<u8> {
 fn parse_validity(validity_der: &[u8]) -> Result<Validity, Error> {
     Validity::from_der(validity_der).map_err(|_| Error::InvalidCertificate)
 }
-
-
 
 /// 将日期字符串解析为 Unix 时间戳
 ///
@@ -1003,7 +1099,10 @@ impl CertificateBuilder {
         // 将 u64 转换为 DER INTEGER 格式（大端）
         let bytes = value.to_be_bytes();
         // 跳过前导零
-        let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
+        let start = bytes
+            .iter()
+            .position(|&b| b != 0)
+            .unwrap_or(bytes.len() - 1);
         self.serial_number = bytes[start..].to_vec();
         self
     }
@@ -1082,18 +1181,23 @@ impl CertificateBuilder {
 
         // 生成有效期 DER（使用 x509-cert 的 Time 类型）
         use x509_cert::der::Encode;
-        let not_before_time = x509_cert::time::Time::try_from(not_before)
+        let not_before_time =
+            x509_cert::time::Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
+        let not_after_time =
+            x509_cert::time::Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
+
+        let not_before_der = not_before_time
+            .to_der()
             .map_err(|_| Error::InvalidCertificate)?;
-        let not_after_time = x509_cert::time::Time::try_from(not_after)
+        let not_after_der = not_after_time
+            .to_der()
             .map_err(|_| Error::InvalidCertificate)?;
-        
-        let not_before_der = not_before_time.to_der().map_err(|_| Error::InvalidCertificate)?;
-        let not_after_der = not_after_time.to_der().map_err(|_| Error::InvalidCertificate)?;
-        
-        let mut validity_vec: Vec<u8> = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
+
+        let mut validity_vec: Vec<u8> =
+            Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
         validity_vec.extend(&not_before_der);
         validity_vec.extend(&not_after_der);
-        
+
         // 包装为 SEQUENCE
         let mut validity_seq: Vec<u8> = Vec::with_capacity(2 + validity_vec.len());
         validity_seq.push(0x30);
@@ -1585,8 +1689,6 @@ pub fn generate_self_signed_cert<R: Rng>(
     })
 }
 
-
-
 /// 将数据包装为 SEQUENCE（单个 Vec）
 ///
 /// 将单个字节数组包装为 ASN.1 SEQUENCE 结构。
@@ -1615,8 +1717,6 @@ fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
     result.extend(content);
     result
 }
-
-
 
 // ====================================================================================
 // 测试
@@ -1706,8 +1806,6 @@ mod tests {
             &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
         )
         .expect("Certificate generation should succeed");
-
-
 
         cert.verify_self_signed(DEFAULT_ID)
             .expect("Self-signed verification should succeed");
