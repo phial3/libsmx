@@ -10,14 +10,14 @@
 
 #![cfg(feature = "alloc")]
 
-use libsmx::sm2::cert::{generate_self_signed_cert, generate_validity, GmCertificate};
+use libsmx::sm2::cert::{generate_self_signed_cert, GmCertificate};
 use libsmx::sm2::cms;
 use libsmx::sm2::{generate_keypair, public_key_to_spki_der, public_key_from_spki_der, DEFAULT_ID};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 /// 创建简单的 DER Name 结构（空 RDNSequence）
-/// 格式: SET OF {}
+/// 格式：SET OF {}
 /// 注意：Name 是 CHOICE { rdnSequence RDNSequence }
 /// RDNSequence 是 SEQUENCE OF RelativeDistinguishedName
 /// 但这里使用 SET OF {} 作为简化表示
@@ -25,12 +25,27 @@ fn create_simple_name() -> Vec<u8> {
     vec![0x31, 0x00] // 空的 SET OF
 }
 
+/// 生成测试用的有效期 DER 编码
+///
+/// 固定有效期：2025-01-01 到 2030-01-01
+fn generate_test_validity() -> Vec<u8> {
+    // 使用字节数组方式生成有效期（用于测试）
+    // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
+    vec![
+        0x30, 0x1E,           // SEQUENCE, length 30
+        0x17, 0x0D,           // UTCTime, length 13
+        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 250101000000Z
+        0x17, 0x0D,           // UTCTime, length 13
+        b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 300101000000Z
+    ]
+}
+
 /// 创建测试用的国密证书
 fn create_test_cert(pub_key: &[u8; 65]) -> GmCertificate {
     // 使用简单的空 Name 格式
     let issuer = create_simple_name();
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     GmCertificate {
         version: 2, // v3
@@ -82,7 +97,7 @@ fn test_self_signed_cert() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
@@ -143,7 +158,7 @@ fn test_digital_signature_creation() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
@@ -179,7 +194,7 @@ fn test_digital_signature_tampering() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
         &priv_key,
@@ -222,7 +237,7 @@ fn test_digital_signature_different_id() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
         &priv_key,
@@ -261,7 +276,7 @@ fn test_digital_signature_empty_content() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
         &priv_key,
@@ -294,7 +309,7 @@ fn test_digital_signature_large_content() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
         &priv_key,
@@ -328,7 +343,7 @@ fn test_digital_signature_stability() {
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
     let subject = create_simple_name();
-    let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+    let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
         &priv_key,
@@ -371,25 +386,34 @@ fn test_cert_serial_extraction() {
 
 /// 测试证书有效期生成
 #[test]
+#[cfg(all(feature = "alloc", feature = "std"))]
 fn test_cert_validity_generation() {
-    let not_before = b"250101000000Z";
-    let not_after = b"300101000000Z";
+    use std::time::Duration;
+    use x509_cert::der::Encode;
+    
+    let not_before = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1704067200); // 2024-01-01
+    let not_after = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1893456000);  // 2030-01-01
 
-    let validity = generate_validity(not_before, not_after);
+    // 使用 x509-cert 的 Time 类型生成有效期
+    let not_before_time = x509_cert::time::Time::try_from(not_before)
+        .expect("not_before should be valid");
+    let not_after_time = x509_cert::time::Time::try_from(not_after)
+        .expect("not_after should be valid");
+    
+    let not_before_der = not_before_time.to_der().expect("Failed to encode not_before");
+    let not_after_der = not_after_time.to_der().expect("Failed to encode not_after");
+    
+    let mut validity: Vec<u8> = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
+    validity.extend(&not_before_der);
+    validity.extend(&not_after_der);
+    
+    // 包装为 SEQUENCE
+    let mut validity_seq: Vec<u8> = Vec::with_capacity(2 + validity.len());
+    validity_seq.push(0x30);
+    validity_seq.push(validity.len() as u8);
+    validity_seq.extend(validity);
 
     // 验证结构
-    assert!(!validity.is_empty());
-    assert_eq!(validity[0], 0x30); // SEQUENCE tag
-}
-
-/// 测试公钥提取
-#[test]
-fn test_cert_pubkey_extraction() {
-    let mut rng = StdRng::seed_from_u64(123456);
-    let (_priv_key, pub_key) = generate_keypair(&mut rng);
-
-    let cert = create_test_cert(&pub_key);
-
-    // 验证公钥信息不为空
-    assert!(!cert.subject_public_key_info.is_empty());
+    assert!(!validity_seq.is_empty());
+    assert_eq!(validity_seq[0], 0x30); // SEQUENCE tag
 }

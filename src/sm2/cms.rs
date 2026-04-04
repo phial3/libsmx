@@ -1096,9 +1096,24 @@ mod tests {
     use super::*;
     use crate::sm2::generate_keypair;
     use crate::sm2::DEFAULT_ID;
-    use crate::sm2::cert::{generate_self_signed_cert, generate_validity};
+    use crate::sm2::cert::generate_self_signed_cert;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    /// 生成测试用的有效期 DER 编码
+    ///
+    /// 固定有效期：2024-01-01 到 2030-01-01
+    fn generate_test_validity() -> Vec<u8> {
+        // 使用字节数组方式生成有效期（用于测试）
+        // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
+        vec![
+            0x30, 0x1E,           // SEQUENCE, length 30
+            0x17, 0x0D,           // UTCTime, length 13
+            b'2', b'4', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 240101000000Z
+            0x17, 0x0D,           // UTCTime, length 13
+            b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 300101000000Z
+        ]
+    }
 
     #[test]
     fn test_signature_roundtrip() {
@@ -1106,7 +1121,7 @@ mod tests {
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = generate_test_validity();
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1180,7 +1195,7 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = generate_test_validity();
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1222,7 +1237,7 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = generate_test_validity();
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1264,7 +1279,7 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = generate_test_validity();
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1307,7 +1322,7 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = generate_test_validity();
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1346,7 +1361,7 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = generate_test_validity();
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(

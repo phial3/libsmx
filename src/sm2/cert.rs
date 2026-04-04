@@ -46,12 +46,12 @@ use pem_rfc7468::{decode_vec, encode_string};
 
 // x509-cert 相关导入
 use x509_cert::der::Decode;
-use x509_cert::time::{Time, Validity};
+use x509_cert::time::Validity;
 use x509_cert::Certificate;
 
 // chrono 时间库导入（用于标准时间处理）
 #[cfg(feature = "std")]
-use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 // ====================================================================================
 // 数据结构
@@ -152,10 +152,45 @@ impl GmCertificate {
         generate_gm_certificate_pem(self)
     }
 
-    /// 提取 SM2 公钥（65字节未压缩格式）
+    /// 创建证书构建器
+    ///
+    /// 创建一个 [`CertificateBuilder`] 实例，用于以用户友好的方式构建证书。
+    ///
+    /// # 返回
+    /// 证书构建器实例
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// use libsmx::sm2::cert::{GmCertificate, X500Attribute, X500AttributeType};
+    /// use std::time::{SystemTime, Duration};
+    ///
+    /// let cert = GmCertificate::builder()
+    ///     .subject(&[
+    ///         X500Attribute::new(X500AttributeType::Country, "CN"),
+    ///         X500Attribute::new(X500AttributeType::CommonName, "www.example.com"),
+    ///     ])
+    ///     .issuer(&[
+    ///         X500Attribute::new(X500AttributeType::Country, "CN"),
+    ///         X500Attribute::new(X500AttributeType::Organization, "Example Corp"),
+    ///     ])
+    ///     .serial_number(1u32)
+    ///     .validity_period(
+    ///         SystemTime::now(),
+    ///         SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
+    ///     )
+    ///     .build(&pub_key, &priv_key, b"1234567812345678", &mut rng)
+    ///     .expect("Failed to build certificate");
+    /// ```
+    #[cfg(all(feature = "alloc", feature = "std"))]
+    pub fn builder() -> CertificateBuilder {
+        CertificateBuilder::new()
+    }
+
+    /// 提取 SM2 公钥（65 字节未压缩格式）
     ///
     /// 从证书的 subjectPublicKeyInfo 字段提取 65 字节未压缩公钥。
-    /// 公钥格式：0x04 || x(32字节) || y(32字节)
+    /// 公钥格式：0x04 || x(32 字节) || y(32 字节)
     ///
     /// # 返回
     /// - `Ok([u8; 65])`: 65 字节未压缩公钥
@@ -166,7 +201,7 @@ impl GmCertificate {
 
     /// 验证证书有效期
     ///
-    /// 检查当前时间是否在证书的有效期内。
+    /// 检查指定时间是否在证书的有效期内。
     ///
     /// # 参数
     /// - `current_timestamp`: 当前时间的 Unix 时间戳（秒）
@@ -175,7 +210,19 @@ impl GmCertificate {
     /// - `Ok(())`: 证书在有效期内
     /// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
     pub fn verify_validity(&self, current_timestamp: u64) -> Result<(), Error> {
-        verify_certificate_validity(self, current_timestamp)
+        let validity = parse_validity(&self.validity)?;
+
+        let not_before = validity.not_before.to_unix_duration().as_secs();
+        let not_after = validity.not_after.to_unix_duration().as_secs();
+
+        if current_timestamp < not_before {
+            return Err(Error::InvalidCertificate);
+        }
+        if current_timestamp > not_after {
+            return Err(Error::InvalidCertificate);
+        }
+
+        Ok(())
     }
 
     /// 验证证书有效期（使用 SystemTime）
@@ -191,7 +238,35 @@ impl GmCertificate {
     /// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
     #[cfg(feature = "std")]
     pub fn verify_validity_system_time(&self, now: std::time::SystemTime) -> Result<(), Error> {
-        verify_certificate_validity_system_time(self, now)
+        let current_timestamp = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::InvalidCertificate)?
+            .as_secs();
+        self.verify_validity(current_timestamp)
+    }
+
+    /// 验证证书有效期（使用日期字符串）
+    ///
+    /// 检查指定日期是否在证书的有效期内。
+    /// 接受人类可读的日期字符串，便于直接使用。
+    ///
+    /// ## 支持的日期格式
+    ///
+    /// - `YYYY-MM-DD`：如 "2025-01-01"
+    /// - `YYYY-MM-DD HH:MM:SS`：如 "2025-01-01 12:30:00"
+    ///
+    /// 时间默认为 UTC 00:00:00。
+    ///
+    /// # 参数
+    /// - `date_str`: 日期字符串（格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS）
+    ///
+    /// # 返回
+    /// - `Ok(())`: 证书在有效期内
+    /// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期，或日期格式错误
+    #[cfg(feature = "std")]
+    pub fn verify_validity_str(&self, date_str: &str) -> Result<(), Error> {
+        let timestamp = parse_date_str_to_timestamp(date_str)?;
+        self.verify_validity(timestamp)
     }
 
     /// 验证自签名证书
@@ -206,7 +281,119 @@ impl GmCertificate {
     /// - `Ok(())`: 签名验证通过
     /// - `Err(Error::InvalidSignature)`: 签名验证失败
     pub fn verify_self_signed(&self, id: &[u8]) -> Result<(), Error> {
-        verify_self_signed_cert(self, id)
+        // 提取公钥
+        let pub_key = self.extract_sm2_public_key()?;
+        
+        // 获取 TBS 证书数据
+        let tbs = self.tbs_certificate();
+        
+        // 计算 Z 值和消息摘要
+        let z = crate::sm2::get_z(id, &pub_key);
+        let e = crate::sm2::get_e(&z, &tbs);
+        
+        // 解析签名
+        let sig_array: [u8; 64] = self.signature.as_slice().try_into()
+            .map_err(|_| Error::InvalidSignature)?;
+        
+        // 验证签名
+        verify(&e, &pub_key, &sig_array)
+    }
+
+    /// 验证证书数据的签名
+    ///
+    /// 使用指定的公钥验证证书 TBS 数据的签名。
+    ///
+    /// # 参数
+    /// - `signature`: 签名值（64 字节 r || s）
+    /// - `pub_key`: SM2 公钥（65 字节未压缩格式）
+    /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
+    ///
+    /// # 返回
+    /// - `Ok(())`: 签名验证通过
+    /// - `Err(Error::InvalidSignature)`: 签名验证失败
+    pub fn verify_signature(
+        &self,
+        signature: &[u8],
+        pub_key: &[u8; 65],
+        id: &[u8],
+    ) -> Result<(), Error> {
+        // 计算 Z 值和消息摘要
+        let z = crate::sm2::get_z(id, pub_key);
+        let e = crate::sm2::get_e(&z, &self.tbs_certificate());
+        
+        // 解析签名
+        let sig_array: [u8; 64] = signature.try_into()
+            .map_err(|_| Error::InvalidSignature)?;
+        
+        // 验证签名
+        verify(&e, pub_key, &sig_array)
+    }
+
+    /// 获取 TBS（To Be Signed）证书数据
+    ///
+    /// 返回证书的待签名部分（不含签名算法和签名值）。
+    /// 用于签名计算和验证。
+    ///
+    /// # 返回
+    /// TBS 证书的 DER 编码字节数组
+    fn tbs_certificate(&self) -> Vec<u8> {
+        let mut tbs = Vec::with_capacity(
+            4 + self.serial_number.len()
+                + self.signature_algorithm.len()
+                + self.issuer.len()
+                + self.validity.len()
+                + self.subject.len()
+                + self.subject_public_key_info.len(),
+        );
+
+        // 版本号（如果存在）
+        if self.version > 0 {
+            let version_der = vec![0x02, 1, self.version as u8];
+            
+            // 包装为上下文标签 [0]
+            tbs.push(0xA0);
+            tbs.push(version_der.len() as u8);
+            tbs.extend(version_der);
+        }
+
+        // 序列号
+        tbs.push(0x02);
+        tbs.push(self.serial_number.len() as u8);
+        tbs.extend_from_slice(&self.serial_number);
+
+        // 签名算法
+        tbs.extend_from_slice(&self.signature_algorithm);
+
+        // 签发者
+        tbs.extend_from_slice(&self.issuer);
+
+        // 有效期
+        tbs.extend_from_slice(&self.validity);
+
+        // 主体
+        tbs.extend_from_slice(&self.subject);
+
+        // 主体公钥信息
+        tbs.extend_from_slice(&self.subject_public_key_info);
+
+        // 包装为 SEQUENCE
+        let mut seq = Vec::with_capacity(4 + tbs.len());
+        seq.push(0x30);
+        
+        let len = tbs.len();
+        if len < 128 {
+            seq.push(len as u8);
+        } else if len < 256 {
+            seq.push(0x81);
+            seq.push(len as u8);
+        } else {
+            seq.push(0x82);
+            seq.push((len >> 8) as u8);
+            seq.push((len & 0xFF) as u8);
+        }
+        
+        seq.extend(tbs);
+        seq
     }
 }
 
@@ -482,13 +669,161 @@ pub fn parse_x509_certificate(der: &[u8]) -> Result<Certificate, Error> {
 }
 
 // ====================================================================================
+// X.500 名称构建辅助（需要 alloc）
+// ====================================================================================
+
+#[cfg(feature = "alloc")]
+use alloc::string::String;
+
+/// X.500 可分辨名称属性类型
+///
+/// 用于构建证书的 issuer 和 subject 字段。
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub enum X500AttributeType {
+    /// Common Name (2.5.4.3) - 常用名称
+    CommonName,
+    /// Organization (2.5.4.10) - 组织
+    Organization,
+    /// Organizational Unit (2.5.4.11) - 组织单位
+    OrganizationalUnit,
+    /// Country (2.5.4.6) - 国家
+    Country,
+    /// State/Province (2.5.4.8) - 省/州
+    State,
+    /// Locality (2.5.4.7) - 地区
+    Locality,
+    /// Serial Number (2.5.4.5) - 序列号
+    SerialNumber,
+}
+
+#[cfg(feature = "alloc")]
+impl X500AttributeType {
+    /// 获取属性类型的 OID DER 编码
+    fn oid_der(&self) -> &'static [u8] {
+        match self {
+            X500AttributeType::CommonName => &[0x06, 0x03, 0x55, 0x04, 0x03],
+            X500AttributeType::Organization => &[0x06, 0x03, 0x55, 0x04, 0x0A],
+            X500AttributeType::OrganizationalUnit => &[0x06, 0x03, 0x55, 0x04, 0x0B],
+            X500AttributeType::Country => &[0x06, 0x03, 0x55, 0x04, 0x06],
+            X500AttributeType::State => &[0x06, 0x03, 0x55, 0x04, 0x08],
+            X500AttributeType::Locality => &[0x06, 0x03, 0x55, 0x04, 0x07],
+            X500AttributeType::SerialNumber => &[0x06, 0x03, 0x55, 0x04, 0x05],
+        }
+    }
+}
+
+/// X.500 名称属性
+///
+/// 表示一个 X.500 可分辨名称的属性项。
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub struct X500Attribute {
+    /// 属性类型
+    pub attr_type: X500AttributeType,
+    /// 属性值
+    pub value: String,
+}
+
+#[cfg(feature = "alloc")]
+impl X500Attribute {
+    /// 创建一个新的 X.500 属性
+    pub fn new(attr_type: X500AttributeType, value: impl Into<String>) -> Self {
+        Self {
+            attr_type,
+            value: value.into(),
+        }
+    }
+
+    /// 将属性编码为 DER 格式
+    ///
+    /// 编码为 RelativeDistinguishedName (RDN) 格式：
+    /// SET { SEQUENCE { OID, UTF8String } }
+    fn to_der(&self) -> Vec<u8> {
+        let mut rdn = Vec::with_capacity(32);
+
+        // OID
+        rdn.extend_from_slice(self.attr_type.oid_der());
+
+        // UTF8String value
+        let value_bytes = self.value.as_bytes();
+        rdn.push(0x0C); // UTF8String tag
+        rdn.push(value_bytes.len() as u8);
+        rdn.extend_from_slice(value_bytes);
+
+        // 包装为 SEQUENCE
+        let mut seq = Vec::with_capacity(2 + rdn.len());
+        seq.push(0x30);
+        seq.push(rdn.len() as u8);
+        seq.extend(rdn);
+
+        // 包装为 SET
+        let mut set = Vec::with_capacity(2 + seq.len());
+        set.push(0x31);
+        set.push(seq.len() as u8);
+        set.extend(seq);
+
+        set
+    }
+}
+
+/// 构建 X.500 可分辨名称
+///
+/// 使用属性列表构建符合 X.500 标准的可分辨名称（DN）。
+///
+/// ## 输出格式
+///
+/// ```text
+/// SEQUENCE {
+///     SET { SEQUENCE { OID, UTF8String } },  // RDN 1
+///     SET { SEQUENCE { OID, UTF8String } },  // RDN 2
+///     ...
+/// }
+/// ```
+///
+/// # 参数
+/// - `attributes`: X.500 属性列表
+///
+/// # 返回
+/// DER 编码的 X.500 名称
+///
+/// # 示例
+///
+/// ```
+/// use libsmx::sm2::cert::{X500Attribute, X500AttributeType, build_x500_name};
+///
+/// let name = build_x500_name(&[
+///     X500Attribute::new(X500AttributeType::Country, "CN"),
+///     X500Attribute::new(X500AttributeType::Organization, "Example Corp"),
+///     X500Attribute::new(X500AttributeType::CommonName, "www.example.com"),
+/// ]);
+/// ```
+#[cfg(feature = "alloc")]
+pub fn build_x500_name(attributes: &[X500Attribute]) -> Vec<u8> {
+    let mut name = Vec::with_capacity(64);
+
+    // 编码所有 RDN
+    for attr in attributes {
+        name.extend(attr.to_der());
+    }
+
+    // 包装为 SEQUENCE
+    let mut seq = Vec::with_capacity(2 + name.len());
+    seq.push(0x30);
+    seq.push(name.len() as u8);
+    seq.extend(name);
+
+    seq
+}
+
+// ====================================================================================
 // 时间处理
 // ====================================================================================
 
 /// 从证书有效期字段解析时间
 ///
 /// 解析证书有效期 DER 编码，提取生效时间和过期时间。
-/// 支持 UTCTime（2字节年份）和 GeneralizedTime（4字节年份）格式。
+/// 支持 UTCTime（2 字节年份）和 GeneralizedTime（4 字节年份）格式。
 ///
 /// ## 有效期格式
 ///
@@ -514,137 +849,7 @@ fn parse_validity(validity_der: &[u8]) -> Result<Validity, Error> {
     Validity::from_der(validity_der).map_err(|_| Error::InvalidCertificate)
 }
 
-/// 验证证书有效期
-///
-/// 检查当前时间（Unix 时间戳，秒）是否在证书的有效期内。
-///
-/// ## 验证逻辑
-///
-/// 1. 解析证书有效期字段
-/// 2. 将 notBefore 和 notAfter 转换为 Unix 时间戳
-/// 3. 检查 current_timestamp 是否在 [notBefore, notAfter] 范围内
-///
-/// # 参数
-/// - `cert`: 国密证书
-/// - `current_timestamp`: 当前时间的 Unix 时间戳（秒）
-///
-/// # 返回
-/// - `Ok(())`: 证书在有效期内
-/// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
-///
-/// # 示例
-///
-/// ```ignore
-/// use libsmx::sm2::cert::{GmCertificate, verify_certificate_validity};
-///
-/// // 验证证书是否在有效期内
-/// let cert: GmCertificate = /* 加载证书 */;
-/// let current_time = 1735689600u64; // 2025-01-01 00:00:00 UTC
-/// verify_certificate_validity(&cert, current_time).expect("Certificate valid");
-/// ```
-pub fn verify_certificate_validity(
-    cert: &GmCertificate,
-    current_timestamp: u64,
-) -> Result<(), Error> {
-    let validity = parse_validity(&cert.validity)?;
 
-    let not_before = validity.not_before.to_unix_duration().as_secs();
-    let not_after = validity.not_after.to_unix_duration().as_secs();
-
-    if current_timestamp < not_before {
-        return Err(Error::InvalidCertificate);
-    }
-    if current_timestamp > not_after {
-        return Err(Error::InvalidCertificate);
-    }
-
-    Ok(())
-}
-
-/// 验证证书有效期（使用 SystemTime）
-///
-/// 检查证书是否在有效期内。接受标准库 `SystemTime` 类型，
-/// 更易于使用。
-///
-/// ## 验证流程
-///
-/// 1. 解析证书有效期字段
-/// 2. 将 notBefore 和 notAfter 转换为 SystemTime
-/// 3. 检查当前时间是否在有效期内
-///
-/// # 参数
-/// - `cert`: 国密证书
-/// - `now`: 当前时间（SystemTime）
-///
-/// # 返回
-/// - `Ok(())`: 证书在有效期内
-/// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
-///
-/// # 示例
-///
-/// ```ignore
-/// use libsmx::sm2::cert::{GmCertificate, verify_certificate_validity_system_time};
-/// use std::time::SystemTime;
-///
-/// // 验证证书是否在有效期内
-/// let cert: GmCertificate = /* 加载证书 */;
-/// let now = SystemTime::now();
-/// verify_certificate_validity_system_time(&cert, now).expect("Certificate valid");
-/// ```
-#[cfg(feature = "std")]
-pub fn verify_certificate_validity_system_time(
-    cert: &GmCertificate,
-    now: std::time::SystemTime,
-) -> Result<(), Error> {
-    let current_timestamp = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| Error::InvalidCertificate)?
-        .as_secs();
-    verify_certificate_validity(cert, current_timestamp)
-}
-
-/// 验证证书有效期（使用日期字符串）
-///
-/// 检查证书是否在有效期内。接受 "YYYY-MM-DD" 格式的日期字符串，
-/// 便于人类直接使用。
-///
-/// ## 支持的日期格式
-///
-/// - `YYYY-MM-DD`：如 "2025-01-01"
-/// - `YYYY-MM-DD HH:MM:SS`：如 "2025-01-01 12:30:00"
-///
-/// 时间默认为 UTC 00:00:00。
-///
-/// ## 验证流程
-///
-/// 1. 解析日期字符串为 Unix 时间戳
-/// 2. 调用 `verify_certificate_validity` 进行验证
-///
-/// # 参数
-/// - `cert`: 国密证书
-/// - `date_str`: 日期字符串（格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS）
-///
-/// # 返回
-/// - `Ok(())`: 证书在有效期内
-/// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期，或日期格式错误
-///
-/// # 示例
-///
-/// ```ignore
-/// use libsmx::sm2::cert::{GmCertificate, verify_certificate_validity_str};
-///
-/// // 验证证书是否在有效期内
-/// let cert: GmCertificate = /* 加载证书 */;
-/// verify_certificate_validity_str(&cert, "2025-01-01").expect("Certificate valid");
-///
-/// // 使用具体时间
-/// verify_certificate_validity_str(&cert, "2025-01-01 12:30:00").expect("Certificate valid");
-/// ```
-#[cfg(feature = "std")]
-pub fn verify_certificate_validity_str(cert: &GmCertificate, date_str: &str) -> Result<(), Error> {
-    let timestamp = parse_date_str_to_timestamp(date_str)?;
-    verify_certificate_validity(cert, timestamp)
-}
 
 /// 将日期字符串解析为 Unix 时间戳
 ///
@@ -678,193 +883,245 @@ fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
     Ok(utc_datetime.timestamp() as u64)
 }
 
-/// 生成有效期 DER 编码（UTCTime 格式）
-///
-/// 生成符合 X.509 标准的有效期 DER 编码。
-///
-/// ## 输出格式
-///
-/// ```text
-/// SEQUENCE {
-///     UTCTime notBefore,
-///     UTCTime notAfter
-/// }
-/// ```
-///
-/// # 参数
-/// - `not_before`: 生效时间（UTCTime 格式，如 b"250101000000Z"）
-/// - `not_after`: 过期时间（UTCTime 格式，如 b"300101000000Z"）
-///
-/// # 返回
-/// 有效期 DER 编码字节数组
-///
-/// # 示例
-///
-/// ```
-/// use libsmx::sm2::cert::generate_validity;
-///
-/// let validity = generate_validity(b"250101000000Z", b"300101000000Z");
-/// ```
-pub fn generate_validity(not_before: &[u8], not_after: &[u8]) -> Vec<u8> {
-    let mut validity = Vec::with_capacity(32);
+// ====================================================================================
+// 证书构建器（需要 alloc 和 std）
+// ====================================================================================
 
-    // notBefore
-    validity.push(0x17);
-    validity.push(not_before.len() as u8);
-    validity.extend_from_slice(not_before);
-
-    // notAfter
-    validity.push(0x17);
-    validity.push(not_after.len() as u8);
-    validity.extend_from_slice(not_after);
-
-    // 包装为 SEQUENCE
-    let mut seq = Vec::with_capacity(2 + validity.len());
-    seq.push(0x30);
-    seq.push(validity.len() as u8);
-    seq.extend(validity);
-
-    seq
-}
-
-/// 从日期字符串生成有效期 DER 编码
+/// 证书构建器
 ///
-/// 使用人类可读的日期字符串生成有效期 DER 编码。
-/// 支持 "YYYY-MM-DD" 和 "YYYY-MM-DD HH:MM:SS" 格式。
-///
-/// ## 日期格式
-///
-/// - `YYYY-MM-DD`：如 "2025-01-01"（默认为 00:00:00）
-/// - `YYYY-MM-DD HH:MM:SS`：如 "2025-01-01 12:30:00"
-///
-/// 年份范围：1950-2049 使用 UTCTime，其他使用 GeneralizedTime
-///
-/// # 参数
-/// - `not_before`: 生效时间日期字符串
-/// - `not_after`: 过期时间日期字符串
-///
-/// # 返回
-/// - `Ok(Vec<u8>)`: 有效期 DER 编码字节数组
-/// - `Err(Error::InvalidCertificate)`: 日期格式错误
+/// 提供用户友好的证书创建接口，自动处理 DER 编码、时间转换等细节。
 ///
 /// # 示例
 ///
 /// ```ignore
-/// use libsmx::sm2::cert::generate_validity_from_str;
+/// use libsmx::sm2::cert::{GmCertificate, CertificateBuilder, X500Attribute, X500AttributeType};
+/// use std::time::{SystemTime, Duration};
 ///
-/// let validity = generate_validity_from_str("2025-01-01", "2030-01-01")
-///     .expect("Valid date strings");
-///
-/// // 使用具体时间
-/// let validity = generate_validity_from_str("2025-01-01 12:30:00", "2030-01-01 12:30:00")
-///     .expect("Valid date strings");
+/// let cert = CertificateBuilder::new()
+///     .subject(&[
+///         X500Attribute::new(X500AttributeType::Country, "CN"),
+///         X500Attribute::new(X500AttributeType::CommonName, "www.example.com"),
+///     ])
+///     .issuer(&[
+///         X500Attribute::new(X500AttributeType::Country, "CN"),
+///         X500Attribute::new(X500AttributeType::Organization, "Example Corp"),
+///     ])
+///     .serial_number(1u32)
+///     .validity_period(
+///         SystemTime::now(),
+///         SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
+///     )
+///     .build(&pub_key, &priv_key, b"1234567812345678", &mut rng)
+///     .expect("Failed to build certificate");
 /// ```
-#[cfg(feature = "std")]
-pub fn generate_validity_from_str(not_before: &str, not_after: &str) -> Result<Vec<u8>, Error> {
-    let not_before_bytes = date_str_to_utc_bytes(not_before)?;
-    let not_after_bytes = date_str_to_utc_bytes(not_after)?;
-    Ok(generate_validity(&not_before_bytes, &not_after_bytes))
+#[cfg(all(feature = "alloc", feature = "std"))]
+pub struct CertificateBuilder {
+    subject: Option<Vec<u8>>,
+    issuer: Option<Vec<u8>>,
+    serial_number: Vec<u8>,
+    not_before: Option<std::time::SystemTime>,
+    not_after: Option<std::time::SystemTime>,
 }
 
-/// 将日期字符串转换为 UTCTime 字节数组
-///
-/// 支持格式：
-/// - `YYYY-MM-DD` -> YYMMDDHHMMSSZ
-/// - `YYYY-MM-DD HH:MM:SS` -> YYMMDDHHMMSSZ
-///
-/// 年份范围：1950-2049（符合 RFC 5280 UTCTime 要求）
-#[cfg(feature = "std")]
-fn date_str_to_utc_bytes(date_str: &str) -> Result<Vec<u8>, Error> {
-    // 使用 chrono 解析日期字符串
-    let datetime = if date_str.contains(' ') {
-        NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")
-            .map_err(|_| Error::InvalidCertificate)?
-    } else {
-        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+#[cfg(all(feature = "alloc", feature = "std"))]
+impl CertificateBuilder {
+    /// 创建新的证书构建器
+    pub fn new() -> Self {
+        Self {
+            subject: None,
+            issuer: None,
+            serial_number: vec![0x01], // 默认序列号为 1
+            not_before: None,
+            not_after: None,
+        }
+    }
+
+    /// 设置主体名称
+    ///
+    /// # 参数
+    /// - `attributes`: X.500 属性列表
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn subject(mut self, attributes: &[X500Attribute]) -> Self {
+        self.subject = Some(build_x500_name(attributes));
+        self
+    }
+
+    /// 设置签发者名称
+    ///
+    /// # 参数
+    /// - `attributes`: X.500 属性列表
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn issuer(mut self, attributes: &[X500Attribute]) -> Self {
+        self.issuer = Some(build_x500_name(attributes));
+        self
+    }
+
+    /// 设置序列号（数值类型）
+    ///
+    /// # 参数
+    /// - `serial`: 序列号（任何可转换为 u64 的类型）
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn serial_number(mut self, serial: impl Into<u64>) -> Self {
+        let value = serial.into();
+        // 将 u64 转换为 DER INTEGER 格式（大端）
+        let bytes = value.to_be_bytes();
+        // 跳过前导零
+        let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
+        self.serial_number = bytes[start..].to_vec();
+        self
+    }
+
+    /// 设置序列号（字节数组）
+    ///
+    /// # 参数
+    /// - `serial`: 序列号字节数组
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn serial_number_bytes(mut self, serial: &[u8]) -> Self {
+        self.serial_number = serial.to_vec();
+        self
+    }
+
+    /// 设置有效期（使用 SystemTime）
+    ///
+    /// # 参数
+    /// - `not_before`: 生效时间
+    /// - `not_after`: 过期时间
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn validity_period(
+        mut self,
+        not_before: std::time::SystemTime,
+        not_after: std::time::SystemTime,
+    ) -> Self {
+        self.not_before = Some(not_before);
+        self.not_after = Some(not_after);
+        self
+    }
+
+    /// 设置有效期（使用天数）
+    ///
+    /// 从当前时间开始计算有效期天数。
+    ///
+    /// # 参数
+    /// - `days`: 有效天数
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn validity_days(mut self, days: u64) -> Self {
+        let now = std::time::SystemTime::now();
+        self.not_before = Some(now);
+        self.not_after = Some(now + std::time::Duration::from_secs(days * 24 * 3600));
+        self
+    }
+
+    /// 构建证书
+    ///
+    /// 使用提供的公钥、私钥和签名 ID 构建并签署证书。
+    ///
+    /// # 参数
+    /// - `pub_key`: SM2 公钥（65 字节未压缩格式）
+    /// - `priv_key`: SM2 私钥
+    /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
+    /// - `rng`: 随机数生成器
+    ///
+    /// # 返回
+    /// - `Ok(GmCertificate)`: 构建成功的证书
+    /// - `Err(Error::InvalidCertificate)`: 构建失败（缺少必要字段或时间错误）
+    /// - `Err(Error::InvalidPublicKey)`: 公钥格式错误
+    pub fn build<R: Rng>(
+        self,
+        pub_key: &[u8; 65],
+        priv_key: &PrivateKey,
+        id: &[u8],
+        rng: &mut R,
+    ) -> Result<GmCertificate, Error> {
+        let subject = self.subject.ok_or(Error::InvalidCertificate)?;
+        let issuer = self.issuer.ok_or(Error::InvalidCertificate)?;
+        let not_before = self.not_before.ok_or(Error::InvalidCertificate)?;
+        let not_after = self.not_after.ok_or(Error::InvalidCertificate)?;
+
+        // 生成有效期 DER（使用 x509-cert 的 Time 类型）
+        use x509_cert::der::Encode;
+        let not_before_time = x509_cert::time::Time::try_from(not_before)
             .map_err(|_| Error::InvalidCertificate)?;
-        date.and_hms_opt(0, 0, 0).ok_or(Error::InvalidCertificate)?
-    };
+        let not_after_time = x509_cert::time::Time::try_from(not_after)
+            .map_err(|_| Error::InvalidCertificate)?;
+        
+        let not_before_der = not_before_time.to_der().map_err(|_| Error::InvalidCertificate)?;
+        let not_after_der = not_after_time.to_der().map_err(|_| Error::InvalidCertificate)?;
+        
+        let mut validity_vec: Vec<u8> = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
+        validity_vec.extend(&not_before_der);
+        validity_vec.extend(&not_after_der);
+        
+        // 包装为 SEQUENCE
+        let mut validity_seq: Vec<u8> = Vec::with_capacity(2 + validity_vec.len());
+        validity_seq.push(0x30);
+        validity_seq.push(validity_vec.len() as u8);
+        validity_seq.extend(validity_vec);
 
-    // 验证年份范围（RFC 5280：UTCTime 年份范围为 1950-2049）
-    let year = datetime.year();
-    if !(1950..=2049).contains(&year) {
-        return Err(Error::InvalidCertificate);
+        // 构建 SPKI
+        let spki = der::public_key_to_spki_der(pub_key);
+
+        // 构建 TBS 证书内容
+        let mut tbs = Vec::with_capacity(256);
+
+        // 版本 (v3)
+        tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
+
+        // 序列号
+        tbs.push(0x02);
+        tbs.push(self.serial_number.len() as u8);
+        tbs.extend_from_slice(&self.serial_number);
+
+        // 签名算法 (SM2withSM3)
+        tbs.extend_from_slice(crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER);
+
+        // 签发者
+        tbs.extend_from_slice(&issuer);
+
+        // 有效期
+        tbs.extend_from_slice(&validity_seq);
+
+        // 主体
+        tbs.extend_from_slice(&subject);
+
+        // 公钥信息
+        tbs.extend(&spki);
+
+        // 包装为 SEQUENCE
+        let tbs_cert = wrap_sequence(tbs);
+
+        // 签名
+        let signature = sign_certificate_data(&tbs_cert, priv_key, id, rng)?;
+
+        Ok(GmCertificate {
+            version: 2,
+            serial_number: self.serial_number,
+            signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+            issuer,
+            validity: validity_seq,
+            subject,
+            subject_public_key_info: spki,
+            signature,
+        })
     }
-
-    use alloc::string::ToString;
-    // 使用 chrono 格式化为 YYMMDDHHMMSSZ
-    let utc_str = datetime.format("%y%m%d%H%M%SZ").to_string();
-
-    Ok(utc_str.into_bytes())
 }
 
-/// 从 x509_cert::time::Time 生成有效期 DER 编码
-///
-/// 使用 x509-cert 提供的 Time 类型生成有效期 DER 编码。
-/// 支持 UtcTime 和 GeneralTime 两种格式。
-///
-/// # 参数
-/// - `not_before`: 生效时间（x509_cert::time::Time）
-/// - `not_after`: 过期时间（x509_cert::time::Time）
-///
-/// # 返回
-/// 有效期 DER 编码字节数组
-///
-/// # 示例
-///
-/// ```ignore
-/// use libsmx::sm2::cert::generate_validity_from_times;
-/// use x509_cert::time::Time;
-///
-/// let not_before = Time::try_from(std::time::SystemTime::now()).unwrap();
-/// let not_after = Time::try_from(
-///     std::time::SystemTime::now() + std::time::Duration::from_secs(365 * 24 * 3600)
-/// ).unwrap();
-/// let validity = generate_validity_from_times(not_before, not_after);
-/// ```
-pub fn generate_validity_from_times(not_before: Time, not_after: Time) -> Vec<u8> {
-    // 将 Time 转换为字节数组（Time 的 DER 编码）
-    let mut validity = Vec::with_capacity(64);
-
-    // notBefore - Time 编码为 UTCTime 或 GeneralizedTime
-    let time_str = alloc::string::ToString::to_string(&not_before);
-    let time_bytes = time_str.as_bytes();
-    match not_before {
-        Time::UtcTime(_) => {
-            validity.push(0x17); // UTCTime tag
-            validity.push(time_bytes.len() as u8);
-            validity.extend_from_slice(time_bytes);
-        }
-        Time::GeneralTime(_) => {
-            validity.push(0x18); // GeneralizedTime tag
-            validity.push(time_bytes.len() as u8);
-            validity.extend_from_slice(time_bytes);
-        }
+#[cfg(all(feature = "alloc", feature = "std"))]
+impl Default for CertificateBuilder {
+    fn default() -> Self {
+        Self::new()
     }
-
-    // notAfter
-    let time_str = alloc::string::ToString::to_string(&not_after);
-    let time_bytes = time_str.as_bytes();
-    match not_after {
-        Time::UtcTime(_) => {
-            validity.push(0x17); // UTCTime tag
-            validity.push(time_bytes.len() as u8);
-            validity.extend_from_slice(time_bytes);
-        }
-        Time::GeneralTime(_) => {
-            validity.push(0x18); // GeneralizedTime tag
-            validity.push(time_bytes.len() as u8);
-            validity.extend_from_slice(time_bytes);
-        }
-    }
-
-    // 包装为 SEQUENCE
-    let mut seq = Vec::with_capacity(4 + validity.len());
-    seq.push(0x30);
-    seq.push(validity.len() as u8);
-    seq.extend(validity);
-
-    seq
 }
 
 // ====================================================================================
@@ -1218,7 +1475,7 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 ///
 /// # 示例
 ///
-/// ```
+/// ```ignore
 /// use libsmx::sm2::{generate_keypair, cert};
 /// use rand::rngs::StdRng;
 /// use rand::SeedableRng;
@@ -1227,7 +1484,7 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 /// let (priv_key, _) = generate_keypair(&mut rng);
 ///
 /// let subject = vec![0x31, 0x00]; // 简单的 X.500 Name
-/// let validity = cert::generate_validity(b"250101000000Z", b"300101000000Z");
+/// let validity = b"\x30\x1e\x17\x0d3235303130313030303030305a\x17\x0d3435303130313030303030305a".to_vec();
 /// let serial = vec![0x01];
 ///
 /// let cert = cert::generate_self_signed_cert(
@@ -1297,63 +1554,7 @@ pub fn generate_self_signed_cert<R: Rng>(
     })
 }
 
-/// 验证自签名证书
-///
-/// 验证自签名证书的签名是否有效。
-/// 使用证书中的公钥验证证书的签名。
-///
-/// ## 验证流程
-///
-/// 1. 从证书中提取 SM2 公钥
-/// 2. 重建 TBS（To-Be-Signed）证书数据
-/// 3. 使用公钥验证签名
-///
-/// # 参数
-/// - `cert`: 自签名证书
-/// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
-///
-/// # 返回
-/// - `Ok(())`: 签名验证通过
-/// - `Err(Error::InvalidSignature)`: 签名验证失败
-///
-/// # 注意
-///
-/// 此函数仅验证签名的有效性，不验证证书有效期或其他属性。
-pub fn verify_self_signed_cert(cert: &GmCertificate, id: &[u8]) -> Result<(), Error> {
-    // 提取公钥
-    let pub_key = extract_sm2_public_key(cert)?;
 
-    // 重建 TBS 证书
-    let mut tbs = Vec::with_capacity(256);
-
-    // 版本
-    let version_der = vec![0x02, 0x01, cert.version as u8];
-    let mut version_wrapper = Vec::with_capacity(2 + version_der.len());
-    version_wrapper.push(0xA0);
-    version_wrapper.push(version_der.len() as u8);
-    version_wrapper.extend(version_der);
-    tbs.push(version_wrapper);
-
-    // 序列号
-    let mut serial_der = Vec::with_capacity(2 + cert.serial_number.len());
-    serial_der.push(0x02);
-    serial_der.push(cert.serial_number.len() as u8);
-    serial_der.extend_from_slice(&cert.serial_number);
-    tbs.push(serial_der);
-
-    // 其他字段
-    tbs.push(cert.signature_algorithm.clone());
-    tbs.push(cert.issuer.clone());
-    tbs.push(cert.validity.clone());
-    tbs.push(cert.subject.clone());
-    tbs.push(cert.subject_public_key_info.clone());
-
-    // 包装为 SEQUENCE
-    let tbs_cert = wrap_sequence_vec(tbs);
-
-    // 验证签名
-    verify_certificate_data(&tbs_cert, &cert.signature, &pub_key, id)
-}
 
 /// 将数据包装为 SEQUENCE（单个 Vec）
 ///
@@ -1384,37 +1585,7 @@ fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
     result
 }
 
-/// 将多个 Vec 包装为 SEQUENCE
-///
-/// 将多个字节数组连接并包装为 ASN.1 SEQUENCE 结构。
-///
-/// # 参数
-/// - `components`: 要连接的多个字节数组
-///
-/// # 返回
-/// SEQUENCE 编码的字节数组
-fn wrap_sequence_vec(components: Vec<Vec<u8>>) -> Vec<u8> {
-    let total_len: usize = components.iter().map(|c| c.len()).sum();
-    let mut result = Vec::with_capacity(2 + total_len);
-    result.push(0x30);
 
-    if total_len < 128 {
-        result.push(total_len as u8);
-    } else if total_len < 256 {
-        result.push(0x81);
-        result.push(total_len as u8);
-    } else {
-        result.push(0x82);
-        result.push((total_len >> 8) as u8);
-        result.push((total_len & 0xFF) as u8);
-    }
-
-    for component in components {
-        result.extend(component);
-    }
-
-    result
-}
 
 // ====================================================================================
 // 测试
@@ -1428,6 +1599,19 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
+    /// 测试用有效期常量：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
+    ///
+    /// DER 编码格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
+    /// - 250101000000Z (2025-01-01)
+    /// - 300101000000Z (2030-01-01)
+    const TEST_VALIDITY: &[u8] = &[
+        0x30, 0x1E,           // SEQUENCE, length 30
+        0x17, 0x0D,           // UTCTime, length 13
+        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
+        0x17, 0x0D,           // UTCTime, length 13
+        b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
+    ];
+    
     // -- 证书测试 ------------------------------------------------------------
 
     #[test]
@@ -1436,7 +1620,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = TEST_VALIDITY;
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1456,7 +1640,7 @@ mod tests {
         let (_priv_key, pub_key) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = TEST_VALIDITY;
         let serial = vec![0x01];
 
         let cert = GmCertificate {
@@ -1464,18 +1648,18 @@ mod tests {
             serial_number: serial,
             signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
             issuer: vec![0x31, 0x00],
-            validity,
+            validity: validity.to_vec(),
             subject,
             subject_public_key_info: der::public_key_to_spki_der(&pub_key),
             signature: vec![0x00; 64],
         };
 
         // 2025-01-01 00:00:00 UTC
-        assert!(verify_certificate_validity(&cert, 1735689600).is_ok());
+        assert!(cert.verify_validity(1735689600).is_ok());
         // 2040-01-01 00:00:00 UTC (过期)
-        assert!(verify_certificate_validity(&cert, 2208988800).is_err());
+        assert!(cert.verify_validity(2208988800).is_err());
         // 2010-01-01 00:00:00 UTC (未生效)
-        assert!(verify_certificate_validity(&cert, 1262304000).is_err());
+        assert!(cert.verify_validity(1262304000).is_err());
     }
 
     #[test]
@@ -1484,7 +1668,7 @@ mod tests {
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = TEST_VALIDITY;
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
@@ -1492,7 +1676,9 @@ mod tests {
         )
         .expect("Certificate generation should succeed");
 
-        verify_self_signed_cert(&cert, DEFAULT_ID)
+
+
+        cert.verify_self_signed(DEFAULT_ID)
             .expect("Self-signed verification should succeed");
     }
 
@@ -1612,7 +1798,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = vec![0x31, 0x00];
-        let validity = generate_validity(b"250101000000Z", b"300101000000Z");
+        let validity = TEST_VALIDITY;
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(

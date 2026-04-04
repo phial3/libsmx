@@ -5,80 +5,65 @@ mod tests {
     use rand::SeedableRng;
     use std::fs;
     use std::path::Path;
+    use std::time::Duration;
 
-    /// commonName OID (2.5.4.3)
-    /// X.501 属性类型 commonName，用于 X.500 可分辨名称
-    /// 注意：此常量包含完整 DER TLV 格式（tag + length + value）
-    const COMMON_NAME_OID: &[u8] = &[
-        0x06, 0x03, 0x55, 0x04, 0x03,
-        // 0x06 = OID tag
-        // 0x03 = length (3 bytes)
-        // 0x55, 0x04, 0x03 = 2.5.4.3
-    ];
-
-    /// 构建 X.500 Name (RelativeDistinguishedName)
+    /// 创建自签名测试证书（使用 Builder 模式）
     ///
-    /// 生成包含单个属性（如 commonName）的 X.500 Name DER 编码。
-    /// Name ::= CHOICE { rdnSequence  RDNSequence }
-    /// RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
-    /// RelativeDistinguishedName ::= SET SIZE (1..MAX) OF AttributeTypeAndValue
-    fn build_name(oid: &[u8], value: &str) -> Vec<u8> {
-        let value_bytes = value.as_bytes();
-        let mut name = Vec::with_capacity(32);
+    /// 使用新的 CertificateBuilder API 创建自签名证书。
+    /// 证书有效期为 1 年。
+    #[cfg(all(feature = "alloc", feature = "std"))]
+    fn create_test_cert(
+        pub_key: &[u8; 65],
+        priv_key: &PrivateKey,
+        rng: &mut StdRng,
+    ) -> cert::GmCertificate {
+        use cert::{X500Attribute, X500AttributeType};
 
-        // SET
-        name.push(0x31);
-        name.push((2 + oid.len() + 2 + value_bytes.len()) as u8);
-
-        // SEQUENCE
-        name.push(0x30);
-        name.push((oid.len() + 2 + value_bytes.len()) as u8);
-
-        // OID
-        name.extend_from_slice(oid);
-
-        // PrintableString (简化处理，假设所有字符都可打印)
-        name.push(0x13);
-        name.push(value_bytes.len() as u8);
-        name.extend_from_slice(value_bytes);
-
-        name
+        cert::GmCertificate::builder()
+            .subject(&[
+                X500Attribute::new(X500AttributeType::Country, "CN"),
+                X500Attribute::new(X500AttributeType::CommonName, "TestUser"),
+            ])
+            .issuer(&[
+                X500Attribute::new(X500AttributeType::Country, "CN"),
+                X500Attribute::new(X500AttributeType::CommonName, "TestCA"),
+            ])
+            .serial_number(1u32)
+            .validity_period(
+                std::time::SystemTime::now(),
+                std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
+            )
+            .build(pub_key, priv_key, DEFAULT_ID, rng)
+            .expect("Failed to build test certificate")
     }
 
-    /// 创建 SM2withSM3 签名算法标识符 (AlgorithmIdentifier)
-    /// SEQUENCE { OID, NULL }
-    fn sm2_with_sm3_algorithm() -> Vec<u8> {
-        let oid = libsmx::sm2::SM2_WITH_SM3_OID;
-        let mut alg = Vec::with_capacity(2 + oid.len() + 2);
-        alg.push(0x30); // SEQUENCE
-        alg.push((oid.len() + 2) as u8);
-        alg.extend_from_slice(oid);
-        alg.extend_from_slice(&[0x05, 0x00]); // NULL
-        alg
-    }
-
-    /// 创建测试用的国密证书
+    /// 创建固定有效期的测试证书（用于有效期验证测试）
     ///
-    /// 使用辅助函数构建证书字段，避免直接操作字节。
-    /// 证书有效期为 2001-01-01 到 2030-01-01。
-    fn create_test_cert(pub_key: &[u8; 65]) -> cert::GmCertificate {
-        // 使用辅助函数构建颁发者和主体名称
-        let issuer = build_name(COMMON_NAME_OID, "TestCA");
-        let subject = build_name(COMMON_NAME_OID, "TestUser");
+    /// 证书有效期固定为 2001-01-01 到 2030-01-01，用于测试证书有效期验证逻辑。
+    #[cfg(all(feature = "alloc", feature = "std"))]
+    fn create_test_cert_with_fixed_validity(
+        pub_key: &[u8; 65],
+        priv_key: &PrivateKey,
+        rng: &mut StdRng,
+    ) -> cert::GmCertificate {
+        use cert::{X500Attribute, X500AttributeType};
 
-        // 使用 UTCTime 字符串生成有效期（200101000000Z 到 300101000000Z）
-        let validity = cert::generate_validity(b"010101000000Z", b"300101000000Z");
+        let not_before = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(978307200); // 2001-01-01
+        let not_after = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1893456000); // 2030-01-01
 
-        cert::GmCertificate {
-            version: 2, // v3
-            serial_number: vec![0x01, 0x02, 0x03],
-            signature_algorithm: sm2_with_sm3_algorithm(),
-            issuer,
-            validity,
-            subject,
-            subject_public_key_info: public_key_to_spki_der(pub_key),
-            signature: vec![0x00; 64], // 占位签名（SM2 签名为 64 字节）
-        }
+        cert::GmCertificate::builder()
+            .subject(&[
+                X500Attribute::new(X500AttributeType::Country, "CN"),
+                X500Attribute::new(X500AttributeType::CommonName, "TestUser"),
+            ])
+            .issuer(&[
+                X500Attribute::new(X500AttributeType::Country, "CN"),
+                X500Attribute::new(X500AttributeType::CommonName, "TestCA"),
+            ])
+            .serial_number(1u32)
+            .validity_period(not_before, not_after)
+            .build(pub_key, priv_key, DEFAULT_ID, rng)
+            .expect("Failed to build test certificate")
     }
 
     #[test]
@@ -93,6 +78,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_generate_certificate_files() {
         let cert_der_file = "test_cert_gen.cert";
         let cert_pem_file = "test_cert_gen.pem";
@@ -103,9 +89,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(987654321);
         
         let (_issuer_priv, _issuer_pub) = generate_keypair(&mut rng);
-        let (_subject_priv, subject_pub) = generate_keypair(&mut rng);
+        let (subject_priv, subject_pub) = generate_keypair(&mut rng);
         
-        let cert = create_test_cert(&subject_pub);
+        let cert = create_test_cert(&subject_pub, &subject_priv, &mut rng);
         let cert_der = cert::generate_gm_certificate(&cert);
         fs::write(cert_der_file, &cert_der).expect("写入 DER 文件应成功");
         assert!(Path::new(cert_der_file).exists());
@@ -121,11 +107,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_parse_certificate_files() {
         let mut rng = StdRng::seed_from_u64(1234567890);
         
         let (_priv_key, pub_key) = generate_keypair(&mut rng);
-        let cert = create_test_cert(&pub_key);
+        let (cert_priv, _) = generate_keypair(&mut rng);
+        let cert = create_test_cert(&pub_key, &cert_priv, &mut rng);
         let cert_der = cert::generate_gm_certificate(&cert);
         
         let parsed_cert = cert::parse_gm_certificate(&cert_der).expect("解析 DER 证书应成功");
@@ -259,18 +247,25 @@ mod tests {
         assert_eq!(signature.len(), 64);
         println!("✅ 测试 7.1：证书签名 - 通过 (64 字节)");
         
-        cert::verify_certificate_data(test_data, &signature, &pub_key, id)
+        // 使用 SM2 验签函数直接验证
+        let sig_array: [u8; 64] = signature.clone().try_into().unwrap();
+        verify_message(test_data, id, &pub_key, &sig_array)
             .expect("验证应成功");
         println!("✅ 测试 7.2：证书签名验证 - 通过");
         
         let tampered_data = b"Tampered test data";
-        assert!(cert::verify_certificate_data(tampered_data, &signature, &pub_key, id).is_err());
+        // 使用篡改数据重新计算摘要进行验证，应该失败
+        let z_tampered = get_z(id, &pub_key);
+        let e_tampered = get_e(&z_tampered, tampered_data);
+        let sig_array_tampered: [u8; 64] = signature.try_into().unwrap();
+        assert!(verify(&e_tampered, &pub_key, &sig_array_tampered).is_err());
         println!("✅ 测试 7.3：篡改数据检测 - 通过");
         
         let _ = fs::remove_file(signature_file);
     }
 
     #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_file_roundtrip() {
         let cert_der_file = "test_cert_roundtrip.cert";
         let cert_pem_file = "test_cert_roundtrip.pem";
@@ -295,9 +290,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(555555555);
         
         let (issuer_priv, issuer_pub) = generate_keypair(&mut rng);
-        let (_subject_priv, subject_pub) = generate_keypair(&mut rng);
+        let (subject_priv, subject_pub) = generate_keypair(&mut rng);
         
-        let cert = create_test_cert(&subject_pub);
+        let cert = create_test_cert(&subject_pub, &subject_priv, &mut rng);
         let cert_der = cert::generate_gm_certificate(&cert);
         fs::write(cert_der_file, &cert_der).expect("写入 DER 文件应成功");
         
@@ -364,10 +359,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_verify_certificate_validity() {
         let mut rng = StdRng::seed_from_u64(123456789);
-        let (_priv_key, pub_key) = generate_keypair(&mut rng);
-        let cert = create_test_cert(&pub_key);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+        let cert = create_test_cert_with_fixed_validity(&pub_key, &priv_key, &mut rng);
 
         // 测试在有效期内 (2001-01-01 到 2030-01-01)
         let valid_time = 1609459200u64; // 2021-01-01 00:00:00 UTC
@@ -391,13 +387,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_verify_certificate_validity_system_time() {
         use std::time::{SystemTime, Duration};
 
         let mut rng = StdRng::seed_from_u64(123456789);
-        let (_priv_key, pub_key) = generate_keypair(&mut rng);
-        let cert = create_test_cert(&pub_key);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+        let cert = create_test_cert_with_fixed_validity(&pub_key, &priv_key, &mut rng);
 
         // 使用 SystemTime 验证 (2001-01-01 到 2030-01-01)
         // 创建一个在有效期内的 SystemTime (2021-01-01)
@@ -422,40 +418,106 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_generate_validity_from_times() {
-        use x509_cert::time::Time;
         use std::time::{SystemTime, Duration};
+        use x509_cert::der::Encode;
+        use x509_cert::time::Time;
 
         // 创建两个时间点
         let not_before_sys = SystemTime::UNIX_EPOCH + Duration::from_secs(1609459200); // 2021-01-01
         let not_after_sys = SystemTime::UNIX_EPOCH + Duration::from_secs(1640995200);  // 2022-01-01
 
-        let not_before = Time::try_from(not_before_sys).expect("转换时间应成功");
-        let not_after = Time::try_from(not_after_sys).expect("转换时间应成功");
-
-        // 生成有效期 DER
-        let validity_der = cert::generate_validity_from_times(not_before, not_after);
-
+        // 使用 x509-cert 的 Time 类型生成有效期
+        let not_before_time = Time::try_from(not_before_sys).expect("转换时间应成功");
+        let not_after_time = Time::try_from(not_after_sys).expect("转换时间应成功");
+        
+        let not_before_der = not_before_time.to_der().expect("Failed to encode not_before");
+        let not_after_der = not_after_time.to_der().expect("Failed to encode not_after");
+        
+        let mut validity: Vec<u8> = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
+        validity.extend(&not_before_der);
+        validity.extend(&not_after_der);
+        
+        // 包装为 SEQUENCE
+        let mut validity_seq: Vec<u8> = Vec::with_capacity(2 + validity.len());
+        validity_seq.push(0x30);
+        validity_seq.push(validity.len() as u8);
+        validity_seq.extend(validity);
+        
         // 验证 DER 结构
-        assert_eq!(validity_der[0], 0x30); // SEQUENCE tag
-        assert!(validity_der.len() > 2);
-        println!("✅ 测试 11：从 Time 生成有效期 DER - 通过 ({} 字节)", validity_der.len());
+        assert_eq!(validity_seq[0], 0x30); // SEQUENCE tag
+        assert!(validity_seq.len() > 2);
+        println!("✅ 测试 11：从 SystemTime 生成有效期 DER - 通过 ({} 字节)", validity_seq.len());
 
         // 验证包含两个时间字段
-        // 解析 SEQUENCE 长度
-        let seq_len = validity_der[1] as usize;
+        let seq_len = validity_seq[1] as usize;
         assert!(seq_len > 0);
 
         // 验证第一个时间字段 (UTCTime 0x17 或 GeneralizedTime 0x18)
-        let first_tag = validity_der[2];
+        let first_tag = validity_seq[2];
         assert!(first_tag == 0x17 || first_tag == 0x18);
 
         // 验证第二个时间字段
-        let first_time_len = validity_der[3] as usize;
-        let second_tag_pos = 2 + 2 + first_time_len; // tag + len + content
-        let second_tag = validity_der[second_tag_pos];
+        let first_time_len = validity_seq[3] as usize;
+        let second_tag_pos = 2 + 2 + first_time_len;
+        let second_tag = validity_seq[second_tag_pos];
         assert!(second_tag == 0x17 || second_tag == 0x18);
 
         println!("✅ 测试 11.1：有效期 DER 结构验证 - 通过");
+    }
+
+    #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
+    fn test_certificate_builder() {
+        use cert::{X500Attribute, X500AttributeType};
+        use std::time::Duration;
+        
+        let mut rng = StdRng::seed_from_u64(999999999);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+        
+        // 使用 Builder 模式创建证书
+        let cert = cert::GmCertificate::builder()
+            .subject(&[
+                X500Attribute::new(X500AttributeType::Country, "CN"),
+                X500Attribute::new(X500AttributeType::Organization, "Test Org"),
+                X500Attribute::new(X500AttributeType::CommonName, "test.example.com"),
+            ])
+            .issuer(&[
+                X500Attribute::new(X500AttributeType::Country, "CN"),
+                X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+            ])
+            .serial_number(1u32)
+            .validity_period(
+                std::time::SystemTime::now(),
+                std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
+            )
+            .build(&pub_key, &priv_key, DEFAULT_ID, &mut rng)
+            .expect("Failed to build certificate");
+        
+        println!("✅ 测试 12.1：使用 Builder 创建证书 - 通过");
+        
+        // 验证证书结构
+        assert_eq!(cert.version, 2); // v3
+        assert_eq!(cert.serial_number, vec![0x01]);
+        // 注意：issuer 和 subject 不相同，因为我们设置了不同的值
+        println!("✅ 测试 12.2：验证证书结构 - 通过");
+        
+        // 验证证书有效期
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        cert.verify_validity(now).expect("证书应在有效期内");
+        println!("✅ 测试 12.3：验证证书有效期 - 通过");
+        
+        // 验证自签名
+        cert.verify_self_signed(DEFAULT_ID).expect("自签名验证应成功");
+        println!("✅ 测试 12.4：验证自签名 - 通过");
+        
+        // 验证公钥提取
+        let extracted_pub = cert.extract_sm2_public_key().expect("提取公钥应成功");
+        assert_eq!(extracted_pub, pub_key);
+        println!("✅ 测试 12.5：提取公钥验证 - 通过");
     }
 }
