@@ -3,6 +3,7 @@
 
 mod cipher;
 mod modes;
+pub mod padding;
 
 pub use cipher::Sm4Key;
 pub use modes::*;

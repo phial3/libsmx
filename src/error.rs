@@ -29,6 +29,8 @@ pub enum Error {
     // ── SM4 错误 ────────────────────────────────────────────────────────────
     /// AEAD 认证标签验证失败（GCM/CCM 解密时）
     AuthTagMismatch,
+    /// 填充无效（PKCS#5/PKCS#7 解密时）
+    InvalidPadding,
 
     // ── SM9 错误 ────────────────────────────────────────────────────────────
     /// 输入点不在曲线上
@@ -63,6 +65,7 @@ impl fmt::Display for Error {
             Error::InvalidInputLength => write!(f, "invalid input length"),
             Error::KeyExchangeFailed => write!(f, "key exchange failed"),
             Error::AuthTagMismatch => write!(f, "authentication tag mismatch"),
+            Error::InvalidPadding => write!(f, "invalid padding"),
             Error::NotOnCurve => write!(f, "point not on curve"),
             Error::ZeroScalar => write!(f, "zero scalar"),
             Error::IntegerOutOfRange => write!(f, "integer out of range"),

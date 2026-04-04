@@ -1,6 +1,26 @@
 //! SM4 分组模式（GB/T 32907-2016，GB/T 17964-2021）
 //!
-//! 支持：ECB、CBC、OFB、CFB、CTR、GCM（AEAD）、CCM（AEAD）、XTS
+//! # 支持的加密模式
+//!
+//! ## 基础模式
+//! - **ECB**: 电子密码本模式（支持无填充、PKCS#5、PKCS#7）
+//! - **CBC**: 密码分组链接模式（支持无填充、PKCS#5、PKCS#7）
+//! - **OFB**: 输出反馈模式（流模式，无需填充）
+//! - **CFB**: 密文反馈模式（流模式，无需填充）
+//! - **CTR**: 计数器模式（流模式，无需填充）
+//!
+//! ## AEAD 模式（认证加密）
+//! - **GCM**: Galois/Counter Mode
+//! - **CCM**: Counter with CBC-MAC
+//!
+//! ## 磁盘加密模式
+//! - **XTS**: XEX-based Tweaked CodeBook mode
+//!
+//! # 填充方案
+//!
+//! - **NoPadding**: 无填充，要求输入数据长度必须是 16 字节的整数倍
+//! - **PKCS#5Padding**: PKCS#5 填充（与 PKCS#7 相同）
+//! - **PKCS#7Padding**: PKCS#7 填充（RFC 5652）
 //!
 //! # 安全说明
 //!
@@ -14,6 +34,8 @@ use alloc::vec::Vec;
 use subtle::ConstantTimeEq;
 
 use super::cipher::{encrypt_block_raw, Sm4Key};
+use super::padding::{pkcs5_pad, pkcs5_unpad, pkcs7_pad, pkcs7_unpad};
+use crate::error::Error;
 
 // ── ECB ──────────────────────────────────────────────────────────────────────
 
@@ -50,6 +72,64 @@ pub fn sm4_decrypt_ecb(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
             block
         })
         .collect()
+}
+
+/// SM4-ECB 加密（PKCS#5 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `plaintext`: 明文（任意长度）
+///
+/// # 返回
+/// 密文字节向量（包含 PKCS#5 填充）
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_ecb_pkcs5(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+    let padded = pkcs5_pad(plaintext);
+    sm4_encrypt_ecb(key, &padded)
+}
+
+/// SM4-ECB 解密（PKCS#5 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `ciphertext`: 密文（包含 PKCS#5 填充）
+///
+/// # 返回
+/// - `Ok(Vec<u8>)`: 解密后的明文
+/// - `Err(Error::InvalidPadding)`: 填充无效
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_ecb_pkcs5(key: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
+    let decrypted = sm4_decrypt_ecb(key, ciphertext);
+    pkcs5_unpad(&decrypted)
+}
+
+/// SM4-ECB 加密（PKCS#7 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `plaintext`: 明文（任意长度）
+///
+/// # 返回
+/// 密文字节向量（包含 PKCS#7 填充）
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_ecb_pkcs7(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+    let padded = pkcs7_pad(plaintext, 16);
+    sm4_encrypt_ecb(key, &padded)
+}
+
+/// SM4-ECB 解密（PKCS#7 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `ciphertext`: 密文（包含 PKCS#7 填充）
+///
+/// # 返回
+/// - `Ok(Vec<u8>)`: 解密后的明文
+/// - `Err(Error::InvalidPadding)`: 填充无效
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_ecb_pkcs7(key: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
+    let decrypted = sm4_decrypt_ecb(key, ciphertext);
+    pkcs7_unpad(&decrypted)
 }
 
 // ── CBC ──────────────────────────────────────────────────────────────────────
@@ -94,6 +174,84 @@ pub fn sm4_decrypt_cbc(key: &[u8; 16], iv: &[u8; 16], ciphertext: &[u8]) -> Vec<
             block
         })
         .collect()
+}
+
+/// SM4-CBC 加密（PKCS#5 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `iv`: 16 字节初始化向量
+/// - `plaintext`: 明文（任意长度）
+///
+/// # 返回
+/// 密文字节向量（包含 PKCS#5 填充）
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_cbc_pkcs5(
+    key: &[u8; 16],
+    iv: &[u8; 16],
+    plaintext: &[u8],
+) -> Vec<u8> {
+    let padded = pkcs5_pad(plaintext);
+    sm4_encrypt_cbc(key, iv, &padded)
+}
+
+/// SM4-CBC 解密（PKCS#5 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `iv`: 16 字节初始化向量
+/// - `ciphertext`: 密文（包含 PKCS#5 填充）
+///
+/// # 返回
+/// - `Ok(Vec<u8>)`: 解密后的明文
+/// - `Err(Error::InvalidPadding)`: 填充无效
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_cbc_pkcs5(
+    key: &[u8; 16],
+    iv: &[u8; 16],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, Error> {
+    let decrypted = sm4_decrypt_cbc(key, iv, ciphertext);
+    pkcs5_unpad(&decrypted)
+}
+
+/// SM4-CBC 加密（PKCS#7 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `iv`: 16 字节初始化向量
+/// - `plaintext`: 明文（任意长度）
+///
+/// # 返回
+/// 密文字节向量（包含 PKCS#7 填充）
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_cbc_pkcs7(
+    key: &[u8; 16],
+    iv: &[u8; 16],
+    plaintext: &[u8],
+) -> Vec<u8> {
+    let padded = pkcs7_pad(plaintext, 16);
+    sm4_encrypt_cbc(key, iv, &padded)
+}
+
+/// SM4-CBC 解密（PKCS#7 填充）
+///
+/// # 参数
+/// - `key`: 16 字节密钥
+/// - `iv`: 16 字节初始化向量
+/// - `ciphertext`: 密文（包含 PKCS#7 填充）
+///
+/// # 返回
+/// - `Ok(Vec<u8>)`: 解密后的明文
+/// - `Err(Error::InvalidPadding)`: 填充无效
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_cbc_pkcs7(
+    key: &[u8; 16],
+    iv: &[u8; 16],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, Error> {
+    let decrypted = sm4_decrypt_cbc(key, iv, ciphertext);
+    pkcs7_unpad(&decrypted)
 }
 
 // ── OFB ──────────────────────────────────────────────────────────────────────
@@ -720,6 +878,105 @@ pub fn sm4_decrypt_xts(
 #[cfg(feature = "alloc")]
 mod tests {
     use super::*;
+
+    // ====================================================================================
+    // 填充测试
+    // ====================================================================================
+
+    /// ECB PKCS#5 填充往返测试
+    #[test]
+    fn test_ecb_pkcs5_roundtrip() {
+        let key = [0u8; 16];
+        let plaintext = b"Hello SM4 ECB with PKCS#5!";
+        
+        let ciphertext = sm4_encrypt_ecb_pkcs5(&key, plaintext);
+        let decrypted = sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
+        
+        assert_eq!(decrypted, plaintext);
+        assert!(ciphertext.len() > plaintext.len());
+        assert_eq!(ciphertext.len() % 16, 0);
+    }
+
+    /// ECB PKCS#7 填充往返测试
+    #[test]
+    fn test_ecb_pkcs7_roundtrip() {
+        let key = [1u8; 16];
+        let plaintext = b"Test PKCS#7 padding";
+        
+        let ciphertext = sm4_encrypt_ecb_pkcs7(&key, plaintext);
+        let decrypted = sm4_decrypt_ecb_pkcs7(&key, &ciphertext).expect("Decryption should succeed");
+        
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// CBC PKCS#5 填充往返测试
+    #[test]
+    fn test_cbc_pkcs5_roundtrip() {
+        let key = [2u8; 16];
+        let iv = [3u8; 16];
+        let plaintext = b"Hello SM4 CBC with PKCS#5 padding!";
+        
+        let ciphertext = sm4_encrypt_cbc_pkcs5(&key, &iv, plaintext);
+        let decrypted = sm4_decrypt_cbc_pkcs5(&key, &iv, &ciphertext).expect("Decryption should succeed");
+        
+        assert_eq!(decrypted, plaintext);
+        assert!(ciphertext.len() > plaintext.len());
+        assert_eq!(ciphertext.len() % 16, 0);
+    }
+
+    /// CBC PKCS#7 填充往返测试
+    #[test]
+    fn test_cbc_pkcs7_roundtrip() {
+        let key = [4u8; 16];
+        let iv = [5u8; 16];
+        let plaintext = b"Test CBC PKCS#7";
+        
+        let ciphertext = sm4_encrypt_cbc_pkcs7(&key, &iv, plaintext);
+        let decrypted = sm4_decrypt_cbc_pkcs7(&key, &iv, &ciphertext).expect("Decryption should succeed");
+        
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// PKCS#5 填充 - 空数据测试
+    #[test]
+    fn test_pkcs5_empty_data() {
+        let key = [0u8; 16];
+        let plaintext: &[u8] = b"";
+        
+        let ciphertext = sm4_encrypt_ecb_pkcs5(&key, plaintext);
+        let decrypted = sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
+        
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(ciphertext.len(), 16); // 空数据填充 16 字节
+    }
+
+    /// PKCS#5 填充 - 恰好整倍数测试
+    #[test]
+    fn test_pkcs5_exact_block() {
+        let key = [0u8; 16];
+        let plaintext = [0u8; 16]; // 恰好 16 字节
+        
+        let ciphertext = sm4_encrypt_ecb_pkcs5(&key, &plaintext);
+        let decrypted = sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
+        
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(ciphertext.len(), 32); // 16 字节数据 + 16 字节填充
+    }
+
+    /// PKCS#5 填充 - 无效填充检测
+    #[test]
+    fn test_pkcs5_invalid_padding() {
+        let key = [0u8; 16];
+        // 构造无效的密文（解密后填充无效）
+        let mut ciphertext = [0u8; 16];
+        ciphertext[15] = 0x05; // 声称有 5 个填充字节，但实际不足
+        
+        assert!(sm4_decrypt_ecb_pkcs5(&key, &ciphertext).is_err());
+    }
+
+    // ====================================================================================
+    // 基础模式测试
+    // ====================================================================================
 
     /// GB/T 32907-2016 附录 B：CBC 模式测试向量
     #[test]
