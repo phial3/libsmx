@@ -36,7 +36,7 @@ pub use der::{
 use alloc::vec::Vec;
 
 #[cfg(feature = "alloc")]
-use pem_rfc7468::{encode_string, decode_vec};
+use x509_cert::der::pem::{encode_string, decode_vec};
 
 use crypto_bigint::U256;
 use rand_core::Rng;

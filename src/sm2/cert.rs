@@ -42,9 +42,8 @@ use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
 
-use pem_rfc7468::{decode_vec, encode_string};
-
 // x509-cert 相关导入
+use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::Decode;
 use x509_cert::time::Validity;
 use x509_cert::Certificate;
@@ -711,94 +710,94 @@ use alloc::string::String;
 /// X.500 可分辨名称属性类型
 ///
 /// 用于构建证书的 issuer 和 subject 字段。
-/// 
+///
 /// 包含 RFC 5280 和 X.500 标准中定义的常用属性。
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq)]
 pub enum X500AttributeType {
     /// CN (Common Name) (2.5.4.3) - 常用名称
-    /// 
+    ///
     /// 最常用的属性，通常用于域名（服务器证书）或个人姓名（个人证书）。
     CommonName,
-    
+
     /// O (Organization) (2.5.4.10) - 组织
-    /// 
+    ///
     /// 公司、机构或组织的名称。
     Organization,
-    
+
     /// OU (Organizational Unit) (2.5.4.11) - 组织单位
-    /// 
+    ///
     /// 组织内的部门或分支机构，如"IT 部门"、"研发中心"等。
     OrganizationalUnit,
-    
+
     /// C (Country) (2.5.4.6) - 国家
-    /// 
+    ///
     /// 两个字母的 ISO 3166-1 国家代码，如"CN"、"US"等。
     Country,
-    
+
     /// S (State/Province) (2.5.4.8) - 省/州
-    /// 
+    ///
     /// 省、州或地区的完整名称，如"Beijing"、"California"等。
     State,
-    
+
     /// L (Locality) (2.5.4.7) - 地区
-    /// 
+    ///
     /// 城市、区县或具体地理位置，如"Beijing"、"Haidian District"等。
     Locality,
 
     /// SN (Serial Number) (2.5.4.5) - 序列号
-    /// 
+    ///
     /// 个人的序列号标识（如员工号、身份证号等），不是证书序列号。
     /// 注意：此属性较少使用，主要用于个人身份证书。
     SerialNumber,
-    
+
     /// Email Address (1.2.840.113549.1.9.1) - 电子邮箱
-    /// 
+    ///
     /// RFC 5280 推荐的电子邮件地址属性，用于标识证书持有者的邮箱。
     EmailAddress,
-    
+
     /// Title (2.5.4.12) - 职称/头衔
-    /// 
+    ///
     /// 个人的职位或职称，如"Engineer"、"Manager"、"CEO"等。
     Title,
-    
+
     /// Given Name (2.5.4.42) - 名
-    /// 
+    ///
     /// 个人的名字（西方命名法中的 first name）。
     GivenName,
-    
+
     /// Surname (2.5.4.4) - 姓
-    /// 
+    ///
     /// 个人的姓氏（西方命名法中的 last name）。
     Surname,
-    
+
     /// Initials (2.5.4.43) - 姓名首字母
-    /// 
+    ///
     /// 个人姓名的首字母缩写。
     Initials,
-    
+
     /// Generation Qualifier (2.5.4.44) - 世代限定符
-    /// 
+    ///
     /// 用于区分同名人的世代标识，如"Jr."、"Sr."、"III"等。
     GenerationQualifier,
-    
+
     /// Pseudonym (2.5.4.65) - 笔名/化名
-    /// 
+    ///
     /// 个人的别名或化名。
     Pseudonym,
-    
+
     /// Postal Code (2.5.4.17) - 邮政编码
-    /// 
+    ///
     /// 邮政投递区域的编码。
     PostalCode,
-    
+
     /// Street Address (2.5.4.9) - 街道地址
-    /// 
+    ///
     /// 详细的街道地址信息。
     StreetAddress,
-    
+
     /// Business Category (2.5.4.15) - 业务类别
-    /// 
+    ///
     /// 组织的业务类型分类。
     BusinessCategory,
 }
@@ -815,7 +814,7 @@ impl X500AttributeType {
             X500AttributeType::Country => &[0x06, 0x03, 0x55, 0x04, 0x06],
             X500AttributeType::State => &[0x06, 0x03, 0x55, 0x04, 0x08],
             X500AttributeType::Locality => &[0x06, 0x03, 0x55, 0x04, 0x07],
-            
+
             // 个人身份属性
             X500AttributeType::SerialNumber => &[0x06, 0x03, 0x55, 0x04, 0x05],
             X500AttributeType::EmailAddress => &[
@@ -827,11 +826,11 @@ impl X500AttributeType {
             X500AttributeType::Initials => &[0x06, 0x03, 0x55, 0x04, 0x2B],
             X500AttributeType::GenerationQualifier => &[0x06, 0x03, 0x55, 0x04, 0x2C],
             X500AttributeType::Pseudonym => &[0x06, 0x03, 0x55, 0x04, 0x41],
-            
+
             // 地址相关属性
             X500AttributeType::PostalCode => &[0x06, 0x03, 0x55, 0x04, 0x11],
             X500AttributeType::StreetAddress => &[0x06, 0x03, 0x55, 0x04, 0x09],
-            
+
             // 组织相关属性
             X500AttributeType::BusinessCategory => &[0x06, 0x03, 0x55, 0x04, 0x0F],
         }
@@ -1736,13 +1735,12 @@ mod tests {
     /// - 250101000000Z (2025-01-01)
     /// - 300101000000Z (2030-01-01)
     const TEST_VALIDITY: &[u8] = &[
-        0x30, 0x1E,           // SEQUENCE, length 30
-        0x17, 0x0D,           // UTCTime, length 13
-        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
-        0x17, 0x0D,           // UTCTime, length 13
+        0x30, 0x1E, // SEQUENCE, length 30
+        0x17, 0x0D, // UTCTime, length 13
+        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x17, 0x0D, // UTCTime, length 13
         b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
     ];
-    
+
     // -- 证书测试 ------------------------------------------------------------
 
     #[test]
