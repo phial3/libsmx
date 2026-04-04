@@ -217,10 +217,10 @@ fn test_digital_signature_tampering() {
         false,
     ).expect("Failed to create digital signature");
 
-    // 篡改签章数据
-    if !signed_data_der.is_empty() {
-        let len = signed_data_der.len();
-        signed_data_der[len / 2] ^= 0xFF;
+    // 篡改内容数据（在 encapContentInfo 中）
+    // 找到 "Original content" 的位置并篡改
+    if let Some(pos) = signed_data_der.windows(b"Original content".len()).position(|w| w == b"Original content") {
+        signed_data_der[pos] ^= 0xFF;
     }
 
     // 验证篡改后的签章应该失败（或返回无效）

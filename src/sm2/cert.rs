@@ -434,37 +434,36 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
     // 解析外层 SEQUENCE
     let (seq_body, _) = der::parse_tlv(der, 0x30).ok_or_else(err)?;
 
-    // 解析版本（可选，上下文标签 [0]）
-    let (version, rest) = if seq_body.starts_with(&[0xA0]) {
-        let (ver_tlv, rest) = der::parse_tlv(seq_body, 0xA0).ok_or_else(err)?;
+    // 解析 TBSCertificate SEQUENCE，得到 tbs_body 和外层剩余部分
+    let (tbs_body, after_tbs) = der::parse_tlv(seq_body, 0x30).ok_or_else(err)?;
+
+    // 从 TBSCertificate 解析版本
+    let (version, rest_tbs) = if tbs_body.starts_with(&[0xA0]) {
+        let (ver_tlv, rest) = der::parse_tlv(tbs_body, 0xA0).ok_or_else(err)?;
         let (ver_bytes, _) = der::parse_tlv(ver_tlv, 0x02).ok_or_else(err)?;
         let ver = ver_bytes.first().copied().unwrap_or(0) as u32;
         (ver, rest)
     } else {
-        (0, seq_body)
+        (0, tbs_body)
     };
 
-    // 解析序列号
-    let (serial, rest) = der::parse_tlv(rest, 0x02).ok_or_else(err)?;
-
-    // 解析签名算法
-    let (sig_alg, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
-
-    // 解析签发者
-    let (issuer, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
-
-    // 解析有效期（存储完整 TLV）
-    let (validity_tlv, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+    // 解析 TBSCertificate 中的字段
+    let (serial, rest_tbs) = der::parse_tlv(rest_tbs, 0x02).ok_or_else(err)?;
+    let (_sig_alg_tbs, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    let (issuer, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    let (validity_tlv, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
     if validity_tlv.is_empty() || validity_tlv[0] != 0x30 {
         return Err(err());
     }
     let validity = validity_tlv;
 
-    // 解析主体
-    let (subject, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+    let (subject, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    let (spki, _rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    
+    // TBSCertificate 解析完成，_rest_tbs 包含扩展字段（如果有），我们不需要
 
-    // 解析主体公钥信息
-    let (spki, rest) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+    // 从外层剩余部分解析签名算法和签名值
+    let (sig_alg, rest) = der::parse_tlv_any_full(after_tbs).ok_or_else(err)?;
 
     // 解析签名值（BIT STRING）
     let signature = if rest.len() > 3 && rest[0] == 0x03 {
@@ -516,7 +515,8 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
 /// 此函数仅执行 DER 编码，不生成签名。
 /// 签名值必须预先计算并存储在 `cert.signature` 中。
 pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
-    let mut components = Vec::with_capacity(256);
+    // 首先构建 TBSCertificate 的内容
+    let mut tbs_components = Vec::with_capacity(256);
 
     // 版本（v3 及以上需要显式编码）
     if cert.version > 0 {
@@ -525,7 +525,7 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
         version_wrapper.push(0xA0);
         version_wrapper.push(version_der.len() as u8);
         version_wrapper.extend(version_der);
-        components.push(version_wrapper);
+        tbs_components.push(version_wrapper);
     }
 
     // 序列号
@@ -533,14 +533,45 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
     serial_der.push(0x02);
     serial_der.push(cert.serial_number.len() as u8);
     serial_der.extend_from_slice(&cert.serial_number);
-    components.push(serial_der);
+    tbs_components.push(serial_der);
 
     // 签名算法、签发者、有效期、主体、公钥信息直接使用已有 DER（已经是完整 TLV）
+    tbs_components.push(cert.signature_algorithm.clone());
+    tbs_components.push(cert.issuer.clone());
+    tbs_components.push(cert.validity.clone());
+    tbs_components.push(cert.subject.clone());
+    tbs_components.push(cert.subject_public_key_info.clone());
+
+    // 计算 TBSCertificate 的总长度
+    let tbs_total_len: usize = tbs_components.iter().map(|c| c.len()).sum();
+    
+    // 构建 TBSCertificate SEQUENCE
+    let mut tbs_certificate = Vec::with_capacity(2 + tbs_total_len);
+    tbs_certificate.push(0x30); // SEQUENCE 标签
+    
+    // 编码 TBSCertificate 长度字段
+    if tbs_total_len < 128 {
+        tbs_certificate.push(tbs_total_len as u8);
+    } else if tbs_total_len < 256 {
+        tbs_certificate.push(0x81);
+        tbs_certificate.push(tbs_total_len as u8);
+    } else {
+        tbs_certificate.push(0x82);
+        tbs_certificate.push((tbs_total_len >> 8) as u8);
+        tbs_certificate.push((tbs_total_len & 0xFF) as u8);
+    }
+    
+    // 添加 TBSCertificate 的内容
+    for component in tbs_components {
+        tbs_certificate.extend(component);
+    }
+
+    // 现在构建外层 Certificate，包含 TBSCertificate、签名算法和签名值
+    let mut components = Vec::with_capacity(3);
+    components.push(tbs_certificate);
+
+    // 签名算法
     components.push(cert.signature_algorithm.clone());
-    components.push(cert.issuer.clone());
-    components.push(cert.validity.clone());
-    components.push(cert.subject.clone());
-    components.push(cert.subject_public_key_info.clone());
 
     // 签名值（BIT STRING 编码）
     let mut sig_bit_str = Vec::with_capacity(3 + cert.signature.len());
