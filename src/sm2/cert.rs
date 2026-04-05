@@ -409,7 +409,7 @@ impl GmCertificate {
 /// ## 解析流程
 ///
 /// 1. 解析外层 SEQUENCE（整个证书）
-/// 2. 解析版本号（可选，上下文标签 [0]）
+/// 2. 解析版本号（可选，上下文标签 \[0\]）
 /// 3. 解析序列号（INTEGER）
 /// 4. 解析签名算法（AlgorithmIdentifier）
 /// 5. 解析签发者（Name）
@@ -950,22 +950,7 @@ pub fn build_x500_name(attributes: &[X500Attribute]) -> Vec<u8> {
 
 /// 从证书有效期字段解析时间
 ///
-/// 解析证书有效期 DER 编码，提取生效时间和过期时间。
-/// 支持 UTCTime（2 字节年份）和 GeneralizedTime（4 字节年份）格式。
-///
-/// ## 有效期格式
-///
-/// ```text
-/// Validity ::= SEQUENCE {
-///     notBefore    Time,
-///     notAfter     Time
-/// }
-///
-/// Time ::= CHOICE {
-///     utcTime        UTCTime,
-///     generalTime    GeneralizedTime
-/// }
-/// ```
+/// 使用 x509-cert 的 Validity 类型解析证书有效期。
 ///
 /// # 参数
 /// - `validity_der`: 有效期 DER 编码数据
@@ -991,23 +976,22 @@ fn parse_validity(validity_der: &[u8]) -> Result<Validity, Error> {
 /// - `Err(Error::InvalidCertificate)`: 解析失败
 #[cfg(feature = "std")]
 fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
-    // 使用 chrono 解析日期字符串
-    // 支持格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS
     let datetime = if date_str.contains(' ') {
-        // 包含时间部分
         NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")
             .map_err(|_| Error::InvalidCertificate)?
     } else {
-        // 只有日期部分，使用默认时间 00:00:00
         let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
             .map_err(|_| Error::InvalidCertificate)?;
         date.and_hms_opt(0, 0, 0).ok_or(Error::InvalidCertificate)?
     };
 
-    // 转换为 UTC DateTime 并获取 Unix 时间戳
     let utc_datetime = Utc.from_utc_datetime(&datetime);
     Ok(utc_datetime.timestamp() as u64)
 }
+
+// ====================================================================================
+// 证书扩展类型（使用 x509-cert 提供的类型）
+// ====================================================================================
 
 // ====================================================================================
 // 证书构建器（需要 alloc 和 std）
@@ -1737,7 +1721,8 @@ mod tests {
     const TEST_VALIDITY: &[u8] = &[
         0x30, 0x1E, // SEQUENCE, length 30
         0x17, 0x0D, // UTCTime, length 13
-        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x17, 0x0D, // UTCTime, length 13
+        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x17,
+        0x0D, // UTCTime, length 13
         b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
     ];
 

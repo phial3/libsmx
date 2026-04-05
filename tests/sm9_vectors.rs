@@ -7,8 +7,8 @@ use libsmx::sm9::{
     generate_sign_user_key, sm9_decrypt, sm9_encrypt, sm9_sign, sm9_verify, Sm9EncPubKey,
     Sm9SignPubKey,
 };
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 /// SM9 签名主密钥对生成 + 签名私钥派生 + 签名验签端到端测试
 #[test]
@@ -134,10 +134,7 @@ fn test_sm9_decrypt_tampered_ciphertext_fails() {
     let tamper_idx = ct.len() - 1;
     ct[tamper_idx] ^= 0xFF;
 
-    assert!(
-        sm9_decrypt(id, &ct, &de).is_err(),
-        "篡改密文后解密应失败"
-    );
+    assert!(sm9_decrypt(id, &ct, &de).is_err(), "篡改密文后解密应失败");
 }
 
 /// 解密对错误私钥应失败

@@ -12,7 +12,7 @@
 
 use libsmx::sm2::cert::{generate_self_signed_cert, GmCertificate};
 use libsmx::sm2::cms;
-use libsmx::sm2::{generate_keypair, public_key_to_spki_der, public_key_from_spki_der, DEFAULT_ID};
+use libsmx::sm2::{generate_keypair, public_key_from_spki_der, public_key_to_spki_der, DEFAULT_ID};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -32,11 +32,13 @@ fn generate_test_validity() -> Vec<u8> {
     // 使用字节数组方式生成有效期（用于测试）
     // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
     vec![
-        0x30, 0x1E,           // SEQUENCE, length 30
-        0x17, 0x0D,           // UTCTime, length 13
-        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 250101000000Z
-        0x17, 0x0D,           // UTCTime, length 13
-        b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 300101000000Z
+        0x30, 0x1E, // SEQUENCE, length 30
+        0x17, 0x0D, // UTCTime, length 13
+        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
+        b'Z', // 250101000000Z
+        0x17, 0x0D, // UTCTime, length 13
+        b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
+        b'Z', // 300101000000Z
     ]
 }
 
@@ -101,13 +103,9 @@ fn test_self_signed_cert() {
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate self-signed certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate self-signed certificate");
 
     // 验证证书字段
     assert_eq!(cert.version, 2);
@@ -145,7 +143,7 @@ fn test_pubkey_pem() {
     let der = libsmx::sm2::public_key_to_spki_der(&pub_key);
     assert!(!der.is_empty());
     assert_eq!(der[0], 0x30); // SEQUENCE tag
-    
+
     // 验证 DER 可以正确解码回公钥
     let decoded = libsmx::sm2::public_key_from_spki_der(&der).expect("SPKI decode failed");
     assert_eq!(pub_key, decoded);
@@ -162,26 +160,18 @@ fn test_digital_signature_creation() {
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate certificate");
 
     let content = b"Test content";
     let custom_id = b"1234567890";
 
     // 使用自定义 ID 创建签章
     let signed_data_der = cms::create_digital_signature(
-        content,
-        &priv_key,
-        &cert,
-        custom_id,
-        &mut rng,
-        false, // 不包含时间
-    ).expect("Failed to create digital signature");
+        content, &priv_key, &cert, custom_id, &mut rng, false, // 不包含时间
+    )
+    .expect("Failed to create digital signature");
 
     assert!(!signed_data_der.is_empty());
     assert_eq!(signed_data_der[0], 0x30); // SEQUENCE tag
@@ -197,29 +187,23 @@ fn test_digital_signature_tampering() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate certificate");
 
     let content = b"Original content";
 
     // 创建签章
-    let mut signed_data_der = cms::create_digital_signature(
-        content,
-        &priv_key,
-        &cert,
-        DEFAULT_ID,
-        &mut rng,
-        false,
-    ).expect("Failed to create digital signature");
+    let mut signed_data_der =
+        cms::create_digital_signature(content, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+            .expect("Failed to create digital signature");
 
     // 篡改内容数据（在 encapContentInfo 中）
     // 找到 "Original content" 的位置并篡改
-    if let Some(pos) = signed_data_der.windows(b"Original content".len()).position(|w| w == b"Original content") {
+    if let Some(pos) = signed_data_der
+        .windows(b"Original content".len())
+        .position(|w| w == b"Original content")
+    {
         signed_data_der[pos] ^= 0xFF;
     }
 
@@ -240,31 +224,25 @@ fn test_digital_signature_different_id() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate certificate");
 
     let content = b"Test content";
     let sign_id = b"1234567812345678";
     let verify_id = b"8765432187654321";
 
     // 使用 sign_id 创建签章
-    let signed_data_der = cms::create_digital_signature(
-        content,
-        &priv_key,
-        &cert,
-        sign_id,
-        &mut rng,
-        false,
-    ).expect("Failed to create digital signature");
+    let signed_data_der =
+        cms::create_digital_signature(content, &priv_key, &cert, sign_id, &mut rng, false)
+            .expect("Failed to create digital signature");
 
     // 使用不同的 verify_id 验证应该失败
     match cms::verify_digital_signature(&signed_data_der, verify_id) {
-        Ok(result) => assert!(!result.is_valid, "Signature with different ID should be invalid"),
+        Ok(result) => assert!(
+            !result.is_valid,
+            "Signature with different ID should be invalid"
+        ),
         Err(_) => { /* 解析失败也接受 */ }
     }
 }
@@ -279,25 +257,16 @@ fn test_digital_signature_empty_content() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate certificate");
 
     let empty_content = b"";
 
     // 创建空内容签章
-    let signed_data_der = cms::create_digital_signature(
-        empty_content,
-        &priv_key,
-        &cert,
-        DEFAULT_ID,
-        &mut rng,
-        false,
-    ).expect("Failed to create digital signature for empty content");
+    let signed_data_der =
+        cms::create_digital_signature(empty_content, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+            .expect("Failed to create digital signature for empty content");
 
     assert!(!signed_data_der.is_empty());
 }
@@ -312,13 +281,9 @@ fn test_digital_signature_large_content() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate certificate");
 
     // 1MB 内容
     let large_content = vec![0xABu8; 1024 * 1024];
@@ -331,7 +296,8 @@ fn test_digital_signature_large_content() {
         DEFAULT_ID,
         &mut rng,
         false,
-    ).expect("Failed to create digital signature for large content");
+    )
+    .expect("Failed to create digital signature for large content");
 
     assert!(!signed_data_der.is_empty());
 }
@@ -346,29 +312,30 @@ fn test_digital_signature_stability() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key,
-        &subject,
-        &validity,
-        b"\x01",
-        DEFAULT_ID,
-        &mut rng,
-    ).expect("Failed to generate certificate");
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+    )
+    .expect("Failed to generate certificate");
 
     let content = b"Stability test content";
 
     // 多次创建签章，每次都应该成功
     for i in 0..10 {
-        let signed_data_der = cms::create_digital_signature(
-            content,
-            &priv_key,
-            &cert,
-            DEFAULT_ID,
-            &mut rng,
-            false,
-        ).expect(&format!("Failed to create digital signature at iteration {}", i));
+        let signed_data_der =
+            cms::create_digital_signature(content, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect(&format!(
+                    "Failed to create digital signature at iteration {}",
+                    i
+                ));
 
-        assert!(!signed_data_der.is_empty(), "Signature should not be empty at iteration {}", i);
-        assert_eq!(signed_data_der[0], 0x30, "Signature should start with SEQUENCE tag");
+        assert!(
+            !signed_data_der.is_empty(),
+            "Signature should not be empty at iteration {}",
+            i
+        );
+        assert_eq!(
+            signed_data_der[0], 0x30,
+            "Signature should start with SEQUENCE tag"
+        );
     }
 }
 
@@ -390,23 +357,25 @@ fn test_cert_serial_extraction() {
 fn test_cert_validity_generation() {
     use std::time::Duration;
     use x509_cert::der::Encode;
-    
+
     let not_before = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1704067200); // 2024-01-01
-    let not_after = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1893456000);  // 2030-01-01
+    let not_after = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1893456000); // 2030-01-01
 
     // 使用 x509-cert 的 Time 类型生成有效期
-    let not_before_time = x509_cert::time::Time::try_from(not_before)
-        .expect("not_before should be valid");
-    let not_after_time = x509_cert::time::Time::try_from(not_after)
-        .expect("not_after should be valid");
-    
-    let not_before_der = not_before_time.to_der().expect("Failed to encode not_before");
+    let not_before_time =
+        x509_cert::time::Time::try_from(not_before).expect("not_before should be valid");
+    let not_after_time =
+        x509_cert::time::Time::try_from(not_after).expect("not_after should be valid");
+
+    let not_before_der = not_before_time
+        .to_der()
+        .expect("Failed to encode not_before");
     let not_after_der = not_after_time.to_der().expect("Failed to encode not_after");
-    
+
     let mut validity: Vec<u8> = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
     validity.extend(&not_before_der);
     validity.extend(&not_after_der);
-    
+
     // 包装为 SEQUENCE
     let mut validity_seq: Vec<u8> = Vec::with_capacity(2 + validity.len());
     validity_seq.push(0x30);

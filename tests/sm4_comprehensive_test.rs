@@ -31,16 +31,16 @@ use libsmx::sm4::{
 #[test]
 fn test_sm4_standard_vector() {
     let key = [
-        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32,
+        0x10,
     ];
     let plaintext = [
-        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32,
+        0x10,
     ];
     let expected_ciphertext = [
-        0x68, 0x1E, 0xDF, 0x34, 0xD2, 0x06, 0x96, 0x5E,
-        0x86, 0xB3, 0xE9, 0x4F, 0x53, 0x6E, 0x42, 0x46,
+        0x68, 0x1E, 0xDF, 0x34, 0xD2, 0x06, 0x96, 0x5E, 0x86, 0xB3, 0xE9, 0x4F, 0x53, 0x6E, 0x42,
+        0x46,
     ];
 
     // 测试 ECB 模式
@@ -79,9 +79,18 @@ fn test_sm4_ecb_various_lengths() {
         let plaintext = vec![0xCDu8; len];
         let ciphertext = sm4_encrypt_ecb(&key, &plaintext);
         // 密文长度应该是 16 的倍数
-        assert_eq!(ciphertext.len() % 16, 0, "Ciphertext length should be multiple of 16");
+        assert_eq!(
+            ciphertext.len() % 16,
+            0,
+            "Ciphertext length should be multiple of 16"
+        );
         let decrypted = sm4_decrypt_ecb(&key, &ciphertext);
-        assert_eq!(&decrypted[..len], &plaintext[..], "Failed for length {}", len);
+        assert_eq!(
+            &decrypted[..len],
+            &plaintext[..],
+            "Failed for length {}",
+            len
+        );
     }
 }
 
@@ -179,7 +188,8 @@ fn test_sm4_gcm_basic() {
     assert!(!ciphertext.is_empty());
     assert_eq!(tag.len(), 16); // GCM tag 为 16 字节
 
-    let decrypted = sm4_decrypt_gcm(&key, &nonce, aad, &ciphertext, &tag).expect("Decryption failed");
+    let decrypted =
+        sm4_decrypt_gcm(&key, &nonce, aad, &ciphertext, &tag).expect("Decryption failed");
     assert_eq!(decrypted, plaintext);
 }
 
@@ -225,7 +235,8 @@ fn test_sm4_gcm_combined() {
     let combined = sm4_encrypt_gcm_combined(&key, &nonce, aad, plaintext);
 
     // 解密
-    let decrypted = sm4_decrypt_gcm_combined(&key, &nonce, aad, &combined).expect("Decryption failed");
+    let decrypted =
+        sm4_decrypt_gcm_combined(&key, &nonce, aad, &combined).expect("Decryption failed");
     assert_eq!(decrypted, plaintext);
 }
 
@@ -274,10 +285,12 @@ fn test_sm4_ccm_combined() {
     let aad = b"AAD";
 
     // 加密
-    let combined = sm4_encrypt_ccm_combined(&key, &nonce, aad, plaintext).expect("Encryption failed");
+    let combined =
+        sm4_encrypt_ccm_combined(&key, &nonce, aad, plaintext).expect("Encryption failed");
 
     // 解密
-    let decrypted = sm4_decrypt_ccm_combined(&key, &nonce, aad, &combined).expect("Decryption failed");
+    let decrypted =
+        sm4_decrypt_ccm_combined(&key, &nonce, aad, &combined).expect("Decryption failed");
     assert_eq!(decrypted, plaintext);
 }
 
@@ -314,8 +327,14 @@ fn test_sm4_xts_sector() {
     assert_ne!(ciphertext1, ciphertext2);
 
     // 但都能正确解密
-    assert_eq!(sm4_decrypt_xts(&key1, &key2, &tweak1, &ciphertext1).unwrap(), plaintext);
-    assert_eq!(sm4_decrypt_xts(&key1, &key2, &tweak2, &ciphertext2).unwrap(), plaintext);
+    assert_eq!(
+        sm4_decrypt_xts(&key1, &key2, &tweak1, &ciphertext1).unwrap(),
+        plaintext
+    );
+    assert_eq!(
+        sm4_decrypt_xts(&key1, &key2, &tweak2, &ciphertext2).unwrap(),
+        plaintext
+    );
 }
 
 /// 测试 XTS 模式 - 非对齐输入应失败
@@ -422,7 +441,7 @@ fn test_sm4_key_uniqueness() {
 }
 
 /// 测试模式间的差异
-/// 
+///
 /// 验证不同加密模式（CBC, CFB, OFB, CTR）产生不同的密文输出。
 /// 这是加密模式正确实现的重要特性。
 #[test]
@@ -432,12 +451,12 @@ fn test_sm4_mode_differences() {
     let key_cfb = [0xCDu8; 16];
     let key_ofb = [0xEFu8; 16];
     let key_ctr = [0x12u8; 16];
-    
+
     let iv_cbc = [0x34u8; 16];
     let iv_cfb = [0x56u8; 16];
     let iv_ofb = [0x78u8; 16];
     let iv_ctr = [0x9Au8; 16];
-    
+
     let plaintext = b"Test plaintext!!"; // 16 bytes
 
     let cbc = sm4_encrypt_cbc(&key_cbc, &iv_cbc, plaintext);

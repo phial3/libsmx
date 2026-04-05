@@ -10,9 +10,9 @@
 
 #![cfg(feature = "alloc")]
 
-use libsmx::sm2::*;
-use libsmx::sm2::key_exchange::ecdh;
 use libsmx::kdf::kdf;
+use libsmx::sm2::key_exchange::ecdh;
+use libsmx::sm2::*;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -85,8 +85,7 @@ fn test_sign_verify_message() {
     assert_eq!(signature.len(), 64);
 
     // 验签
-    verify_message(message, DEFAULT_ID, &pub_key, &signature)
-        .expect("Verification should succeed");
+    verify_message(message, DEFAULT_ID, &pub_key, &signature).expect("Verification should succeed");
 }
 
 /// 测试签名 - 相同消息不同签名（随机性）
@@ -101,7 +100,10 @@ fn test_sign_randomness() {
     let sig2 = sign_message(message, DEFAULT_ID, &priv_key, &mut rng);
 
     // 签名应不同（随机性）
-    assert_ne!(sig1, sig2, "Signatures should be different due to randomness");
+    assert_ne!(
+        sig1, sig2,
+        "Signatures should be different due to randomness"
+    );
 
     // 但都应能通过验签
     verify_message(message, DEFAULT_ID, &pub_key, &sig1).expect("First signature should verify");
@@ -122,7 +124,10 @@ fn test_verify_failure_tampered_message() {
 
     // 验签应失败
     let result = verify_message(tampered_message, DEFAULT_ID, &pub_key, &signature);
-    assert!(result.is_err(), "Verification should fail for tampered message");
+    assert!(
+        result.is_err(),
+        "Verification should fail for tampered message"
+    );
 }
 
 /// 测试验签失败 - 篡改签名
@@ -139,7 +144,10 @@ fn test_verify_failure_tampered_signature() {
 
     // 验签应失败
     let result = verify_message(message, DEFAULT_ID, &pub_key, &signature);
-    assert!(result.is_err(), "Verification should fail for tampered signature");
+    assert!(
+        result.is_err(),
+        "Verification should fail for tampered signature"
+    );
 }
 
 /// 测试验签失败 - 使用不同公钥
@@ -154,7 +162,10 @@ fn test_verify_failure_wrong_pubkey() {
 
     // 使用错误的公钥验签应失败
     let result = verify_message(message, DEFAULT_ID, &wrong_pub_key, &signature);
-    assert!(result.is_err(), "Verification should fail with wrong public key");
+    assert!(
+        result.is_err(),
+        "Verification should fail with wrong public key"
+    );
 }
 
 /// 测试签名和验签 - 使用不同 ID
@@ -219,8 +230,7 @@ fn test_encrypt_decrypt_basic() {
     assert!(!ciphertext.is_empty());
 
     // 解密（使用对应的私钥）
-    let decrypted = decrypt(&priv_key, &ciphertext)
-        .expect("Decryption should succeed");
+    let decrypted = decrypt(&priv_key, &ciphertext).expect("Decryption should succeed");
 
     assert_eq!(decrypted, plaintext);
 }
@@ -237,8 +247,7 @@ fn test_encrypt_decrypt_same_keypair() {
     let ciphertext = encrypt(&pub_key, plaintext, &mut rng).expect("Encryption should succeed");
 
     // 解密（使用对应的私钥）
-    let decrypted = decrypt(&priv_key, &ciphertext)
-        .expect("Decryption should succeed");
+    let decrypted = decrypt(&priv_key, &ciphertext).expect("Decryption should succeed");
 
     assert_eq!(decrypted, plaintext);
 }
@@ -256,8 +265,8 @@ fn test_encrypt_empty() {
     assert!(!ciphertext.is_empty());
 
     // 解密空数据
-    let decrypted = decrypt(&priv_key, &ciphertext)
-        .expect("Decryption of empty data should succeed");
+    let decrypted =
+        decrypt(&priv_key, &ciphertext).expect("Decryption of empty data should succeed");
 
     assert_eq!(decrypted, empty_data);
 }
@@ -274,8 +283,8 @@ fn test_encrypt_large_data() {
     let ciphertext = encrypt(&pub_key, &large_data, &mut rng).expect("Encryption should succeed");
     assert!(!ciphertext.is_empty());
 
-    let decrypted = decrypt(&priv_key, &ciphertext)
-        .expect("Decryption of large data should succeed");
+    let decrypted =
+        decrypt(&priv_key, &ciphertext).expect("Decryption of large data should succeed");
 
     assert_eq!(decrypted, large_data);
 }
@@ -297,7 +306,10 @@ fn test_decrypt_failure_tampered() {
 
     // 解密应失败
     let result = decrypt(&priv_key, &ciphertext);
-    assert!(result.is_err(), "Decryption should fail for tampered ciphertext");
+    assert!(
+        result.is_err(),
+        "Decryption should fail for tampered ciphertext"
+    );
 }
 
 /// 测试 ECDH 密钥交换
@@ -310,12 +322,10 @@ fn test_ecdh_key_exchange() {
     let (bob_priv, bob_pub) = generate_keypair(&mut rng);
 
     // Alice 计算共享密钥
-    let shared_alice = ecdh(&alice_priv, &bob_pub)
-        .expect("Alice's ECDH should succeed");
+    let shared_alice = ecdh(&alice_priv, &bob_pub).expect("Alice's ECDH should succeed");
 
     // Bob 计算共享密钥
-    let shared_bob = ecdh(&bob_priv, &alice_pub)
-        .expect("Bob's ECDH should succeed");
+    let shared_bob = ecdh(&bob_priv, &alice_pub).expect("Bob's ECDH should succeed");
 
     // 共享密钥应相同
     assert_eq!(shared_alice, shared_bob);
@@ -442,7 +452,11 @@ fn test_encryption_stability() {
         let ciphertext = encrypt(&pub_key, plaintext, &mut rng).expect("Encryption should succeed");
         let decrypted = decrypt(&priv_key, &ciphertext)
             .expect(&format!("Decryption should succeed at iteration {}", i));
-        assert_eq!(decrypted, plaintext, "Decrypted data should match at iteration {}", i);
+        assert_eq!(
+            decrypted, plaintext,
+            "Decrypted data should match at iteration {}",
+            i
+        );
     }
 }
 

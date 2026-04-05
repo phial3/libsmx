@@ -39,15 +39,15 @@
 
 #![cfg(feature = "alloc")]
 
+use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use alloc::string::String;
-use alloc::format;
 
 use crate::error::Error;
-use crate::sm2::{PrivateKey, sign, verify};
 use crate::sm2::cert::GmCertificate;
 use crate::sm2::der;
+use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
 
 // ====================================================================================
@@ -133,11 +133,11 @@ pub struct SignerInfo {
 #[derive(Debug, Clone)]
 pub enum SignerIdentifier {
     /// 颁发者和序列号
-    IssuerAndSerialNumber { 
+    IssuerAndSerialNumber {
         /// 颁发者名称
-        issuer: Vec<u8>, 
+        issuer: Vec<u8>,
         /// 证书序列号
-        serial_number: Vec<u8> 
+        serial_number: Vec<u8>,
     },
     /// 主体密钥标识符
     SubjectKeyIdentifier(Vec<u8>),
@@ -296,11 +296,11 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Vec<u8>, 
     // RFC 5652: signedAttrs [0] IMPLICIT SignedAttributes
     // SignedAttributes ::= SET SIZE (1..MAX) OF Attribute
     let set_encoded = wrap_set(all_attrs);
-    
+
     // 将 SET (0x31) 标签替换为 [0] IMPLICIT (0xA0)
     let mut result = vec![0xA0];
     result.extend(&set_encoded[1..]);
-    
+
     Ok(result)
 }
 
@@ -352,22 +352,22 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
 }
 
 /// 将 [0] IMPLICIT 编码的签名属性转换为 SET OF 编码
-/// 
+///
 /// RFC 5652 规定：签名时使用 SET OF 编码，传输时使用 [0] IMPLICIT
 fn convert_implicit_to_set(implicit_data: &[u8]) -> Result<Vec<u8>, Error> {
     if implicit_data.is_empty() {
         return Err(Error::InvalidSignature);
     }
-    
+
     // 验证标签是 [0] (0xA0)
     if implicit_data[0] != 0xA0 {
         return Err(Error::InvalidSignature);
     }
-    
+
     // 将 [0] 标签替换为 SET (0x31)
     let mut result = vec![0x31];
     result.extend(&implicit_data[1..]);
-    
+
     Ok(result)
 }
 
@@ -393,7 +393,10 @@ fn convert_implicit_to_set(implicit_data: &[u8]) -> Result<Vec<u8>, Error> {
 /// # 返回
 /// - `Ok(VerificationResult)`: 验证结果
 /// - `Err(Error)`: 解析失败
-pub fn verify_digital_signature(signed_data_der: &[u8], id: &[u8]) -> Result<VerificationResult, Error> {
+pub fn verify_digital_signature(
+    signed_data_der: &[u8],
+    id: &[u8],
+) -> Result<VerificationResult, Error> {
     // 解析 ContentInfo
     let content_info = parse_content_info_production(signed_data_der)?;
 
@@ -406,7 +409,9 @@ pub fn verify_digital_signature(signed_data_der: &[u8], id: &[u8]) -> Result<Ver
     let signed_data = parse_signed_data_production(&content_info.content)?;
 
     // 获取原始内容
-    let content = signed_data.encap_content_info.content
+    let content = signed_data
+        .encap_content_info
+        .content
         .as_ref()
         .ok_or(Error::InvalidSignature)?;
 
@@ -421,10 +426,10 @@ pub fn verify_digital_signature(signed_data_der: &[u8], id: &[u8]) -> Result<Ver
         match verify_signer_info(signer_info, &signed_data.certificates, &content_digest, id) {
             Ok(()) => {
                 valid_count += 1;
-            },
+            }
             Err(e) => {
                 errors.push(format!("Signer verification failed: {:?}", e));
-            },
+            }
         }
     }
 
@@ -452,7 +457,9 @@ fn verify_signer_info(
     let pub_key = cert.extract_sm2_public_key()?;
 
     // 验证签名属性
-    let signed_attrs = signer_info.signed_attrs.as_ref()
+    let signed_attrs = signer_info
+        .signed_attrs
+        .as_ref()
         .ok_or(Error::InvalidSignature)?;
 
     // 解析签名属性
@@ -472,7 +479,9 @@ fn verify_signer_info(
     let signed_attrs_for_verify = convert_implicit_to_set(signed_attrs)?;
     let e = crate::sm2::get_e(&z, &signed_attrs_for_verify);
 
-    let sig_array: [u8; 64] = signer_info.signature.as_slice()
+    let sig_array: [u8; 64] = signer_info
+        .signature
+        .as_slice()
         .try_into()
         .map_err(|_| Error::InvalidSignature)?;
 
@@ -487,16 +496,19 @@ fn find_signer_certificate(
     certificates: &[GmCertificate],
 ) -> Result<GmCertificate, Error> {
     match &signer_info.sid {
-        SignerIdentifier::IssuerAndSerialNumber { issuer, serial_number } => {
-            certificates.iter()
-                .find(|cert| cert.issuer == *issuer && cert.serial_number == *serial_number)
-                .cloned()
-                .ok_or(Error::InvalidSignature)
-        }
+        SignerIdentifier::IssuerAndSerialNumber {
+            issuer,
+            serial_number,
+        } => certificates
+            .iter()
+            .find(|cert| cert.issuer == *issuer && cert.serial_number == *serial_number)
+            .cloned()
+            .ok_or(Error::InvalidSignature),
         SignerIdentifier::SubjectKeyIdentifier(ski) => {
             // 通过 SKI 查找匹配的证书
             // SKI (Subject Key Identifier) 是证书中公钥的标识符
-            certificates.iter()
+            certificates
+                .iter()
                 .find(|cert| {
                     // 尝试从证书中提取公钥并计算 SKI
                     if let Ok(pub_key) = crate::sm2::cert::extract_sm2_public_key(cert) {
@@ -530,7 +542,7 @@ fn compute_subject_key_identifier(pub_key: &[u8; 65]) -> Vec<u8> {
 /// 解析签名属性
 fn parse_signed_attrs(data: &[u8]) -> Result<SignedAttributes, Error> {
     let err = || Error::InvalidSignature;
-    
+
     // 解析 [0] IMPLICIT SET
     let (set_body, _) = der::parse_tlv(data, 0xA0).ok_or_else(err)?;
 
@@ -659,7 +671,8 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 }
 
 /// 编码 EncapsulatedContentInfo 编码封装内容信息
-fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, Error> {    let mut content = Vec::new();
+fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, Error> {
+    let mut content = Vec::new();
 
     // contentType
     content.extend(encode_oid(&info.content_type)?);
@@ -697,7 +710,9 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
     }
 
     // signatureAlgorithm
-    content.extend(encode_algorithm_identifier(&signer_info.signature_algorithm)?);
+    content.extend(encode_algorithm_identifier(
+        &signer_info.signature_algorithm,
+    )?);
 
     // signatureValue
     content.extend(encode_octet_string(&signer_info.signature)?);
@@ -710,7 +725,10 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
 /// 编码签名者标识符
 fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
     match sid {
-        SignerIdentifier::IssuerAndSerialNumber { issuer, serial_number } => {
+        SignerIdentifier::IssuerAndSerialNumber {
+            issuer,
+            serial_number,
+        } => {
             let mut content = Vec::new();
             content.extend(issuer);
             content.extend(encode_integer_bytes(serial_number)?);
@@ -885,7 +903,7 @@ fn parse_signed_data_production(data: &[u8]) -> Result<SignedData, Error> {
     let mut certificates = Vec::new();
     if rest.first() == Some(&0xA0) {
         let (certs_tlv, r) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
-        
+
         // certificates [0] 包含的是 CertificateSet (SET OF Certificate)
         // 需要解析 SET OF
         if certs_tlv.first() == Some(&0x31) {
@@ -894,7 +912,7 @@ fn parse_signed_data_production(data: &[u8]) -> Result<SignedData, Error> {
         } else {
             certificates = parse_certificates(certs_tlv)?;
         }
-        
+
         rest = r;
     }
 
@@ -926,8 +944,7 @@ fn parse_digest_algorithms(data: &[u8]) -> Result<Vec<AlgorithmIdentifier>, Erro
     let mut rest = data;
 
     while !rest.is_empty() {
-        let (alg, r) = der::parse_tlv(rest, 0x30)
-            .ok_or(Error::InvalidSignature)?;
+        let (alg, r) = der::parse_tlv(rest, 0x30).ok_or(Error::InvalidSignature)?;
         result.push(parse_algorithm_identifier(alg)?);
         rest = r;
     }
@@ -996,8 +1013,7 @@ fn parse_signer_infos(data: &[u8]) -> Result<Vec<SignerInfo>, Error> {
     let mut rest = data;
 
     while !rest.is_empty() {
-        let (info_tlv, r) = der::parse_tlv(rest, 0x30)
-            .ok_or(Error::InvalidSignature)?;
+        let (info_tlv, r) = der::parse_tlv(rest, 0x30).ok_or(Error::InvalidSignature)?;
         let signer_info = parse_signer_info(info_tlv)?;
         result.push(signer_info);
         rest = r;
@@ -1123,9 +1139,9 @@ fn parse_algorithm_identifier(data: &[u8]) -> Result<AlgorithmIdentifier, Error>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sm2::cert::generate_self_signed_cert;
     use crate::sm2::generate_keypair;
     use crate::sm2::DEFAULT_ID;
-    use crate::sm2::cert::generate_self_signed_cert;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -1136,11 +1152,13 @@ mod tests {
         // 使用字节数组方式生成有效期（用于测试）
         // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
         vec![
-            0x30, 0x1E,           // SEQUENCE, length 30
-            0x17, 0x0D,           // UTCTime, length 13
-            b'2', b'4', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 240101000000Z
-            0x17, 0x0D,           // UTCTime, length 13
-            b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', // 300101000000Z
+            0x30, 0x1E, // SEQUENCE, length 30
+            0x17, 0x0D, // UTCTime, length 13
+            b'2', b'4', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
+            b'Z', // 240101000000Z
+            0x17, 0x0D, // UTCTime, length 13
+            b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
+            b'Z', // 300101000000Z
         ]
     }
 
@@ -1154,49 +1172,40 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         let data = b"Test message for production signature";
 
         // 测试编码和解码的一致性
         let content_digest = crate::sm3::Sm3Hasher::digest(data);
-        
+
         // 构建签名属性
-        let signed_attrs = build_signed_attrs(&content_digest, false)
-            .expect("Build signed attrs should succeed");
-        
+        let signed_attrs =
+            build_signed_attrs(&content_digest, false).expect("Build signed attrs should succeed");
+
         // 验证签名属性结构
         assert!(!signed_attrs.is_empty());
         assert_eq!(signed_attrs[0], 0xA0); // [0] IMPLICIT
-        
+
         // 转换为 SET 编码用于签名
-        let signed_attrs_set = convert_implicit_to_set(&signed_attrs)
-            .expect("Convert to set should succeed");
+        let signed_attrs_set =
+            convert_implicit_to_set(&signed_attrs).expect("Convert to set should succeed");
         assert_eq!(signed_attrs_set[0], 0x31); // SET
-        
+
         // 计算签名
         let z = crate::sm2::get_z(DEFAULT_ID, &pub_key);
         let e = crate::sm2::get_e(&z, &signed_attrs_set);
         let signature = sign(&e, &priv_key, &mut rng);
-        
+
         // 验证签名
         verify(&e, &pub_key, &signature).expect("Direct signature verification should succeed");
-        
+
         // 测试完整的 CMS 流程
-        let signed_data = create_digital_signature(
-            data,
-            &priv_key,
-            &cert,
-            DEFAULT_ID,
-            &mut rng,
-            false,
-        ).expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Signature creation should succeed");
 
         assert!(!signed_data.is_empty());
         assert_eq!(signed_data[0], 0x30);
@@ -1228,24 +1237,15 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         let data: &[u8] = b"";
 
-        let signed_data = create_digital_signature(
-            data,
-            &priv_key,
-            &cert,
-            DEFAULT_ID,
-            &mut rng,
-            false,
-        ).expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Signature creation should succeed");
 
         // 尝试验证签章
         match verify_digital_signature(&signed_data, DEFAULT_ID) {
@@ -1270,24 +1270,15 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         let data = vec![0xABu8; 10000];
 
-        let signed_data = create_digital_signature(
-            &data,
-            &priv_key,
-            &cert,
-            DEFAULT_ID,
-            &mut rng,
-            true,
-        ).expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(&data, &priv_key, &cert, DEFAULT_ID, &mut rng, true)
+                .expect("Signature creation should succeed");
 
         // 尝试验证签章
         match verify_digital_signature(&signed_data, DEFAULT_ID) {
@@ -1312,33 +1303,27 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         let data = b"Original message";
 
-        let mut signed_data = create_digital_signature(
-            data,
-            &priv_key,
-            &cert,
-            DEFAULT_ID,
-            &mut rng,
-            false,
-        ).expect("Signature creation should succeed");
+        let mut signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Signature creation should succeed");
 
         // 篡改内容数据（在 encapContentInfo 中）
         // 找到 "Original message" 的位置并篡改
-        if let Some(pos) = signed_data.windows(b"Original message".len()).position(|w| w == b"Original message") {
+        if let Some(pos) = signed_data
+            .windows(b"Original message".len())
+            .position(|w| w == b"Original message")
+        {
             signed_data[pos] ^= 0xFF;
         }
 
         let result = verify_digital_signature(&signed_data, DEFAULT_ID);
-        
+
         // 应该失败或返回无效
         match result {
             Ok(r) => assert!(!r.is_valid),
@@ -1356,29 +1341,20 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         let data = b"Test message";
 
-        let signed_data = create_digital_signature(
-            data,
-            &priv_key,
-            &cert,
-            DEFAULT_ID,
-            &mut rng,
-            false,
-        ).expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Signature creation should succeed");
 
         // 使用错误的 ID 验证
         let wrong_id = b"wrong_id_12345678";
         let result = verify_digital_signature(&signed_data, wrong_id);
-        
+
         match result {
             Ok(r) => assert!(!r.is_valid),
             Err(_) => (),
@@ -1395,13 +1371,9 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key,
-            &subject,
-            &validity,
-            &serial,
-            DEFAULT_ID,
-            &mut rng,
-        ).expect("Certificate generation should succeed");
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
 
         // 测试各种二进制数据
         let test_cases = vec![
@@ -1413,14 +1385,9 @@ mod tests {
         ];
 
         for data in test_cases {
-            let signed_data = create_digital_signature(
-                &data,
-                &priv_key,
-                &cert,
-                DEFAULT_ID,
-                &mut rng,
-                false,
-            ).expect("Signature creation should succeed");
+            let signed_data =
+                create_digital_signature(&data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                    .expect("Signature creation should succeed");
 
             // 尝试验证签章
             match verify_digital_signature(&signed_data, DEFAULT_ID) {

@@ -73,16 +73,16 @@ pub enum PaddingType {
 #[cfg(feature = "alloc")]
 pub fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
     debug_assert!(block_size > 0 && block_size <= 255);
-    
+
     let padding_len = block_size - (data.len() % block_size);
     let mut padded = Vec::with_capacity(data.len() + padding_len);
     padded.extend_from_slice(data);
-    
+
     // 填充 padding_len 个字节，每个字节值为 padding_len
     for _ in 0..padding_len {
         padded.push(padding_len as u8);
     }
-    
+
     padded
 }
 
@@ -113,26 +113,26 @@ pub fn pkcs7_unpad(data: &[u8]) -> Result<Vec<u8>, Error> {
     if data.is_empty() {
         return Err(Error::InvalidPadding);
     }
-    
+
     let padding_len = data[data.len() - 1] as usize;
-    
+
     // 验证填充长度是否合法（1-16）
     if padding_len == 0 || padding_len > SM4_BLOCK_SIZE {
         return Err(Error::InvalidPadding);
     }
-    
+
     // 验证数据长度是否足够
     if data.len() < padding_len {
         return Err(Error::InvalidPadding);
     }
-    
+
     // 验证所有填充字节的值是否都等于 padding_len
     for i in 0..padding_len {
         if data[data.len() - 1 - i] != padding_len as u8 {
             return Err(Error::InvalidPadding);
         }
     }
-    
+
     Ok(data[..data.len() - padding_len].to_vec())
 }
 
@@ -253,7 +253,10 @@ mod tests {
     #[test]
     fn test_pkcs7_unpad_valid() {
         // 有效的 PKCS#7 填充
-        let padded = vec![b'H', b'e', b'l', b'l', b'o', 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B];
+        let padded = vec![
+            b'H', b'e', b'l', b'l', b'o', 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B,
+            0x0B, 0x0B,
+        ];
         let unpadded = pkcs7_unpad(&padded).expect("Should unpad successfully");
         assert_eq!(unpadded, b"Hello");
     }
@@ -286,7 +289,10 @@ mod tests {
     #[test]
     fn test_pkcs7_unpad_inconsistent_padding() {
         // 填充值不一致
-        let padded = vec![b'H', b'e', b'l', b'l', b'o', 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0A];
+        let padded = vec![
+            b'H', b'e', b'l', b'l', b'o', 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B,
+            0x0B, 0x0A,
+        ];
         assert_eq!(pkcs7_unpad(&padded), Err(Error::InvalidPadding));
     }
 
@@ -347,7 +353,7 @@ mod tests {
             let data: Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
             let padded = pkcs7_pad(&data, SM4_BLOCK_SIZE);
             assert_eq!(padded.len() % SM4_BLOCK_SIZE, 0);
-            
+
             let unpadded = pkcs7_unpad(&padded).expect("Should unpad successfully");
             assert_eq!(unpadded, data);
         }

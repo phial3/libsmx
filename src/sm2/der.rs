@@ -212,7 +212,15 @@ pub fn parse_tlv(data: &[u8], expected_tag: u8) -> Option<(&[u8], &[u8])> {
 pub fn parse_tlv_any_full(data: &[u8]) -> Option<(&[u8], &[u8])> {
     let (_tag, rest) = data.split_first()?;
     let (first, _) = rest.split_first()?;
-    let len_len = if *first < 0x80 { 1 } else if *first == 0x81 { 2 } else if *first == 0x82 { 3 } else { return None; };
+    let len_len = if *first < 0x80 {
+        1
+    } else if *first == 0x81 {
+        2
+    } else if *first == 0x82 {
+        3
+    } else {
+        return None;
+    };
     let (len, _) = parse_length(rest)?;
     let total_len = 1 + len_len + len;
     if data.len() < total_len {
@@ -410,20 +418,20 @@ pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
 /// DER 格式不合法或公钥格式不合法时返回 `Error::InvalidPublicKey`
 pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
     let err = || Error::InvalidPublicKey;
-    
+
     let (seq_body, _) = parse_tlv(der, 0x30).ok_or_else(err)?;
     let (_, rest) = parse_tlv(seq_body, 0x30).ok_or_else(err)?;
     let (bit_str_bytes, _) = parse_tlv(rest, 0x03).ok_or_else(err)?;
-    
+
     if bit_str_bytes.is_empty() || bit_str_bytes[0] != 0 {
         return Err(err());
     }
-    
+
     let pub_key = &bit_str_bytes[1..];
     if pub_key.len() != 65 {
         return Err(err());
     }
-    
+
     let mut result = [0u8; 65];
     result.copy_from_slice(pub_key);
     Ok(result)
@@ -562,7 +570,7 @@ mod tests {
         let key = private_key_from_pkcs8_der(&der).expect("PKCS#8 解析应成功");
         assert_eq!(key.as_bytes(), &RAW_KEY);
     }
-    
+
     #[cfg(feature = "alloc")]
     #[test]
     fn test_private_key_to_sec1_der() {
@@ -572,7 +580,7 @@ mod tests {
         let recovered = private_key_from_sec1_der(&der).expect("SEC1 解析应成功");
         assert_eq!(recovered.as_bytes(), &RAW_KEY);
     }
-    
+
     #[cfg(feature = "alloc")]
     #[test]
     fn test_private_key_to_pkcs8_der() {
@@ -664,7 +672,8 @@ mod tests {
         let spki = public_key_to_spki_der(&pub_key);
         // 使用 oid 模块的常量验证
         assert!(
-            spki.windows(crate::sm2::EC_PUBKEY_OID.len()).any(|w| w == crate::sm2::EC_PUBKEY_OID),
+            spki.windows(crate::sm2::EC_PUBKEY_OID.len())
+                .any(|w| w == crate::sm2::EC_PUBKEY_OID),
             "SPKI 应包含 id-ecPublicKey OID"
         );
     }

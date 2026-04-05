@@ -3,7 +3,7 @@
 //! G1 是定义在 Fp 上的 BN256 曲线：y² = x³ + b，a=0
 //! 使用 Jacobian 射影坐标进行高效运算。
 
-use crypto_bigint::{U256, CtGt};
+use crypto_bigint::{CtGt, U256};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::error::Error;

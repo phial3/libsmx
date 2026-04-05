@@ -1,7 +1,7 @@
 #![cfg(all(feature = "alloc", feature = "std"))]
 
 //! 使用 data 目录中的真实证书和密钥进行证书和 CMS 测试
-//! 
+//!
 //! 测试说明：
 //! - 对每套证书进行完整的加载、签名、验证测试
 //! - 如果证书不是 SM2 曲线，测试会失败并标记错误
@@ -23,36 +23,32 @@ use std::fs;
 /// 处理证书链文件（包含多个证书的情况）
 fn extract_first_cert_from_pem(pem_data: &[u8]) -> Result<GmCertificate, String> {
     let pem_str = String::from_utf8_lossy(pem_data);
-    
+
     // 查找第一个证书块
     let begin_marker = "-----BEGIN CERTIFICATE-----";
     let end_marker = "-----END CERTIFICATE-----";
-    
-    let begin_pos = pem_str.find(begin_marker)
-        .ok_or("未找到证书开始标记")?;
-    let end_pos = pem_str[begin_pos..].find(end_marker)
-        .ok_or("未找到证书结束标记")? + begin_pos + end_marker.len();
-    
+
+    let begin_pos = pem_str.find(begin_marker).ok_or("未找到证书开始标记")?;
+    let end_pos = pem_str[begin_pos..]
+        .find(end_marker)
+        .ok_or("未找到证书结束标记")?
+        + begin_pos
+        + end_marker.len();
+
     let cert_pem = pem_str[begin_pos..end_pos].as_bytes().to_vec();
-    GmCertificate::from_pem(&cert_pem)
-        .map_err(|e| format!("解析证书失败：{}", e))
+    GmCertificate::from_pem(&cert_pem).map_err(|e| format!("解析证书失败：{}", e))
 }
 
 /// 测试单个证书文件的完整功能
-/// 
+///
 /// 参数：
 /// - name: 证书名称（用于输出）
 /// - cert_path: 证书文件路径
 /// - key_path: 私钥文件路径
 /// - key_format: 私钥格式 ("pkcs8" 或 "sec1")
-/// 
+///
 /// 返回：测试是否通过
-fn test_certificate(
-    name: &str,
-    cert_path: &str,
-    key_path: &str,
-    key_format: &str,
-) -> bool {
+fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &str) -> bool {
     println!("\n{}", "=".repeat(70));
     println!("测试证书：{}", name);
     println!("证书路径：{}", cert_path);
@@ -108,10 +104,22 @@ fn test_certificate(
     };
 
     println!("   版本：{}", cert.version);
-    println!("   序列号：{:02x?}", &cert.serial_number[..8.min(cert.serial_number.len())]);
-    println!("   颁发者：{:02x?}", &cert.issuer[..16.min(cert.issuer.len())]);
-    println!("   主体：{:02x?}", &cert.subject[..16.min(cert.subject.len())]);
-    println!("   公钥信息长度：{} 字节", cert.subject_public_key_info.len());
+    println!(
+        "   序列号：{:02x?}",
+        &cert.serial_number[..8.min(cert.serial_number.len())]
+    );
+    println!(
+        "   颁发者：{:02x?}",
+        &cert.issuer[..16.min(cert.issuer.len())]
+    );
+    println!(
+        "   主体：{:02x?}",
+        &cert.subject[..16.min(cert.subject.len())]
+    );
+    println!(
+        "   公钥信息长度：{} 字节",
+        cert.subject_public_key_info.len()
+    );
 
     // 2. 验证证书和私钥匹配
     println!("\n[2/4] 验证证书和私钥匹配...");
@@ -124,8 +132,14 @@ fn test_certificate(
             println!("\n❌ 提取 SM2 公钥失败：{}", e);
             println!("   错误类型：{:?}", e);
             println!("\n   诊断信息:");
-            println!("   - 公钥数据长度：{} 字节", cert.subject_public_key_info.len());
-            println!("   - 公钥数据：{:02x?}", &cert.subject_public_key_info[..32.min(cert.subject_public_key_info.len())]);
+            println!(
+                "   - 公钥数据长度：{} 字节",
+                cert.subject_public_key_info.len()
+            );
+            println!(
+                "   - 公钥数据：{:02x?}",
+                &cert.subject_public_key_info[..32.min(cert.subject_public_key_info.len())]
+            );
             println!("\n   可能原因:");
             println!("   - 证书使用的是非 SM2 曲线（如 P-256、secp256k1 等）");
             println!("   - 证书的 subjectPublicKeyInfo 中使用的 OID 不是 SM2 OID");
@@ -142,8 +156,14 @@ fn test_certificate(
         println!("✅ 证书和私钥匹配");
     } else {
         println!("\n❌ 证书和私钥不匹配");
-        println!("   证书公钥：{:02x?}", &cert_pub_key[..16.min(cert_pub_key.len())]);
-        println!("   私钥公钥：{:02x?}", &priv_pub_key[..16.min(priv_pub_key.len())]);
+        println!(
+            "   证书公钥：{:02x?}",
+            &cert_pub_key[..16.min(cert_pub_key.len())]
+        );
+        println!(
+            "   私钥公钥：{:02x?}",
+            &priv_pub_key[..16.min(priv_pub_key.len())]
+        );
         println!("\n⚠️  证书 {} 测试失败 - 证书和私钥不匹配", name);
         return false;
     }
@@ -155,24 +175,18 @@ fn test_certificate(
     let mut rng = StdRng::seed_from_u64(123456);
 
     println!("创建 CMS 电子签名...");
-    let signature = match cms::create_digital_signature(
-        &test_data,
-        &priv_key,
-        &cert,
-        id,
-        &mut rng,
-        false,
-    ) {
-        Ok(sig) => {
-            println!("✅ 签名创建成功，长度：{} 字节", sig.len());
-            sig
-        }
-        Err(e) => {
-            println!("❌ CMS 签名创建失败：{}", e);
-            println!("\n⚠️  证书 {} 测试失败 - 签名创建失败", name);
-            return false;
-        }
-    };
+    let signature =
+        match cms::create_digital_signature(&test_data, &priv_key, &cert, id, &mut rng, false) {
+            Ok(sig) => {
+                println!("✅ 签名创建成功，长度：{} 字节", sig.len());
+                sig
+            }
+            Err(e) => {
+                println!("❌ CMS 签名创建失败：{}", e);
+                println!("\n⚠️  证书 {} 测试失败 - 签名创建失败", name);
+                return false;
+            }
+        };
 
     println!("验证 CMS 电子签名...");
     match cms::verify_digital_signature(&signature, id) {
@@ -181,18 +195,24 @@ fn test_certificate(
                 println!("✅ 签名验证成功");
                 println!("   签名者数量：{}", result.signer_count);
                 println!("   恢复内容：{}", String::from_utf8_lossy(&result.content));
-                
+
                 if result.content != test_data.as_slice() {
                     println!("\n❌ 恢复的内容不匹配");
                     println!("   原始内容：{:?}", String::from_utf8_lossy(&test_data));
-                    println!("   恢复内容：{:?}", String::from_utf8_lossy(&result.content));
+                    println!(
+                        "   恢复内容：{:?}",
+                        String::from_utf8_lossy(&result.content)
+                    );
                     println!("\n⚠️  证书 {} 测试失败 - 签名验证通过但内容不匹配", name);
                     return false;
                 }
             } else {
                 println!("\n❌ 签名验证失败 - 签名无效");
                 println!("   签名者数量：{}", result.signer_count);
-                println!("   恢复内容：{:?}", String::from_utf8_lossy(&result.content));
+                println!(
+                    "   恢复内容：{:?}",
+                    String::from_utf8_lossy(&result.content)
+                );
                 println!("\n   可能原因:");
                 println!("   - 证书曲线与签名算法不匹配");
                 println!("   - 签名验证过程中曲线参数不匹配");
@@ -205,7 +225,10 @@ fn test_certificate(
             println!("   错误类型：{:?}", e);
             println!("\n   诊断信息:");
             println!("   - 签名长度：{} 字节", signature.len());
-            println!("   - 证书公钥信息长度：{} 字节", cert.subject_public_key_info.len());
+            println!(
+                "   - 证书公钥信息长度：{} 字节",
+                cert.subject_public_key_info.len()
+            );
             println!("\n   可能原因:");
             println!("   - 证书使用的是非 SM2 曲线（如 P-256）");
             println!("   - 签名算法与证书曲线不匹配");
@@ -219,9 +242,10 @@ fn test_certificate(
     // 4. 篡改检测测试
     println!("\n[4/4] 测试篡改检测...");
     let mut tampered_signature = signature.clone();
-    
+
     // 尝试篡改内容
-    if let Some(pos) = tampered_signature.windows(test_data.len())
+    if let Some(pos) = tampered_signature
+        .windows(test_data.len())
         .position(|w| w == test_data.as_slice())
     {
         tampered_signature[pos] ^= 0xFF;
@@ -293,10 +317,10 @@ fn test_all_certificates() {
     println!("\n{}", "#".repeat(70));
     println!("# 测试总结");
     println!("{}", "#".repeat(70));
-    
+
     let mut passed = 0;
     let mut failed = 0;
-    
+
     for (name, result) in &results {
         if *result {
             println!("✅ {} - 通过", name);
@@ -306,10 +330,10 @@ fn test_all_certificates() {
             failed += 1;
         }
     }
-    
+
     println!("\n总计：{} 通过，{} 失败", passed, failed);
     println!("{}", "#".repeat(70));
-    
+
     // 如果有失败的测试，panic 以便在 CI 中标记失败
     if failed > 0 {
         panic!("{} 个证书测试失败", failed);

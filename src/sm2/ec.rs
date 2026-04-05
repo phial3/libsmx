@@ -3,7 +3,7 @@
 //! 使用 Jacobian 射影坐标（X:Y:Z），仿射坐标满足 x = X/Z², y = Y/Z³。
 //! 避免热路径中的 Fp 求逆运算，性能优于仿射坐标加法。
 
-use crypto_bigint::{U256, CtGt};
+use crypto_bigint::{CtGt, U256};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::error::Error;

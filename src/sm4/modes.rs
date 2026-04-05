@@ -186,11 +186,7 @@ pub fn sm4_decrypt_cbc(key: &[u8; 16], iv: &[u8; 16], ciphertext: &[u8]) -> Vec<
 /// # 返回
 /// 密文字节向量（包含 PKCS#5 填充）
 #[cfg(feature = "alloc")]
-pub fn sm4_encrypt_cbc_pkcs5(
-    key: &[u8; 16],
-    iv: &[u8; 16],
-    plaintext: &[u8],
-) -> Vec<u8> {
+pub fn sm4_encrypt_cbc_pkcs5(key: &[u8; 16], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
     let padded = pkcs5_pad(plaintext);
     sm4_encrypt_cbc(key, iv, &padded)
 }
@@ -225,11 +221,7 @@ pub fn sm4_decrypt_cbc_pkcs5(
 /// # 返回
 /// 密文字节向量（包含 PKCS#7 填充）
 #[cfg(feature = "alloc")]
-pub fn sm4_encrypt_cbc_pkcs7(
-    key: &[u8; 16],
-    iv: &[u8; 16],
-    plaintext: &[u8],
-) -> Vec<u8> {
+pub fn sm4_encrypt_cbc_pkcs7(key: &[u8; 16], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
     let padded = pkcs7_pad(plaintext, 16);
     sm4_encrypt_cbc(key, iv, &padded)
 }
@@ -888,10 +880,11 @@ mod tests {
     fn test_ecb_pkcs5_roundtrip() {
         let key = [0u8; 16];
         let plaintext = b"Hello SM4 ECB with PKCS#5!";
-        
+
         let ciphertext = sm4_encrypt_ecb_pkcs5(&key, plaintext);
-        let decrypted = sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
-        
+        let decrypted =
+            sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
+
         assert_eq!(decrypted, plaintext);
         assert!(ciphertext.len() > plaintext.len());
         assert_eq!(ciphertext.len() % 16, 0);
@@ -902,10 +895,11 @@ mod tests {
     fn test_ecb_pkcs7_roundtrip() {
         let key = [1u8; 16];
         let plaintext = b"Test PKCS#7 padding";
-        
+
         let ciphertext = sm4_encrypt_ecb_pkcs7(&key, plaintext);
-        let decrypted = sm4_decrypt_ecb_pkcs7(&key, &ciphertext).expect("Decryption should succeed");
-        
+        let decrypted =
+            sm4_decrypt_ecb_pkcs7(&key, &ciphertext).expect("Decryption should succeed");
+
         assert_eq!(decrypted, plaintext);
     }
 
@@ -915,10 +909,11 @@ mod tests {
         let key = [2u8; 16];
         let iv = [3u8; 16];
         let plaintext = b"Hello SM4 CBC with PKCS#5 padding!";
-        
+
         let ciphertext = sm4_encrypt_cbc_pkcs5(&key, &iv, plaintext);
-        let decrypted = sm4_decrypt_cbc_pkcs5(&key, &iv, &ciphertext).expect("Decryption should succeed");
-        
+        let decrypted =
+            sm4_decrypt_cbc_pkcs5(&key, &iv, &ciphertext).expect("Decryption should succeed");
+
         assert_eq!(decrypted, plaintext);
         assert!(ciphertext.len() > plaintext.len());
         assert_eq!(ciphertext.len() % 16, 0);
@@ -930,10 +925,11 @@ mod tests {
         let key = [4u8; 16];
         let iv = [5u8; 16];
         let plaintext = b"Test CBC PKCS#7";
-        
+
         let ciphertext = sm4_encrypt_cbc_pkcs7(&key, &iv, plaintext);
-        let decrypted = sm4_decrypt_cbc_pkcs7(&key, &iv, &ciphertext).expect("Decryption should succeed");
-        
+        let decrypted =
+            sm4_decrypt_cbc_pkcs7(&key, &iv, &ciphertext).expect("Decryption should succeed");
+
         assert_eq!(decrypted, plaintext);
     }
 
@@ -942,10 +938,11 @@ mod tests {
     fn test_pkcs5_empty_data() {
         let key = [0u8; 16];
         let plaintext: &[u8] = b"";
-        
+
         let ciphertext = sm4_encrypt_ecb_pkcs5(&key, plaintext);
-        let decrypted = sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
-        
+        let decrypted =
+            sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
+
         assert_eq!(decrypted, plaintext);
         assert_eq!(ciphertext.len(), 16); // 空数据填充 16 字节
     }
@@ -955,10 +952,11 @@ mod tests {
     fn test_pkcs5_exact_block() {
         let key = [0u8; 16];
         let plaintext = [0u8; 16]; // 恰好 16 字节
-        
+
         let ciphertext = sm4_encrypt_ecb_pkcs5(&key, &plaintext);
-        let decrypted = sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
-        
+        let decrypted =
+            sm4_decrypt_ecb_pkcs5(&key, &ciphertext).expect("Decryption should succeed");
+
         assert_eq!(decrypted, plaintext);
         assert_eq!(ciphertext.len(), 32); // 16 字节数据 + 16 字节填充
     }
@@ -970,7 +968,7 @@ mod tests {
         // 构造无效的密文（解密后填充无效）
         let mut ciphertext = [0u8; 16];
         ciphertext[15] = 0x05; // 声称有 5 个填充字节，但实际不足
-        
+
         assert!(sm4_decrypt_ecb_pkcs5(&key, &ciphertext).is_err());
     }
 

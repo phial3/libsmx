@@ -24,19 +24,15 @@ pub mod cms;
 // 重新导出 der 模块的密钥编解码函数
 #[cfg(feature = "alloc")]
 pub use der::{
-    private_key_from_pkcs8_der, 
-    private_key_from_sec1_der,
-    private_key_to_pkcs8_der, 
-    private_key_to_sec1_der, 
-    public_key_from_spki_der,
-    public_key_to_spki_der,
+    private_key_from_pkcs8_der, private_key_from_sec1_der, private_key_to_pkcs8_der,
+    private_key_to_sec1_der, public_key_from_spki_der, public_key_to_spki_der,
 };
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 #[cfg(feature = "alloc")]
-use x509_cert::der::pem::{encode_string, decode_vec};
+use x509_cert::der::pem::{decode_vec, encode_string};
 
 use crypto_bigint::U256;
 use rand_core::Rng;
@@ -61,56 +57,38 @@ pub const DEFAULT_ID: &[u8] = b"1234567812345678";
 // ====================================================================================
 
 /// SM2 椭圆曲线公钥算法 sm2p256v1 OID (1.2.156.10197.1.301)
-pub const SM2_PUBKEY_OID: &[u8] = &[
-    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D,
-];
+pub const SM2_PUBKEY_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D];
 
 /// SM2withSM3 签名算法 OID (1.2.156.10197.1.501)
 /// 与 SM2_SIGN_OID 相同，用于 X.509 证书签名算法标识
-pub const SM2_WITH_SM3_OID: &[u8] = &[
-    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75,
-];
+pub const SM2_WITH_SM3_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75];
 
 /// SM3 哈希算法 OID (1.2.156.10197.1.401)
-pub const SM3_OID: &[u8] = &[
-    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x65, 0x01,
-];
+pub const SM3_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x65, 0x01];
 
 /// EC 公钥算法 OID (1.2.840.10045.2.1)
 /// 通用椭圆曲线公钥算法 OID（id-ecPublicKey），与 SM2 算法 OID 配合使用
-pub const EC_PUBKEY_OID: &[u8] = &[
-    0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
-];
+pub const EC_PUBKEY_OID: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
 
 /// PKCS#7/CMS SignedData OID (1.2.840.113549.1.7.2)
 /// 用于 PKCS#7/CMS 签名数据内容类型
-pub const PKCS7_SIGNED_DATA_OID: &[u8] = &[
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02,
-];
+pub const PKCS7_SIGNED_DATA_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
 
 /// id-data OID (1.2.840.113549.1.7.1)
 /// 用于 PKCS#7/CMS 数据内容类型
-pub const ID_DATA_OID: &[u8] = &[
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01,
-];
+pub const ID_DATA_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01];
 
 /// content-type 属性 OID (1.2.840.113549.1.9.3)
 /// 用于 CMS 签名属性 content-type
-pub const CONTENT_TYPE_OID: &[u8] = &[
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03,
-];
+pub const CONTENT_TYPE_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03];
 
 /// message-digest 属性 OID (1.2.840.113549.1.9.4)
 /// 用于 CMS 签名属性 message-digest
-pub const MESSAGE_DIGEST_OID: &[u8] = &[
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04,
-];
+pub const MESSAGE_DIGEST_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04];
 
 /// signing-time 属性 OID (1.2.840.113549.1.9.5)
 /// 用于 CMS 签名属性 signing-time
-pub const SIGNING_TIME_OID: &[u8] = &[
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05,
-];
+pub const SIGNING_TIME_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05];
 
 /// SM2 椭圆曲线算法标识符（用于 SubjectPublicKeyInfo）
 ///
@@ -357,12 +335,7 @@ pub fn sign_with_k(e: &[u8; 32], pri_key: &PrivateKey, k: &U256) -> Result<[u8; 
 /// # 合规说明
 /// 内部自动计算 `Z = SM3(ENTL||ID||a||b||Gx||Gy||Px||Py)` 和 `e = SM3(Z||M)`，
 /// 符合 GB/T 32918.2-2016 §5.5。
-pub fn sign_message<R: Rng>(
-    msg: &[u8],
-    id: &[u8],
-    pri_key: &PrivateKey,
-    rng: &mut R,
-) -> [u8; 64] {
+pub fn sign_message<R: Rng>(msg: &[u8], id: &[u8], pri_key: &PrivateKey, rng: &mut R) -> [u8; 64] {
     let pub_key = pri_key.public_key();
     let z = get_z(id, &pub_key);
     let e = get_e(&z, msg);
@@ -465,11 +438,7 @@ pub fn verify(e: &[u8; 32], pub_key: &[u8; 65], sig: &[u8; 64]) -> Result<(), Er
 ///
 /// 需要 `alloc` feature。
 #[cfg(feature = "alloc")]
-pub fn encrypt<R: Rng>(
-    pub_key: &[u8; 65],
-    message: &[u8],
-    rng: &mut R,
-) -> Result<Vec<u8>, Error> {
+pub fn encrypt<R: Rng>(pub_key: &[u8; 65], message: &[u8], rng: &mut R) -> Result<Vec<u8>, Error> {
     let pa = AffinePoint::from_bytes(pub_key)?;
 
     loop {
@@ -605,7 +574,6 @@ mod tests {
             Ok(())
         }
     }
-
 
     #[test]
     fn test_get_z_deterministic() {

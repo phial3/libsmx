@@ -3,7 +3,7 @@
 //! G2 是定义在 Fp2 上的扭曲线：y² = x³ + b'，其中 b' = b/v（即 5/v）
 //! 使用 Jacobian 射影坐标，支持 Miller loop 所需的线函数计算。
 
-use crypto_bigint::{U256, CtGt};
+use crypto_bigint::{CtGt, U256};
 
 use crate::error::Error;
 use crate::sm9::fields::fp::{fp_to_bytes, Fp, FIELD_MODULUS};
