@@ -660,7 +660,7 @@ impl GmCertificate {
 /// # 注意
 ///
 /// 此函数执行基本的 DER 解析，不验证签名的有效性。
-/// 如需验证签名，请使用 `verify_self_signed_cert` 或 `verify_certificate_data`。
+/// 如需验证签名，请使用 `verify_self_signed_cert` 或 `verify_tbs_certificate_signature`。
 pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
     let err = || Error::InvalidCertificate;
 
@@ -882,14 +882,16 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
     // }
 
     // 解析第一个 OID (id-ecPublicKey = 1.2.840.10045.2.1)
-    let (first_oid, params) = der::parse_tlv(alg_id, 0x06).ok_or_else(err)?;
-    if first_oid != crate::sm2::EC_PUBKEY_OID.as_bytes() {
+    let (first_oid_bytes, params) = der::parse_tlv(alg_id, 0x06).ok_or_else(err)?;
+    let first_oid = ObjectIdentifier::from_bytes(first_oid_bytes).map_err(|_| err())?;
+    if first_oid != crate::sm2::EC_PUBKEY_OID {
         return Err(err());
     }
 
     // 解析第二个 OID (SM2 = 1.2.156.10197.1.301)
-    let (second_oid, _) = der::parse_tlv(params, 0x06).ok_or_else(err)?;
-    if second_oid != crate::sm2::SM2_PUBKEY_OID.as_bytes() {
+    let (second_oid_bytes, _) = der::parse_tlv(params, 0x06).ok_or_else(err)?;
+    let second_oid = ObjectIdentifier::from_bytes(second_oid_bytes).map_err(|_| err())?;
+    if second_oid != crate::sm2::SM2_PUBKEY_OID {
         return Err(err());
     }
 
@@ -1037,36 +1039,39 @@ pub enum X500AttributeType {
 
 #[cfg(feature = "alloc")]
 impl X500AttributeType {
-    /// 获取属性类型的 OID DER 编码
-    fn oid_der(&self) -> &'static [u8] {
+    /// 获取属性类型的 OID
+    pub fn oid(&self) -> ObjectIdentifier {
         match self {
             // 常用属性
-            X500AttributeType::CommonName => &[0x06, 0x03, 0x55, 0x04, 0x03],
-            X500AttributeType::Organization => &[0x06, 0x03, 0x55, 0x04, 0x0A],
-            X500AttributeType::OrganizationalUnit => &[0x06, 0x03, 0x55, 0x04, 0x0B],
-            X500AttributeType::Country => &[0x06, 0x03, 0x55, 0x04, 0x06],
-            X500AttributeType::State => &[0x06, 0x03, 0x55, 0x04, 0x08],
-            X500AttributeType::Locality => &[0x06, 0x03, 0x55, 0x04, 0x07],
+            X500AttributeType::CommonName => ObjectIdentifier::new_unwrap("2.5.4.3"),
+            X500AttributeType::Organization => ObjectIdentifier::new_unwrap("2.5.4.10"),
+            X500AttributeType::OrganizationalUnit => ObjectIdentifier::new_unwrap("2.5.4.11"),
+            X500AttributeType::Country => ObjectIdentifier::new_unwrap("2.5.4.6"),
+            X500AttributeType::State => ObjectIdentifier::new_unwrap("2.5.4.8"),
+            X500AttributeType::Locality => ObjectIdentifier::new_unwrap("2.5.4.7"),
 
             // 个人身份属性
-            X500AttributeType::SerialNumber => &[0x06, 0x03, 0x55, 0x04, 0x05],
-            X500AttributeType::EmailAddress => &[
-                0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x01,
-            ],
-            X500AttributeType::Title => &[0x06, 0x03, 0x55, 0x04, 0x0C],
-            X500AttributeType::GivenName => &[0x06, 0x03, 0x55, 0x04, 0x2A],
-            X500AttributeType::Surname => &[0x06, 0x03, 0x55, 0x04, 0x04],
-            X500AttributeType::Initials => &[0x06, 0x03, 0x55, 0x04, 0x2B],
-            X500AttributeType::GenerationQualifier => &[0x06, 0x03, 0x55, 0x04, 0x2C],
-            X500AttributeType::Pseudonym => &[0x06, 0x03, 0x55, 0x04, 0x41],
+            X500AttributeType::SerialNumber => ObjectIdentifier::new_unwrap("2.5.4.5"),
+            X500AttributeType::EmailAddress => ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.1"),
+            X500AttributeType::Title => ObjectIdentifier::new_unwrap("2.5.4.12"),
+            X500AttributeType::GivenName => ObjectIdentifier::new_unwrap("2.5.4.42"),
+            X500AttributeType::Surname => ObjectIdentifier::new_unwrap("2.5.4.4"),
+            X500AttributeType::Initials => ObjectIdentifier::new_unwrap("2.5.4.43"),
+            X500AttributeType::GenerationQualifier => ObjectIdentifier::new_unwrap("2.5.4.44"),
+            X500AttributeType::Pseudonym => ObjectIdentifier::new_unwrap("2.5.4.65"),
 
             // 地址相关属性
-            X500AttributeType::PostalCode => &[0x06, 0x03, 0x55, 0x04, 0x11],
-            X500AttributeType::StreetAddress => &[0x06, 0x03, 0x55, 0x04, 0x09],
+            X500AttributeType::PostalCode => ObjectIdentifier::new_unwrap("2.5.4.17"),
+            X500AttributeType::StreetAddress => ObjectIdentifier::new_unwrap("2.5.4.9"),
 
             // 组织相关属性
-            X500AttributeType::BusinessCategory => &[0x06, 0x03, 0x55, 0x04, 0x0F],
+            X500AttributeType::BusinessCategory => ObjectIdentifier::new_unwrap("2.5.4.15"),
         }
+    }
+
+    /// 获取属性类型的 OID DER 编码（向后兼容）
+    fn oid_der(&self) -> Vec<u8> {
+        self.oid().as_bytes().to_vec()
     }
 }
 
@@ -1100,7 +1105,7 @@ impl X500Attribute {
         let mut rdn = Vec::with_capacity(32);
 
         // OID
-        rdn.extend_from_slice(self.attr_type.oid_der());
+        rdn.extend(self.attr_type.oid_der());
 
         // UTF8String value
         let value_bytes = self.value.as_bytes();
@@ -1509,7 +1514,7 @@ impl CertificateBuilder {
         let tbs_cert = wrap_sequence(tbs);
 
         // 签名
-        let signature = sign_certificate_data(&tbs_cert, priv_key, id, rng)?;
+        let signature = sign_tbs_certificate(&tbs_cert, priv_key, id, rng)?;
 
         Ok(GmCertificate {
             version: 2,
@@ -1599,9 +1604,9 @@ pub fn parse_x509_certificate_pem(pem: &[u8]) -> Result<Certificate, Error> {
 // 证书签名和验证
 // ====================================================================================
 
-/// 对证书数据进行签名（使用 SM2）
+/// 使用 SM2 签名证书 TBS（To Be Signed）数据
 ///
-/// 使用 SM2 算法对证书 TBS（To-Be-Signed）数据进行签名。
+/// 使用 SM2 算法对证书 TBS 数据进行签名。
 ///
 /// ## 签名流程
 ///
@@ -1610,7 +1615,7 @@ pub fn parse_x509_certificate_pem(pem: &[u8]) -> Result<Certificate, Error> {
 /// 3. 使用 SM2 私钥签名
 ///
 /// # 参数
-/// - `data`: 待签名的证书数据（TBS 证书）
+/// - `tbs_data`: 待签名的证书 TBS 数据
 /// - `priv_key`: SM2 私钥
 /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
 /// - `rng`: 随机数生成器
@@ -1618,20 +1623,20 @@ pub fn parse_x509_certificate_pem(pem: &[u8]) -> Result<Certificate, Error> {
 /// # 返回
 /// - `Ok(Vec<u8>)`: 64 字节签名值（r || s）
 /// - `Err(Error)`: 签名失败
-pub fn sign_certificate_data<R: Rng>(
-    data: &[u8],
+pub fn sign_tbs_certificate<R: Rng>(
+    tbs_data: &[u8],
     priv_key: &PrivateKey,
     id: &[u8],
     rng: &mut R,
 ) -> Result<Vec<u8>, Error> {
     let pub_key = priv_key.public_key();
     let z = crate::sm2::get_z(id, &pub_key);
-    let e = crate::sm2::get_e(&z, data);
+    let e = crate::sm2::get_e(&z, tbs_data);
     let sig = sign(&e, priv_key, rng);
     Ok(sig.to_vec())
 }
 
-/// 验证证书数据的签名（使用 SM2）
+/// 验证证书 TBS 数据的 SM2 签名
 ///
 /// 使用 SM2 算法验证证书 TBS 数据的签名。
 ///
@@ -1642,22 +1647,22 @@ pub fn sign_certificate_data<R: Rng>(
 /// 3. 使用 SM2 公钥验证签名
 ///
 /// # 参数
-/// - `data`: 证书数据（TBS 证书）
-/// - `signature`: 签名值（64字节 r || s）
-/// - `pub_key`: SM2 公钥（65字节未压缩格式）
+/// - `tbs_data`: 证书 TBS 数据
+/// - `signature`: 签名值（64 字节 r || s）
+/// - `pub_key`: SM2 公钥（65 字节未压缩格式）
 /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
 ///
 /// # 返回
 /// - `Ok(())`: 签名验证通过
 /// - `Err(Error::InvalidSignature)`: 签名验证失败
-pub fn verify_certificate_data(
-    data: &[u8],
+pub fn verify_tbs_certificate_signature(
+    tbs_data: &[u8],
     signature: &[u8],
     pub_key: &[u8; 65],
     id: &[u8],
 ) -> Result<(), Error> {
     let z = crate::sm2::get_z(id, pub_key);
-    let e = crate::sm2::get_e(&z, data);
+    let e = crate::sm2::get_e(&z, tbs_data);
 
     let sig_array: [u8; 64] = signature.try_into().map_err(|_| Error::InvalidSignature)?;
 
@@ -1985,7 +1990,7 @@ pub fn generate_self_signed_cert<R: Rng>(
     let tbs_cert = wrap_sequence(tbs);
 
     // 签名
-    let signature = sign_certificate_data(&tbs_cert, priv_key, id, rng)?;
+    let signature = sign_tbs_certificate(&tbs_cert, priv_key, id, rng)?;
 
     Ok(GmCertificate {
         version: 2,
@@ -2179,7 +2184,7 @@ pub fn issue_certificate<R: Rng>(
     let tbs_cert = wrap_sequence(tbs);
 
     // 使用 CA 私钥签名
-    let signature = sign_certificate_data(&tbs_cert, ca_priv_key, ca_id, rng)?;
+    let signature = sign_tbs_certificate(&tbs_cert, ca_priv_key, ca_id, rng)?;
 
     Ok(GmCertificate {
         version: 2,
@@ -2206,6 +2211,30 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
+    /// 构建测试用的 X.500 颁发者名称
+    ///
+    /// # 参数
+    /// - `common_name`: 通用名称
+    ///
+    /// # 返回
+    /// DER 编码的 X.500 Name
+    fn build_test_issuer(common_name: &str) -> Vec<u8> {
+        build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+            X500Attribute::new(X500AttributeType::CommonName, common_name),
+        ])
+    }
+
+    /// 构建测试用的有效期（默认值）
+    ///
+    /// 默认有效期：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
+    ///
+    /// # 返回
+    /// DER 编码的 Validity SEQUENCE
+    fn test_validity() -> Vec<u8> {
+        build_test_validity("250101000000Z", "300101000000Z")
+    }
+
     /// 构建测试用的 X.500 主体名称
     ///
     /// # 参数
@@ -2228,6 +2257,7 @@ mod tests {
     /// # 返回
     /// DER 编码的 INTEGER
     fn build_test_serial(serial: u64) -> Vec<u8> {
+        // 使用简单的字节数组编码，移除前导零
         let bytes = serial.to_be_bytes();
         let start = bytes
             .iter()
@@ -2238,18 +2268,17 @@ mod tests {
 
     /// 构建测试用的有效期
     ///
-    /// 手动构建 DER 编码的有效期
+    /// 手动构建 DER 编码的有效期（用于 no_std 环境）
     /// 默认有效期：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
     ///
     /// # 参数
-    /// - `not_before`: 生效时间（UTC 时间字符串，格式："YYYYMMDDHHMMSSZ"）
-    /// - `not_after`: 过期时间（UTC 时间字符串，格式："YYYYMMDDHHMMSSZ"）
+    /// - `not_before`: 生效时间（UTC 时间字符串，格式："YYMMDDHHMMSSZ"）
+    /// - `not_after`: 过期时间（UTC 时间字符串，格式："YYMMDDHHMMSSZ"）
     ///
     /// # 返回
     /// DER 编码的 Validity SEQUENCE
     fn build_test_validity(not_before: &str, not_after: &str) -> Vec<u8> {
         // 构建 UTCTime DER 编码 (tag 0x17)
-        // 格式：YYYYMMDDHHMMSSZ
         let encode_utctime = |time_str: &str| -> Vec<u8> {
             let mut encoded = vec![0x17, time_str.len() as u8];
             encoded.extend_from_slice(time_str.as_bytes());
@@ -2267,10 +2296,72 @@ mod tests {
         validity.extend(not_after_der);
         validity
     }
-    
-    /// 默认测试有效期常量：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
-    fn test_validity() -> Vec<u8> {
-        build_test_validity("250101000000Z", "300101000000Z")
+
+    // -- 测试数据生成器 ------------------------------------------------------
+
+    /// 证书测试数据生成器
+    ///
+    /// 用于生成各种测试场景的证书参数
+    struct CertTestBuilder {
+        common_name: alloc::string::String,
+        serial: u64,
+        not_before: alloc::string::String,
+        not_after: alloc::string::String,
+    }
+
+    impl CertTestBuilder {
+        /// 创建新的测试构建器，使用默认值
+        fn new() -> Self {
+            Self {
+                common_name: alloc::string::String::from("Test Server"),
+                serial: 1,
+                not_before: alloc::string::String::from("250101000000Z"),
+                not_after: alloc::string::String::from("300101000000Z"),
+            }
+        }
+
+        /// 设置通用名称
+        fn with_common_name(mut self, name: &str) -> Self {
+            self.common_name = alloc::string::String::from(name);
+            self
+        }
+
+        /// 设置序列号
+        fn with_serial(mut self, serial: u64) -> Self {
+            self.serial = serial;
+            self
+        }
+
+        /// 设置有效期
+        fn with_validity(mut self, not_before: &str, not_after: &str) -> Self {
+            self.not_before = alloc::string::String::from(not_before);
+            self.not_after = alloc::string::String::from(not_after);
+            self
+        }
+
+        /// 构建测试参数
+        fn build(self) -> TestCertParams {
+            TestCertParams {
+                issuer: build_test_issuer("Test CA"),
+                subject: build_test_subject(&self.common_name),
+                serial: build_test_serial(self.serial),
+                validity: build_test_validity(&self.not_before, &self.not_after),
+            }
+        }
+    }
+
+    impl Default for CertTestBuilder {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// 测试证书参数
+    struct TestCertParams {
+        issuer: Vec<u8>,
+        subject: Vec<u8>,
+        serial: Vec<u8>,
+        validity: Vec<u8>,
     }
     
     // -- 证书测试 ------------------------------------------------------------
@@ -2280,17 +2371,15 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-        let subject = build_test_subject("Test Server");
-        let validity = test_validity();
-        let serial = build_test_serial(1);
+        let params = CertTestBuilder::new().build();
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
+            &priv_key, &params.subject, &params.validity, &params.serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
         assert_eq!(cert.issuer, cert.subject);
-        assert_eq!(cert.serial_number, serial);
+        assert_eq!(cert.serial_number, params.serial);
         assert_eq!(cert.version, 2);
     }
 
@@ -2299,17 +2388,15 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_priv_key, pub_key) = generate_keypair(&mut rng);
 
-        let subject = build_test_subject("Test Server");
-        let validity = test_validity();
-        let serial = build_test_serial(1);
+        let params = CertTestBuilder::new().build();
 
         let cert = GmCertificate {
             version: 2,
-            serial_number: serial,
+            serial_number: params.serial,
             signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
-            issuer: vec![0x31, 0x00],
-            validity: validity.to_vec(),
-            subject,
+            issuer: params.issuer,
+            validity: params.validity,
+            subject: params.subject,
             subject_public_key_info: der::public_key_to_spki_der(&pub_key),
             extensions: None,
             signature: vec![0x00; 64],
@@ -2324,16 +2411,33 @@ mod tests {
     }
 
     #[test]
+    fn test_certificate_with_different_params() {
+        let mut rng = StdRng::seed_from_u64(789);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let params = CertTestBuilder::new()
+            .with_common_name("Different Server")
+            .with_serial(12345)
+            .with_validity("240101000000Z", "260101000000Z")
+            .build();
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &params.subject, &params.validity, &params.serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        assert_eq!(cert.serial_number, params.serial);
+    }
+
+    #[test]
     fn test_self_signed_cert_verification() {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = build_test_subject("Test Server");
-        let validity = test_validity();
-        let serial = build_test_serial(1);
+        let params = CertTestBuilder::new().build();
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
+            &priv_key, &params.subject, &params.validity, &params.serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 

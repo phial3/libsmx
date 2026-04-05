@@ -246,8 +246,7 @@ mod tests {
         let test_data = b"Test data for certificate signing and verification";
         let id = DEFAULT_ID;
 
-        let signature =
-            cert::sign_certificate_data(test_data, &priv_key, id, &mut rng).expect("签名应成功");
+        let signature = cert::sign_tbs_certificate(test_data, &priv_key, id, &mut rng).expect("签名应成功");
         fs::write(signature_file, &signature).expect("写入签名应成功");
         assert!(Path::new(signature_file).exists());
         assert_eq!(signature.len(), 64);
@@ -325,7 +324,7 @@ mod tests {
         let test_data = b"Test data for roundtrip";
         let id = DEFAULT_ID;
         let signature =
-            cert::sign_certificate_data(test_data, &issuer_priv, id, &mut rng).expect("签名应成功");
+            cert::sign_tbs_certificate(test_data, &issuer_priv, id, &mut rng).expect("签名应成功");
         fs::write(signature_file, &signature).expect("写入签名应成功");
 
         let loaded_cert_der = fs::read(cert_der_file).expect("读取 DER 证书应成功");

@@ -1153,21 +1153,42 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
+    /// 生成测试用的简化主体 DER 编码（空 SEQUENCE）
+    fn test_subject() -> Vec<u8> {
+        // 创建一个空的 SEQUENCE 作为测试主体
+        vec![0x30, 0x00]
+    }
+
+    /// 生成测试用的序列号 DER 编码
+    fn test_serial() -> Vec<u8> {
+        // 编码整数 1 为 DER INTEGER: tag(0x02) + length(0x01) + value(0x01)
+        vec![0x02, 0x01, 1]
+    }
+
     /// 生成测试用的有效期 DER 编码
     ///
     /// 固定有效期：2024-01-01 到 2030-01-01
-    fn generate_test_validity() -> Vec<u8> {
-        // 使用字节数组方式生成有效期（用于测试）
+    fn test_validity() -> Vec<u8> {
+        // 使用 DER 编码逻辑构建有效期
         // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
-        vec![
-            0x30, 0x1E, // SEQUENCE, length 30
-            0x17, 0x0D, // UTCTime, length 13
-            b'2', b'4', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
-            b'Z', // 240101000000Z
-            0x17, 0x0D, // UTCTime, length 13
-            b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
-            b'Z', // 300101000000Z
-        ]
+        
+        // 编码 UTCTime: tag(0x17) + length + time_string
+        let encode_utctime = |time_str: &str| -> Vec<u8> {
+            let mut encoded = vec![0x17, time_str.len() as u8];
+            encoded.extend_from_slice(time_str.as_bytes());
+            encoded
+        };
+        
+        let not_before = encode_utctime("240101000000Z");
+        let not_after = encode_utctime("300101000000Z");
+        
+        // 包装为 SEQUENCE
+        let mut validity = Vec::with_capacity(2 + not_before.len() + not_after.len());
+        validity.push(0x30); // SEQUENCE tag
+        validity.push((not_before.len() + not_after.len()) as u8);
+        validity.extend(not_before);
+        validity.extend(not_after);
+        validity
     }
 
     #[test]
@@ -1175,9 +1196,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = generate_test_validity();
-        let serial = vec![0x01];
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
 
         // 生成自签名证书用于测试
         let cert = generate_self_signed_cert(
@@ -1241,9 +1262,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = generate_test_validity();
-        let serial = vec![0x01];
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
 
         let cert = generate_self_signed_cert(
             &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
@@ -1274,9 +1295,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = generate_test_validity();
-        let serial = vec![0x01];
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
 
         let cert = generate_self_signed_cert(
             &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
@@ -1307,9 +1328,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = generate_test_validity();
-        let serial = vec![0x01];
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
 
         let cert = generate_self_signed_cert(
             &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
@@ -1345,9 +1366,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = generate_test_validity();
-        let serial = vec![0x01];
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
 
         let cert = generate_self_signed_cert(
             &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
@@ -1375,9 +1396,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = generate_test_validity();
-        let serial = vec![0x01];
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
 
         let cert = generate_self_signed_cert(
             &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
