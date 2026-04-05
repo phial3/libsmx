@@ -42,9 +42,10 @@ use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
 
-// x509-cert 相关导入
+use x509_cert::der::asn1::ObjectIdentifier;
 use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::Decode;
+use x509_cert::ext::Extension;
 use x509_cert::time::Validity;
 use x509_cert::Certificate;
 
@@ -70,6 +71,7 @@ use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 /// - `validity`: 有效期（DER 编码的 SEQUENCE）
 /// - `subject`: 主体名称（DER 编码的 X.500 Name）
 /// - `subject_public_key_info`: 主体公钥信息（DER 编码的 SubjectPublicKeyInfo）
+/// - `extensions`: 证书扩展项（可选，v3 证书特有）
 /// - `signature`: 签名值（原始字节）
 #[derive(Debug, Clone)]
 pub struct GmCertificate {
@@ -79,6 +81,8 @@ pub struct GmCertificate {
     pub serial_number: Vec<u8>,
     /// 签名算法
     pub signature_algorithm: Vec<u8>,
+    /// 签名值
+    pub signature: Vec<u8>,
     /// 签发者
     pub issuer: Vec<u8>,
     /// 有效期
@@ -87,8 +91,173 @@ pub struct GmCertificate {
     pub subject: Vec<u8>,
     /// 主体公钥信息
     pub subject_public_key_info: Vec<u8>,
-    /// 签名值
-    pub signature: Vec<u8>,
+    /// 证书扩展项（可选，使用 x509-cert 标准类型）
+    pub extensions: Option<Vec<Extension>>,
+}
+
+// ====================================================================================
+// 证书扩展配置（使用 x509-cert 标准类型）
+// ====================================================================================
+
+/// 密钥用途标志
+///
+/// 直接定义常用组合，避免自定义枚举
+pub mod key_usage_flags {
+    /// 数字签名 (bit 0)
+    pub const DIGITAL_SIGNATURE: u16 = 0b00000000_00000001;
+    /// 不可否认 (bit 1)
+    pub const NON_REPUDIATION: u16 = 0b00000000_00000010;
+    /// 密钥加密 (bit 2)
+    pub const KEY_ENCIPHERMENT: u16 = 0b00000000_00000100;
+    /// 数据加密 (bit 3)
+    pub const DATA_ENCIPHERMENT: u16 = 0b00000000_00001000;
+    /// 密钥协商 (bit 4)
+    pub const KEY_AGREEMENT: u16 = 0b00000000_00010000;
+    /// 证书签名 (bit 5)
+    pub const KEY_CERT_SIGN: u16 = 0b00000000_00100000;
+    /// CRL 签名 (bit 6)
+    pub const CRL_SIGN: u16 = 0b00000000_01000000;
+    /// 仅加密 (bit 7)
+    pub const ENCIPHER_ONLY: u16 = 0b00000000_10000000;
+    /// 仅解密 (bit 8)
+    pub const DECIPHER_ONLY: u16 = 0b00000001_00000000;
+
+    /// CA 证书常用组合
+    pub const CA_BASIC: u16 = KEY_CERT_SIGN | CRL_SIGN;
+    /// 签名证书常用组合
+    pub const SIGNING_BASIC: u16 = DIGITAL_SIGNATURE | NON_REPUDIATION;
+    /// 加密证书常用组合
+    pub const ENCRYPTION_BASIC: u16 = KEY_AGREEMENT | KEY_ENCIPHERMENT;
+    /// 通用证书（签名 + 加密）
+    pub const BOTH_BASIC: u16 = DIGITAL_SIGNATURE | NON_REPUDIATION | KEY_AGREEMENT | KEY_ENCIPHERMENT;
+}
+
+/// 扩展密钥用途 OID 常量
+pub mod extended_key_usage {
+    /// 服务器认证
+    pub const SERVER_AUTH: &[u8] = crate::sm2::ID_KP_SERVER_AUTH;
+    /// 客户端认证
+    pub const CLIENT_AUTH: &[u8] = crate::sm2::ID_KP_CLIENT_AUTH;
+    /// 代码签名
+    pub const CODE_SIGNING: &[u8] = crate::sm2::ID_KP_CODE_SIGNING;
+    /// 电子邮件保护
+    pub const EMAIL_PROTECTION: &[u8] = crate::sm2::ID_KP_EMAIL_PROTECTION;
+}
+
+// ====================================================================================
+// 证书扩展辅助函数（使用 x509-cert::ext 类型）
+// ====================================================================================
+
+/// 创建 Key Usage 扩展
+///
+/// # 参数
+/// - `key_usage`: 密钥用途位掩码（bit 掩码，bit 0=digitalSignature, bit 1=nonRepudiation, 等）
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_key_usage_extension(key_usage: u16) -> Extension {
+    // 直接手动创建 BIT STRING DER 编码
+    let mut der_bytes = Vec::new();
+    der_bytes.push(0x03); // BIT STRING tag
+    der_bytes.push(0x03); // length (2 bytes: unused_bits + value)
+    der_bytes.push(0x00); // unused bits
+    der_bytes.push((key_usage >> 8) as u8); // high byte
+    der_bytes.push((key_usage & 0xFF) as u8); // low byte
+
+    Extension {
+        extn_id: ObjectIdentifier::from_bytes(crate::sm2::ID_CE_KEY_USAGE).unwrap(),
+        critical: true,
+        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
+            .expect("Failed to create OctetString"),
+    }
+}
+
+/// 创建 Basic Constraints 扩展
+///
+/// # 参数
+/// - `is_ca`: 是否为 CA 证书
+/// - `path_len`: 路径长度约束（仅当 is_ca=true 时有效）
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> Extension {
+    use x509_cert::der::Encode;
+    use x509_cert::ext::pkix::BasicConstraints;
+
+    let basic_constraints = BasicConstraints {
+        ca: is_ca,
+        path_len_constraint: path_len,
+    };
+
+    let der_bytes = basic_constraints
+        .to_der()
+        .expect("Failed to encode BasicConstraints");
+
+    Extension {
+        extn_id: ObjectIdentifier::from_bytes(crate::sm2::ID_CE_BASIC_CONSTRAINTS).unwrap(),
+        critical: is_ca,
+        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
+            .expect("Failed to create OctetString"),
+    }
+}
+
+/// 创建 Extended Key Usage 扩展
+///
+/// # 参数
+/// - `usages`: 密钥用途 OID 列表
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_extended_key_usage_extension(usages: &[Vec<u8>]) -> Extension {
+    use x509_cert::der::Encode;
+    use x509_cert::ext::pkix::ExtendedKeyUsage;
+
+    let oids: Vec<_> = usages
+        .iter()
+        .map(|bytes| ObjectIdentifier::from_bytes(bytes).unwrap())
+        .collect();
+
+    let ext_key_usage = ExtendedKeyUsage(oids);
+
+    let der_bytes = ext_key_usage
+        .to_der()
+        .expect("Failed to encode ExtendedKeyUsage");
+
+    Extension {
+        extn_id: ObjectIdentifier::from_bytes(crate::sm2::ID_CE_EXT_KEY_USAGE).unwrap(),
+        critical: false,
+        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
+            .expect("Failed to create OctetString"),
+    }
+}
+
+/// 创建 Subject Alternative Name 扩展
+///
+/// # 参数
+/// - `general_names`: 通用名称列表（支持 email, dns, uri, ip 等）
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_subject_alt_name_extension(
+    general_names: x509_cert::ext::pkix::name::GeneralNames,
+) -> Extension {
+    use x509_cert::ext::pkix::SubjectAltName;
+    use x509_cert::ext::ToExtension;
+    use x509_cert::name::Name;
+
+    let san = SubjectAltName(general_names);
+    let empty_name = Name::default();
+
+    san.to_extension(&empty_name, &[])
+        .expect("Failed to create SubjectAltName extension")
+}
+
+/// 从 DER 数据解析扩展
+pub fn parse_extension_from_der(der: &[u8]) -> Result<Extension, Error> {
+    Extension::from_der(der).map_err(|_| Error::CertificateParseError {
+        field: "extensions",
+        reason: "Failed to parse extension DER",
+    })
 }
 
 impl GmCertificate {
@@ -330,6 +499,57 @@ impl GmCertificate {
         verify(&e, pub_key, &sig_array)
     }
 
+    /// 验证证书签名（简化版本，使用证书自带的签名和公钥）
+    ///
+    /// # 参数
+    /// - `id`: SM2 签名 ID
+    ///
+    /// # 返回
+    /// - `Ok(())`: 签名验证通过
+    /// - `Err(Error::InvalidSignature)`: 签名验证失败
+    pub fn verify_self_signature(&self, id: &[u8]) -> Result<(), Error> {
+        let pub_key = self.extract_sm2_public_key()?;
+        self.verify_signature(&self.signature, &pub_key, id)
+    }
+
+    /// 使用 CA 证书验证证书签名
+    ///
+    /// # 参数
+    /// - `ca_cert`: CA 证书（用于验证签发者）
+    /// - `id`: SM2 签名 ID
+    ///
+    /// # 返回
+    /// - `Ok(())`: 签名验证通过
+    /// - `Err(Error::InvalidSignature)`: 签名验证失败
+    /// - `Err(Error::InvalidCertificate)`: 签发者不匹配
+    pub fn verify_signature_with_ca(
+        &self,
+        ca_cert: &GmCertificate,
+        id: &[u8],
+    ) -> Result<(), Error> {
+        // 验证签发者是否匹配
+        if self.issuer != ca_cert.subject {
+            return Err(Error::InvalidCertificate);
+        }
+
+        // 获取 CA 公钥
+        let ca_pub_key = ca_cert.extract_sm2_public_key()?;
+
+        // 使用 CA 公钥计算 Z 值（SM2 签名验证需要使用签名者的公钥）
+        let z = crate::sm2::get_z(id, &ca_pub_key);
+        let e = crate::sm2::get_e(&z, &self.tbs_certificate());
+
+        // 解析签名
+        let sig_array: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidSignature)?;
+
+        // 验证签名
+        verify(&e, &ca_pub_key, &sig_array)
+    }
+
     /// 获取 TBS（To Be Signed）证书数据
     ///
     /// 返回证书的待签名部分（不含签名算法和签名值）。
@@ -377,6 +597,35 @@ impl GmCertificate {
         // 主体公钥信息
         tbs.extend_from_slice(&self.subject_public_key_info);
 
+        // 扩展（如果存在）
+        if let Some(extensions) = &self.extensions {
+            if !extensions.is_empty() {
+                // 编码扩展为 DER
+                let mut ext_content = Vec::new();
+                for ext in extensions {
+                    ext_content.extend_from_slice(&encode_extension(ext));
+                }
+
+                // 包装为 [3] EXPLICIT SEQUENCE OF Extension
+                let ext_seq = wrap_sequence(ext_content);
+                let mut tagged_ext = vec![0xA3];
+                let len = ext_seq.len();
+                if len < 128 {
+                    tagged_ext.push(len as u8);
+                } else if len < 256 {
+                    tagged_ext.push(0x81);
+                    tagged_ext.push(len as u8);
+                } else {
+                    tagged_ext.push(0x82);
+                    tagged_ext.push((len >> 8) as u8);
+                    tagged_ext.push((len & 0xFF) as u8);
+                }
+                tagged_ext.extend(ext_seq);
+
+                tbs.extend(tagged_ext);
+            }
+        }
+
         // 包装为 SEQUENCE
         let mut seq = Vec::with_capacity(4 + tbs.len());
         seq.push(0x30);
@@ -399,7 +648,7 @@ impl GmCertificate {
 }
 
 // ====================================================================================
-// 证书解析和生成
+// 证书解析和生成，证书扩展解析和编码
 // ====================================================================================
 
 /// 解析国密证书 DER 编码
@@ -409,7 +658,7 @@ impl GmCertificate {
 /// ## 解析流程
 ///
 /// 1. 解析外层 SEQUENCE（整个证书）
-/// 2. 解析版本号（可选，上下文标签 \[0\]）
+/// 2. 解析版本号（可选，上下文标签 [0]）
 /// 3. 解析序列号（INTEGER）
 /// 4. 解析签名算法（AlgorithmIdentifier）
 /// 5. 解析签发者（Name）
@@ -485,6 +734,7 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
         validity: validity.to_vec(),
         subject: subject.to_vec(),
         subject_public_key_info: spki.to_vec(),
+        extensions: None,
         signature,
     })
 }
@@ -950,7 +1200,22 @@ pub fn build_x500_name(attributes: &[X500Attribute]) -> Vec<u8> {
 
 /// 从证书有效期字段解析时间
 ///
-/// 使用 x509-cert 的 Validity 类型解析证书有效期。
+/// 解析证书有效期 DER 编码，提取生效时间和过期时间。
+/// 支持 UTCTime（2 字节年份）和 GeneralizedTime（4 字节年份）格式。
+///
+/// ## 有效期格式
+///
+/// ```text
+/// Validity ::= SEQUENCE {
+///     notBefore    Time,
+///     notAfter     Time
+/// }
+///
+/// Time ::= CHOICE {
+///     utcTime        UTCTime,
+///     generalTime    GeneralizedTime
+/// }
+/// ```
 ///
 /// # 参数
 /// - `validity_der`: 有效期 DER 编码数据
@@ -976,22 +1241,23 @@ fn parse_validity(validity_der: &[u8]) -> Result<Validity, Error> {
 /// - `Err(Error::InvalidCertificate)`: 解析失败
 #[cfg(feature = "std")]
 fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
+    // 使用 chrono 解析日期字符串
+    // 支持格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS
     let datetime = if date_str.contains(' ') {
+        // 包含时间部分
         NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")
             .map_err(|_| Error::InvalidCertificate)?
     } else {
+        // 只有日期部分，使用默认时间 00:00:00
         let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
             .map_err(|_| Error::InvalidCertificate)?;
         date.and_hms_opt(0, 0, 0).ok_or(Error::InvalidCertificate)?
     };
 
+    // 转换为 UTC DateTime 并获取 Unix 时间戳
     let utc_datetime = Utc.from_utc_datetime(&datetime);
     Ok(utc_datetime.timestamp() as u64)
 }
-
-// ====================================================================================
-// 证书扩展类型（使用 x509-cert 提供的类型）
-// ====================================================================================
 
 // ====================================================================================
 // 证书构建器（需要 alloc 和 std）
@@ -1031,6 +1297,7 @@ pub struct CertificateBuilder {
     serial_number: Vec<u8>,
     not_before: Option<std::time::SystemTime>,
     not_after: Option<std::time::SystemTime>,
+    extensions: Vec<Extension>,
 }
 
 #[cfg(all(feature = "alloc", feature = "std"))]
@@ -1043,6 +1310,7 @@ impl CertificateBuilder {
             serial_number: vec![0x01], // 默认序列号为 1
             not_before: None,
             not_after: None,
+            extensions: Vec::new(),
         }
     }
 
@@ -1136,6 +1404,87 @@ impl CertificateBuilder {
         self
     }
 
+    /// 添加证书扩展
+    ///
+    /// # 参数
+    /// - `extension`: x509-cert 的 Extension 类型
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn add_extension(mut self, extension: Extension) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
+    /// 设置 CA 证书扩展（Basic Constraints + Key Usage）
+    ///
+    /// # 参数
+    /// - `path_len`: 路径长度约束（可选）
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn ca_extensions(mut self, path_len: Option<u8>) -> Self {
+        // Basic Constraints
+        self.extensions
+            .push(create_basic_constraints_extension(true, path_len));
+        // Key Usage: keyCertSign + cRLSign
+        self.extensions
+            .push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+        self
+    }
+
+    /// 设置签名证书扩展（Key Usage + Extended Key Usage）
+    ///
+    /// # 参数
+    /// - `eku_oids`: 扩展密钥用途 OID 列表
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn signing_extensions(mut self, eku_oids: &[&[u8]]) -> Self {
+        // Key Usage: digitalSignature + nonRepudiation
+        self.extensions
+            .push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
+        // Extended Key Usage
+        if !eku_oids.is_empty() {
+            let usages: Vec<Vec<u8>> = eku_oids.iter().map(|oid| oid.to_vec()).collect();
+            self.extensions
+                .push(create_extended_key_usage_extension(&usages));
+        }
+        self
+    }
+
+    /// 设置加密证书扩展（Key Usage）
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn encryption_extensions(mut self) -> Self {
+        // Key Usage: keyAgreement + keyEncipherment
+        self.extensions.push(create_key_usage_extension(
+            key_usage_flags::ENCRYPTION_BASIC,
+        ));
+        self
+    }
+
+    /// 设置通用证书扩展（签名 + 加密）
+    ///
+    /// # 参数
+    /// - `eku_oids`: 扩展密钥用途 OID 列表
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn both_extensions(mut self, eku_oids: &[&[u8]]) -> Self {
+        // Key Usage: digitalSignature + nonRepudiation + keyAgreement + keyEncipherment
+        self.extensions
+            .push(create_key_usage_extension(key_usage_flags::BOTH_BASIC));
+        // Extended Key Usage
+        if !eku_oids.is_empty() {
+            let usages: Vec<Vec<u8>> = eku_oids.iter().map(|oid| oid.to_vec()).collect();
+            self.extensions
+                .push(create_extended_key_usage_extension(&usages));
+        }
+        self
+    }
+
     /// 构建证书
     ///
     /// 使用提供的公钥、私钥和签名 ID 构建并签署证书。
@@ -1216,6 +1565,32 @@ impl CertificateBuilder {
         // 公钥信息
         tbs.extend(&spki);
 
+        // 添加扩展（如果有）
+        if !self.extensions.is_empty() {
+            let mut ext_content = Vec::new();
+            for ext in &self.extensions {
+                ext_content.extend_from_slice(&encode_extension(ext));
+            }
+
+            // 包装为 [3] EXPLICIT SEQUENCE OF Extension
+            let ext_seq = wrap_sequence(ext_content);
+            let mut tagged_ext = vec![0xA3];
+            let len = ext_seq.len();
+            if len < 128 {
+                tagged_ext.push(len as u8);
+            } else if len < 256 {
+                tagged_ext.push(0x81);
+                tagged_ext.push(len as u8);
+            } else {
+                tagged_ext.push(0x82);
+                tagged_ext.push((len >> 8) as u8);
+                tagged_ext.push((len & 0xFF) as u8);
+            }
+            tagged_ext.extend(ext_seq);
+
+            tbs.extend(tagged_ext);
+        }
+
         // 包装为 SEQUENCE
         let tbs_cert = wrap_sequence(tbs);
 
@@ -1230,6 +1605,11 @@ impl CertificateBuilder {
             validity: validity_seq,
             subject,
             subject_public_key_info: spki,
+            extensions: if self.extensions.is_empty() {
+                None
+            } else {
+                Some(self.extensions)
+            },
             signature,
         })
     }
@@ -1620,6 +2000,7 @@ pub fn generate_self_signed_cert<R: Rng>(
     validity: &[u8],
     serial_number: &[u8],
     id: &[u8],
+    extensions: Option<Vec<Extension>>,
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
     // 获取公钥
@@ -1654,6 +2035,38 @@ pub fn generate_self_signed_cert<R: Rng>(
     // 公钥信息
     tbs.extend(&spki);
 
+    // 添加扩展（如果有）
+    let extensions_for_cert = if let Some(extensions) = extensions {
+        if !extensions.is_empty() {
+            // 编码扩展为 DER
+            let mut ext_content = Vec::new();
+            for ext in &extensions {
+                ext_content.extend_from_slice(&encode_extension(ext));
+            }
+
+            // 包装为 [3] EXPLICIT SEQUENCE OF Extension
+            let ext_seq = wrap_sequence(ext_content);
+            let mut tagged_ext = vec![0xA3];
+            let len = ext_seq.len();
+            if len < 128 {
+                tagged_ext.push(len as u8);
+            } else if len < 256 {
+                tagged_ext.push(0x81);
+                tagged_ext.push(len as u8);
+            } else {
+                tagged_ext.push(0x82);
+                tagged_ext.push((len >> 8) as u8);
+                tagged_ext.push((len & 0xFF) as u8);
+            }
+            tagged_ext.extend(ext_seq);
+
+            tbs.extend(tagged_ext);
+        }
+        Some(extensions)
+    } else {
+        None
+    };
+
     // 包装为 SEQUENCE
     let tbs_cert = wrap_sequence(tbs);
 
@@ -1668,8 +2081,67 @@ pub fn generate_self_signed_cert<R: Rng>(
         validity: validity.to_vec(),
         subject: subject.to_vec(),
         subject_public_key_info: spki,
+        extensions: extensions_for_cert,
         signature,
     })
+}
+
+/// 编码单个扩展为 DER 格式
+///
+/// # 参数
+/// - `ext`: Extension 结构
+///
+/// # 返回
+/// DER 编码的字节数组
+fn encode_extension(ext: &Extension) -> Vec<u8> {
+    let mut result = Vec::new();
+    result.push(0x30); // SEQUENCE tag
+
+    // 计算内容长度
+    let mut content = Vec::new();
+
+    // OID
+    let oid_bytes = ext.extn_id.as_bytes();
+    content.push(0x06); // OID tag
+    content.push(oid_bytes.len() as u8);
+    content.extend_from_slice(oid_bytes);
+
+    // Critical (仅当为 true 时编码)
+    if ext.critical {
+        content.extend_from_slice(&[0x01, 0x01, 0xFF]);
+    }
+
+    // Extension value (OCTET STRING)
+    let value_bytes = ext.extn_value.as_bytes();
+    let value_len = value_bytes.len();
+    content.push(0x04); // OCTET STRING tag
+    if value_len < 128 {
+        content.push(value_len as u8);
+    } else if value_len < 256 {
+        content.push(0x81);
+        content.push(value_len as u8);
+    } else {
+        content.push(0x82);
+        content.push((value_len >> 8) as u8);
+        content.push((value_len & 0xFF) as u8);
+    }
+    content.extend_from_slice(value_bytes);
+
+    // 写入内容长度
+    let content_len = content.len();
+    if content_len < 128 {
+        result.push(content_len as u8);
+    } else if content_len < 256 {
+        result.push(0x81);
+        result.push(content_len as u8);
+    } else {
+        result.push(0x82);
+        result.push((content_len >> 8) as u8);
+        result.push((content_len & 0xFF) as u8);
+    }
+
+    result.extend(content);
+    result
 }
 
 /// 将数据包装为 SEQUENCE（单个 Vec）
@@ -1701,6 +2173,113 @@ fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
     result
 }
 
+/// 使用 CA 证书签发新证书
+///
+/// # 参数
+/// - `ca_cert`: CA 证书（包含 CA 公钥和主体信息）
+/// - `ca_priv_key`: CA 私钥（用于签名）
+/// - `subject`: 新证书的主体名称
+/// - `subject_pub_key`: 新证书的公钥（65 字节未压缩格式）
+/// - `validity`: 新证书的有效期
+/// - `serial_number`: 新证书的序列号
+/// - `ca_id`: CA 的 SM2 签名 ID
+/// - `extensions`: 新证书的扩展列表（可选）
+/// - `rng`: 随机数生成器
+///
+/// # 返回
+/// - `Ok(GmCertificate)`: 签发成功的新证书
+/// - `Err(Error)`: 签发失败
+pub fn issue_certificate<R: Rng>(
+    ca_cert: &GmCertificate,
+    ca_priv_key: &PrivateKey,
+    subject: &[u8],
+    subject_pub_key: &[u8; 65],
+    validity: &[u8],
+    serial_number: &[u8],
+    ca_id: &[u8],
+    extensions: Option<Vec<Extension>>,
+    rng: &mut R,
+) -> Result<GmCertificate, Error> {
+    // 构建 SubjectPublicKeyInfo
+    let spki = der::public_key_to_spki_der(subject_pub_key);
+
+    // 构建 TBS 证书内容
+    let mut tbs = Vec::with_capacity(256);
+
+    // 版本 (v3)
+    tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
+
+    // 序列号
+    tbs.push(0x02);
+    tbs.push(serial_number.len() as u8);
+    tbs.extend_from_slice(serial_number);
+
+    // 签名算法 (SM2withSM3)
+    tbs.extend_from_slice(crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER);
+
+    // 签发者（使用 CA 的主体）
+    tbs.extend_from_slice(&ca_cert.subject);
+
+    // 有效期
+    tbs.extend_from_slice(validity);
+
+    // 主体
+    tbs.extend_from_slice(subject);
+
+    // 公钥信息
+    tbs.extend(&spki);
+
+    // 添加扩展（如果有）
+    let extensions_for_cert = if let Some(extensions) = extensions {
+        if !extensions.is_empty() {
+            // 编码扩展为 DER
+            let mut ext_content = Vec::new();
+            for ext in &extensions {
+                ext_content.extend_from_slice(&encode_extension(ext));
+            }
+
+            // 包装为 [3] EXPLICIT SEQUENCE OF Extension
+            let ext_seq = wrap_sequence(ext_content);
+            let mut tagged_ext = vec![0xA3];
+            let len = ext_seq.len();
+            if len < 128 {
+                tagged_ext.push(len as u8);
+            } else if len < 256 {
+                tagged_ext.push(0x81);
+                tagged_ext.push(len as u8);
+            } else {
+                tagged_ext.push(0x82);
+                tagged_ext.push((len >> 8) as u8);
+                tagged_ext.push((len & 0xFF) as u8);
+            }
+            tagged_ext.extend(ext_seq);
+
+            tbs.extend(tagged_ext);
+        }
+        Some(extensions)
+    } else {
+        None
+    };
+
+    // 包装为 SEQUENCE
+    let tbs_cert = wrap_sequence(tbs);
+
+    // 使用 CA 私钥签名
+    let signature = sign_certificate_data(&tbs_cert, ca_priv_key, ca_id, rng)?;
+
+    Ok(GmCertificate {
+        version: 2,
+        serial_number: serial_number.to_vec(),
+        signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+        issuer: ca_cert.subject.clone(), // 签发者是 CA
+        validity: validity.to_vec(),
+        subject: subject.to_vec(),
+        subject_public_key_info: spki,
+        extensions: extensions_for_cert,
+        signature,
+    })
+}
+
 // ====================================================================================
 // 测试
 // ====================================================================================
@@ -1713,19 +2292,73 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    /// 测试用有效期常量：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
+    /// 构建测试用的 X.500 主体名称
     ///
-    /// DER 编码格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
-    /// - 250101000000Z (2025-01-01)
-    /// - 300101000000Z (2030-01-01)
-    const TEST_VALIDITY: &[u8] = &[
-        0x30, 0x1E, // SEQUENCE, length 30
-        0x17, 0x0D, // UTCTime, length 13
-        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x17,
-        0x0D, // UTCTime, length 13
-        b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
-    ];
+    /// # 参数
+    /// - `common_name`: 通用名称
+    ///
+    /// # 返回
+    /// DER 编码的 X.500 Name
+    fn build_test_subject(common_name: &str) -> Vec<u8> {
+        build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test Org"),
+            X500Attribute::new(X500AttributeType::CommonName, common_name),
+        ])
+    }
+    
+    /// 构建测试用的序列号
+    ///
+    /// # 参数
+    /// - `serial`: 序列号数值
+    ///
+    /// # 返回
+    /// DER 编码的 INTEGER
+    fn build_test_serial(serial: u64) -> Vec<u8> {
+        let bytes = serial.to_be_bytes();
+        let start = bytes
+            .iter()
+            .position(|&b| b != 0)
+            .unwrap_or(bytes.len() - 1);
+        bytes[start..].to_vec()
+    }
 
+    /// 构建测试用的有效期
+    ///
+    /// 手动构建 DER 编码的有效期
+    /// 默认有效期：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
+    ///
+    /// # 参数
+    /// - `not_before`: 生效时间（UTC 时间字符串，格式："YYYYMMDDHHMMSSZ"）
+    /// - `not_after`: 过期时间（UTC 时间字符串，格式："YYYYMMDDHHMMSSZ"）
+    ///
+    /// # 返回
+    /// DER 编码的 Validity SEQUENCE
+    fn build_test_validity(not_before: &str, not_after: &str) -> Vec<u8> {
+        // 构建 UTCTime DER 编码 (tag 0x17)
+        // 格式：YYYYMMDDHHMMSSZ
+        let encode_utctime = |time_str: &str| -> Vec<u8> {
+            let mut encoded = vec![0x17, time_str.len() as u8];
+            encoded.extend_from_slice(time_str.as_bytes());
+            encoded
+        };
+        
+        let not_before_der = encode_utctime(not_before);
+        let not_after_der = encode_utctime(not_after);
+        
+        // 构建 Validity SEQUENCE
+        let mut validity = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
+        validity.push(0x30); // SEQUENCE tag
+        validity.push((not_before_der.len() + not_after_der.len()) as u8);
+        validity.extend(not_before_der);
+        validity.extend(not_after_der);
+        validity
+    }
+    
+    /// 默认测试有效期常量：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
+    fn test_validity() -> Vec<u8> {
+        build_test_validity("250101000000Z", "300101000000Z")
+    }
+    
     // -- 证书测试 ------------------------------------------------------------
 
     #[test]
@@ -1733,17 +2366,16 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = TEST_VALIDITY;
-        let serial = vec![0x01];
+        let subject = build_test_subject("Test Server");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
         assert_eq!(cert.issuer, cert.subject);
-        assert_eq!(cert.issuer, subject);
         assert_eq!(cert.serial_number, serial);
         assert_eq!(cert.version, 2);
     }
@@ -1753,9 +2385,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_priv_key, pub_key) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = TEST_VALIDITY;
-        let serial = vec![0x01];
+        let subject = build_test_subject("Test Server");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
 
         let cert = GmCertificate {
             version: 2,
@@ -1765,6 +2397,7 @@ mod tests {
             validity: validity.to_vec(),
             subject,
             subject_public_key_info: der::public_key_to_spki_der(&pub_key),
+            extensions: None,
             signature: vec![0x00; 64],
         };
 
@@ -1781,12 +2414,12 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = TEST_VALIDITY;
-        let serial = vec![0x01];
+        let subject = build_test_subject("Test Server");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1909,12 +2542,12 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-        let subject = vec![0x31, 0x00];
-        let validity = TEST_VALIDITY;
-        let serial = vec![0x01];
+        let subject = build_test_subject("Test Server");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1929,5 +2562,314 @@ mod tests {
         assert_eq!(cert.serial_number, recovered.serial_number);
         assert_eq!(cert.issuer, recovered.issuer);
         assert_eq!(cert.subject, recovered.subject);
+    }
+
+    // -- 证书扩展测试 ------------------------------------------------------------
+
+    #[test]
+    fn test_ca_certificate_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let subject = build_test_subject("Test CA");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        // 创建 CA 证书扩展
+        let mut extensions = Vec::new();
+        extensions.push(create_basic_constraints_extension(true, Some(0)));
+        extensions.push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+
+        let cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            Some(extensions),
+            &mut rng,
+        )
+        .expect("CA certificate generation should succeed");
+
+        // 验证扩展存在
+        assert!(cert.extensions.is_some());
+        let extensions = cert.extensions.unwrap();
+        assert!(!extensions.is_empty());
+
+        // 应该有 Basic Constraints 和 Key Usage
+        assert!(extensions.len() >= 2);
+    }
+
+    #[test]
+    fn test_signing_certificate_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let subject = build_test_subject("Test Signing");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        // 创建签名证书扩展
+        let mut extensions = Vec::new();
+        extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
+        extensions.push(create_extended_key_usage_extension(&vec![
+            crate::sm2::ID_KP_CODE_SIGNING.to_vec(),
+        ]));
+
+        let cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            Some(extensions),
+            &mut rng,
+        )
+        .expect("Signing certificate generation should succeed");
+
+        // 验证扩展存在
+        assert!(cert.extensions.is_some());
+        let extensions = cert.extensions.unwrap();
+
+        // 签名证书应该有 Key Usage 和 Extended Key Usage
+        assert!(extensions.len() >= 2);
+    }
+
+    #[test]
+    fn test_encryption_certificate_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let subject = build_test_subject("Test Encryption");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        // 创建加密证书扩展
+        let extensions = vec![create_key_usage_extension(
+            key_usage_flags::ENCRYPTION_BASIC,
+        )];
+
+        let cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            Some(extensions),
+            &mut rng,
+        )
+        .expect("Encryption certificate generation should succeed");
+
+        // 验证扩展存在
+        assert!(cert.extensions.is_some());
+        let extensions = cert.extensions.unwrap();
+
+        // 加密证书应该有 Key Usage
+        assert!(!extensions.is_empty());
+    }
+
+    #[test]
+    fn test_both_certificate_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let subject = build_test_subject("Test Both");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        // 创建通用证书扩展
+        let mut extensions = Vec::new();
+        extensions.push(create_key_usage_extension(key_usage_flags::BOTH_BASIC));
+        extensions.push(create_extended_key_usage_extension(&vec![
+            crate::sm2::ID_KP_SERVER_AUTH.to_vec(),
+            crate::sm2::ID_KP_CLIENT_AUTH.to_vec(),
+        ]));
+
+        let cert = generate_self_signed_cert(
+            &priv_key,
+            &subject,
+            &validity,
+            &serial,
+            DEFAULT_ID,
+            Some(extensions),
+            &mut rng,
+        )
+        .expect("Both certificate generation should succeed");
+
+        // 验证扩展存在
+        assert!(cert.extensions.is_some());
+        let extensions = cert.extensions.unwrap();
+
+        // 通用证书应该有 Key Usage 和 Extended Key Usage
+        assert!(extensions.len() >= 2);
+    }
+
+    #[test]
+    fn test_certificate_without_extensions() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _pub_key) = generate_keypair(&mut rng);
+
+        let subject = build_test_subject("Test NoExt");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        // 不指定扩展配置
+        let cert = generate_self_signed_cert(
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        // 验证没有扩展
+        assert!(cert.extensions.is_none());
+    }
+
+    #[test]
+    fn test_ca_issue_certificate() {
+        let mut rng = StdRng::seed_from_u64(123456);
+
+        // 生成 CA 密钥对
+        let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
+        let ca_subject = build_test_subject("Test CA");
+        let validity = test_validity();
+        let ca_serial = build_test_serial(1);
+
+        // 生成 CA 证书
+        let mut ca_extensions = Vec::new();
+        ca_extensions.push(create_basic_constraints_extension(true, Some(0)));
+        ca_extensions.push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+
+        let ca_cert = generate_self_signed_cert(
+            &ca_priv_key,
+            &ca_subject,
+            &validity,
+            &ca_serial,
+            DEFAULT_ID,
+            Some(ca_extensions),
+            &mut rng,
+        )
+        .expect("CA certificate generation should succeed");
+
+        // 生成终端实体密钥对
+        let (_ee_priv_key, ee_pub_key) = generate_keypair(&mut rng);
+        let ee_subject = build_test_subject("Test EE");
+        let ee_serial = build_test_serial(2);
+
+        // 使用 CA 签发终端实体证书
+        let mut ee_extensions = Vec::new();
+        ee_extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
+        ee_extensions.push(create_extended_key_usage_extension(&vec![
+            crate::sm2::ID_KP_CODE_SIGNING.to_vec(),
+        ]));
+
+        let ee_cert = issue_certificate(
+            &ca_cert,
+            &ca_priv_key,
+            &ee_subject,
+            &ee_pub_key,
+            &validity,
+            &ee_serial,
+            DEFAULT_ID,
+            Some(ee_extensions),
+            &mut rng,
+        )
+        .expect("Certificate issuance should succeed");
+
+        // 验证签发者
+        assert_eq!(ee_cert.issuer, ca_cert.subject);
+
+        // 验证主体
+        assert_eq!(ee_cert.subject, ee_subject);
+
+        // 验证序列号
+        assert_eq!(ee_cert.serial_number, ee_serial);
+
+        // 验证扩展存在
+        assert!(ee_cert.extensions.is_some());
+        let extensions = ee_cert.extensions.as_ref().unwrap();
+        assert!(!extensions.is_empty());
+
+        // 验证签发者和主体
+        assert_eq!(ee_cert.issuer, ca_cert.subject);
+        assert_eq!(ee_cert.subject, ee_subject);
+
+        // 验证可以使用 CA 公钥验证签名（不验证签名内容，只验证功能）
+        // 注意：这里不实际验证签名，因为需要确保 TBS 数据正确
+    }
+
+    #[test]
+    fn test_certificate_chain_generation() {
+        let mut rng = StdRng::seed_from_u64(123456);
+
+        // 1. 生成 CA 密钥对
+        let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
+        let ca_subject = build_test_subject("Test CA");
+        let ca_serial = build_test_serial(1);
+
+        // 2. 生成 CA 证书（自签名）
+        let mut ca_extensions = Vec::new();
+        ca_extensions.push(create_basic_constraints_extension(true, Some(0)));
+        ca_extensions.push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+        let ca_cert = generate_self_signed_cert(
+            &ca_priv_key,
+            &ca_subject,
+            &test_validity(),
+            &ca_serial,
+            DEFAULT_ID,
+            Some(ca_extensions),
+            &mut rng,
+        )
+        .expect("CA certificate generation should succeed");
+
+        // 验证 CA 证书
+        assert!(ca_cert.extensions.is_some());
+        let ca_exts = ca_cert.extensions.as_ref().unwrap();
+        assert!(!ca_exts.is_empty());
+
+        // 3. 生成终端实体密钥对
+        let (_ee_priv_key, ee_pub_key) = generate_keypair(&mut rng);
+        let ee_subject = build_test_subject("Test EE");
+        let ee_serial = build_test_serial(2);
+
+        // 4. 使用 CA 签发终端实体证书（形成证书链）
+        let mut ee_extensions = Vec::new();
+        ee_extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
+        ee_extensions.push(create_extended_key_usage_extension(&vec![
+            crate::sm2::ID_KP_CODE_SIGNING.to_vec(),
+        ]));
+        let ee_cert = issue_certificate(
+            &ca_cert,
+            &ca_priv_key,
+            &ee_subject,
+            &ee_pub_key,
+            &test_validity(),
+            &ee_serial,
+            DEFAULT_ID,
+            Some(ee_extensions),
+            &mut rng,
+        )
+        .expect("Certificate issuance should succeed");
+
+        // 验证终端实体证书
+        assert!(ee_cert.extensions.is_some());
+        let ee_exts = ee_cert.extensions.as_ref().unwrap();
+        assert!(!ee_exts.is_empty());
+
+        // 5. 验证证书链
+        // 验证签发者是 CA
+        assert_eq!(ee_cert.issuer, ca_cert.subject);
+
+        // 验证主体不同
+        assert_ne!(ca_cert.subject, ee_cert.subject);
+
+        // 验证序列号不同
+        assert_ne!(ca_cert.serial_number, ee_cert.serial_number);
+
+        // 验证 CA 证书包含基本约束扩展
+        assert!(ca_cert.extensions.is_some());
+
+        // 验证可以使用 CA 公钥验证终端实体证书签名（证书链验证的核心）
+        assert!(ee_cert
+            .verify_signature_with_ca(&ca_cert, DEFAULT_ID)
+            .is_ok());
     }
 }

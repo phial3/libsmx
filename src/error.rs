@@ -3,6 +3,8 @@
 //! 所有 libsmx 操作均通过此模块中的 [`Error`] 类型报告错误，
 //! 兼容 `no_std` 环境（不依赖 `std::error::Error` trait）。
 
+#[cfg(feature = "alloc")]
+use alloc::string::String;
 use core::fmt;
 
 /// libsmx 统一错误类型
@@ -47,6 +49,76 @@ pub enum Error {
     // ── 证书错误 ────────────────────────────────────────────────────────────
     /// 无效的证书（格式错误）
     InvalidCertificate,
+    /// 证书解析错误
+    CertificateParseError {
+        /// 解析失败的字段
+        field: &'static str,
+        /// 错误原因
+        reason: &'static str,
+    },
+    /// 证书验证错误
+    CertificateValidationError {
+        /// 验证阶段
+        stage: &'static str,
+        /// 错误原因
+        reason: String,
+    },
+    /// 证书已过期
+    CertificateExpired,
+    /// 证书尚未生效
+    CertificateNotYetValid,
+    /// 证书链验证失败
+    CertificateChainError {
+        /// 失败的证书索引
+        index: usize,
+        /// 错误原因
+        reason: String,
+    },
+    /// 证书吊销
+    CertificateRevoked,
+
+    // ── CMS/电子签章错误 ────────────────────────────────────────────────────
+    /// CMS 解析错误
+    CmsParseError {
+        /// 解析失败的字段
+        field: &'static str,
+        /// 错误原因
+        reason: &'static str,
+    },
+    /// CMS 验证错误
+    CmsValidationError {
+        /// 验证阶段
+        stage: &'static str,
+        /// 错误原因
+        reason: String,
+    },
+    /// 签名者未找到
+    SignerNotFound,
+    /// 签名属性错误
+    SignedAttrsError {
+        /// 属性类型
+        attr_type: &'static str,
+        /// 错误原因
+        reason: &'static str,
+    },
+
+    // ── DER 编码错误 ────────────────────────────────────────────────────────
+    /// DER 编码错误
+    DerEncodeError {
+        /// 编码失败的字段
+        field: &'static str,
+        /// 错误原因
+        reason: &'static str,
+    },
+    /// DER 解码错误
+    DerDecodeError {
+        /// 解码失败的字段
+        field: &'static str,
+        /// 错误原因
+        reason: &'static str,
+    },
+    /// DER 长度编码错误
+    DerLengthError,
 
     // ── 通用错误 ────────────────────────────────────────────────────────────
     /// 输入数据格式无效
@@ -72,7 +144,42 @@ impl fmt::Display for Error {
             Error::Sm9DecryptFailed => write!(f, "SM9 decryption failed"),
             Error::Sm9VerifyFailed => write!(f, "SM9 signature verification failed"),
             Error::InvalidInput => write!(f, "invalid input"),
+            
+            // 证书错误
             Error::InvalidCertificate => write!(f, "invalid certificate"),
+            Error::CertificateParseError { field, reason } => {
+                write!(f, "certificate parse error in {}: {}", field, reason)
+            }
+            Error::CertificateValidationError { stage, reason } => {
+                write!(f, "certificate validation error at {}: {}", stage, reason)
+            }
+            Error::CertificateExpired => write!(f, "certificate has expired"),
+            Error::CertificateNotYetValid => write!(f, "certificate is not yet valid"),
+            Error::CertificateChainError { index, reason } => {
+                write!(f, "certificate chain error at index {}: {}", index, reason)
+            }
+            Error::CertificateRevoked => write!(f, "certificate has been revoked"),
+            
+            // CMS 错误
+            Error::CmsParseError { field, reason } => {
+                write!(f, "CMS parse error in {}: {}", field, reason)
+            }
+            Error::CmsValidationError { stage, reason } => {
+                write!(f, "CMS validation error at {}: {}", stage, reason)
+            }
+            Error::SignerNotFound => write!(f, "signer not found"),
+            Error::SignedAttrsError { attr_type, reason } => {
+                write!(f, "signed attributes error for {}: {}", attr_type, reason)
+            }
+            
+            // DER 错误
+            Error::DerEncodeError { field, reason } => {
+                write!(f, "DER encode error in {}: {}", field, reason)
+            }
+            Error::DerDecodeError { field, reason } => {
+                write!(f, "DER decode error in {}: {}", field, reason)
+            }
+            Error::DerLengthError => write!(f, "DER length error"),
         }
     }
 }

@@ -90,6 +90,66 @@ pub const MESSAGE_DIGEST_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01
 /// 用于 CMS 签名属性 signing-time
 pub const SIGNING_TIME_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05];
 
+// ====================================================================================
+// 证书扩展 OID (X.509 v3 Extensions)
+// ====================================================================================
+
+/// id-ce-basicConstraints OID (2.5.29.19)
+/// 基本约束扩展，用于标识 CA 证书和路径长度约束
+pub const ID_CE_BASIC_CONSTRAINTS: &[u8] = &[0x55, 0x1D, 0x13];
+
+/// id-ce-keyUsage OID (2.5.29.15)
+/// 密钥用途扩展，标识证书公钥的用途
+pub const ID_CE_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x0F];
+
+/// id-ce-extKeyUsage OID (2.5.29.37)
+/// 扩展密钥用途扩展，指示证书的一个或多个用途
+pub const ID_CE_EXT_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x25];
+
+/// id-ce-subjectAltName OID (2.5.29.17)
+/// 主体备用名称扩展
+pub const ID_CE_SUBJECT_ALT_NAME: &[u8] = &[0x55, 0x1D, 0x11];
+
+/// id-ce-issuerAltName OID (2.5.29.18)
+/// 签发者备用名称扩展
+pub const ID_CE_ISSUER_ALT_NAME: &[u8] = &[0x55, 0x1D, 0x12];
+
+/// id-ce-certificatePolicies OID (2.5.29.32)
+/// 证书策略扩展
+pub const ID_CE_CERTIFICATE_POLICIES: &[u8] = &[0x55, 0x1D, 0x20];
+
+/// id-ce-cRLDistributionPoints OID (2.5.29.31)
+/// CRL 分发点扩展
+pub const ID_CE_CRL_DISTRIBUTION_POINTS: &[u8] = &[0x55, 0x1D, 0x1F];
+
+/// id-ce-authorityKeyIdentifier OID (2.5.29.35)
+/// 机构密钥标识符扩展
+pub const ID_CE_AUTHORITY_KEY_IDENTIFIER: &[u8] = &[0x55, 0x1D, 0x23];
+
+/// id-ce-subjectKeyIdentifier OID (2.5.29.14)
+/// 主体密钥标识符扩展
+pub const ID_CE_SUBJECT_KEY_IDENTIFIER: &[u8] = &[0x55, 0x1D, 0x0E];
+
+/// anyExtendedKeyUsage OID (2.5.29.37.0)
+/// 任何扩展密钥用途
+pub const ANY_EXTENDED_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x25, 0x00];
+
+/// id-kp-serverAuth OID (1.3.6.1.5.5.7.3.1)
+/// 服务器认证密钥用途
+pub const ID_KP_SERVER_AUTH: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
+
+/// id-kp-clientAuth OID (1.3.6.1.5.5.7.3.2)
+/// 客户端认证密钥用途
+pub const ID_KP_CLIENT_AUTH: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02];
+
+/// id-kp-codeSigning OID (1.3.6.1.5.5.7.3.3)
+/// 代码签名密钥用途
+pub const ID_KP_CODE_SIGNING: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
+
+/// id-kp-emailProtection OID (1.3.6.1.5.5.7.3.4)
+/// 电子邮件保护密钥用途
+pub const ID_KP_EMAIL_PROTECTION: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x04];
+
 /// SM2 椭圆曲线算法标识符（用于 SubjectPublicKeyInfo）
 ///
 /// 完整的 AlgorithmIdentifier DER 编码，包含 id-ecPublicKey 和 SM2 曲线参数：

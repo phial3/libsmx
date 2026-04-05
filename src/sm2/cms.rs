@@ -1171,8 +1171,9 @@ mod tests {
         let validity = generate_test_validity();
         let serial = vec![0x01];
 
+        // 生成自签名证书用于测试
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1237,7 +1238,7 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1270,7 +1271,7 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1303,7 +1304,7 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1341,7 +1342,7 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -1371,7 +1372,7 @@ mod tests {
         let serial = vec![0x01];
 
         let cert = generate_self_signed_cert(
-            &priv_key, &subject, &validity, &serial, DEFAULT_ID, &mut rng,
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
         )
         .expect("Certificate generation should succeed");
 

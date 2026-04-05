@@ -57,6 +57,7 @@ fn create_test_cert(pub_key: &[u8; 65]) -> GmCertificate {
         validity,
         subject,
         subject_public_key_info: public_key_to_spki_der(pub_key),
+        extensions: None,
         signature: vec![0x00; 64], // 占位签名
     }
 }
@@ -103,7 +104,7 @@ fn test_self_signed_cert() {
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate self-signed certificate");
 
@@ -160,7 +161,7 @@ fn test_digital_signature_creation() {
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -187,7 +188,7 @@ fn test_digital_signature_tampering() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -224,7 +225,7 @@ fn test_digital_signature_different_id() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -257,7 +258,7 @@ fn test_digital_signature_empty_content() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -281,7 +282,7 @@ fn test_digital_signature_large_content() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -312,7 +313,7 @@ fn test_digital_signature_stability() {
     let validity = generate_test_validity();
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, &mut rng,
+        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
