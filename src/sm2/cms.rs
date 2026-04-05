@@ -44,6 +44,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use x509_cert::der::asn1::ObjectIdentifier;
+
 use crate::error::Error;
 use crate::sm2::cert::GmCertificate;
 use crate::sm2::der;
@@ -229,12 +231,12 @@ pub fn create_digital_signature<R: Rng>(
             serial_number: cert.serial_number.clone(),
         },
         digest_algorithm: AlgorithmIdentifier {
-            algorithm: crate::sm2::SM3_OID.to_vec(),
+            algorithm: crate::sm2::SM3_OID.as_bytes().to_vec(),
             parameters: Some(vec![0x05, 0x00]), // NULL
         },
         signed_attrs: Some(signed_attrs),
         signature_algorithm: AlgorithmIdentifier {
-            algorithm: crate::sm2::SM2_WITH_SM3_OID.to_vec(),
+            algorithm: crate::sm2::SM2_WITH_SM3_OID.as_bytes().to_vec(),
             parameters: None,
         },
         signature: signature.to_vec(),
@@ -245,11 +247,11 @@ pub fn create_digital_signature<R: Rng>(
     let signed_data = SignedData {
         version: 1,
         digest_algorithms: vec![AlgorithmIdentifier {
-            algorithm: crate::sm2::SM3_OID.to_vec(),
+            algorithm: crate::sm2::SM3_OID.as_bytes().to_vec(),
             parameters: Some(vec![0x05, 0x00]),
         }],
         encap_content_info: EncapsulatedContentInfo {
-            content_type: crate::sm2::ID_DATA_OID.to_vec(),
+            content_type: crate::sm2::ID_DATA_OID.as_bytes().to_vec(),
             content: Some(data.to_vec()),
         },
         certificates: vec![cert.clone()],
@@ -400,8 +402,8 @@ pub fn verify_digital_signature(
     // 解析 ContentInfo
     let content_info = parse_content_info_production(signed_data_der)?;
 
-    // 验证 contentType
-    if content_info.content_type != crate::sm2::PKCS7_SIGNED_DATA_OID {
+    // 验证 contentType - 比较字节数组
+    if content_info.content_type != crate::sm2::PKCS7_SIGNED_DATA_OID.as_bytes() {
         return Err(Error::InvalidSignature);
     }
 
@@ -557,18 +559,18 @@ fn parse_signed_attrs(data: &[u8]) -> Result<SignedAttributes, Error> {
         rest = r;
 
         // 解析 attrType OID
-        let (oid, r) = der::parse_tlv(attr_seq, 0x06).ok_or_else(err)?;
+        let (oid_bytes, r) = der::parse_tlv(attr_seq, 0x06).ok_or_else(err)?;
 
         // 解析 attrValues SET
         let (values_set, _) = der::parse_tlv(r, 0x31).ok_or_else(err)?;
 
-        // 根据 OID 处理属性
-        if oid == crate::sm2::CONTENT_TYPE_OID {
+        // 根据 OID 处理属性（比较字节数组）
+        if oid_bytes == crate::sm2::CONTENT_TYPE_OID.as_bytes() {
             // 解析 content-type
             if let Some((val, _)) = der::parse_tlv(values_set, 0x06) {
                 content_type = Some(val.to_vec());
             }
-        } else if oid == crate::sm2::MESSAGE_DIGEST_OID {
+        } else if oid_bytes == crate::sm2::MESSAGE_DIGEST_OID.as_bytes() {
             // 解析 message-digest
             if let Some((val, _)) = der::parse_tlv(values_set, 0x04) {
                 if val.len() == 32 {
@@ -577,7 +579,7 @@ fn parse_signed_attrs(data: &[u8]) -> Result<SignedAttributes, Error> {
                     message_digest = Some(digest);
                 }
             }
-        } else if oid == crate::sm2::SIGNING_TIME_OID {
+        } else if oid_bytes == crate::sm2::SIGNING_TIME_OID.as_bytes() {
             // 解析 signing-time
             if let Some((val, _)) = der::parse_tlv_any_full(values_set) {
                 signing_time = Some(val.to_vec());
@@ -674,8 +676,10 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
 
-    // contentType
-    content.extend(encode_oid(&info.content_type)?);
+    // contentType - 将 Vec<u8>转换为 ObjectIdentifier
+    let content_type_oid = ObjectIdentifier::from_bytes(&info.content_type)
+        .map_err(|_| Error::DerDecodeError { field: "content_type", reason: "invalid OID" })?;
+    content.extend(encode_oid(content_type_oid)?);
 
     // content [0] EXPLICIT (可选)
     if let Some(ref data) = info.content {
@@ -747,7 +751,10 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
 /// 编码算法标识符
 fn encode_algorithm_identifier(alg: &AlgorithmIdentifier) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
-    content.extend(encode_oid(&alg.algorithm)?);
+    // 将 Vec<u8>转换为 ObjectIdentifier
+    let algorithm_oid = ObjectIdentifier::from_bytes(&alg.algorithm)
+        .map_err(|_| Error::DerDecodeError { field: "algorithm", reason: "invalid OID" })?;
+    content.extend(encode_oid(algorithm_oid)?);
     if let Some(ref params) = alg.parameters {
         content.extend(params);
     }
@@ -755,10 +762,11 @@ fn encode_algorithm_identifier(alg: &AlgorithmIdentifier) -> Result<Vec<u8>, Err
 }
 
 /// 编码 OID
-fn encode_oid(oid: &[u8]) -> Result<Vec<u8>, Error> {
+fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
+    let bytes = oid.as_bytes();
     let mut result = vec![0x06];
-    encode_length_production(&mut result, oid.len())?;
-    result.extend(oid);
+    encode_length_production(&mut result, bytes.len())?;
+    result.extend(bytes);
     Ok(result)
 }
 

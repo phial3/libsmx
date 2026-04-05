@@ -672,8 +672,8 @@ mod tests {
         let spki = public_key_to_spki_der(&pub_key);
         // 使用 oid 模块的常量验证
         assert!(
-            spki.windows(crate::sm2::EC_PUBKEY_OID.len())
-                .any(|w| w == crate::sm2::EC_PUBKEY_OID),
+            spki.windows(crate::sm2::EC_PUBKEY_OID.as_bytes().len())
+                .any(|w| w == crate::sm2::EC_PUBKEY_OID.as_bytes()),
             "SPKI 应包含 id-ecPublicKey OID"
         );
     }

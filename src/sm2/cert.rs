@@ -132,18 +132,6 @@ pub mod key_usage_flags {
     pub const BOTH_BASIC: u16 = DIGITAL_SIGNATURE | NON_REPUDIATION | KEY_AGREEMENT | KEY_ENCIPHERMENT;
 }
 
-/// 扩展密钥用途 OID 常量
-pub mod extended_key_usage {
-    /// 服务器认证
-    pub const SERVER_AUTH: &[u8] = crate::sm2::ID_KP_SERVER_AUTH;
-    /// 客户端认证
-    pub const CLIENT_AUTH: &[u8] = crate::sm2::ID_KP_CLIENT_AUTH;
-    /// 代码签名
-    pub const CODE_SIGNING: &[u8] = crate::sm2::ID_KP_CODE_SIGNING;
-    /// 电子邮件保护
-    pub const EMAIL_PROTECTION: &[u8] = crate::sm2::ID_KP_EMAIL_PROTECTION;
-}
-
 // ====================================================================================
 // 证书扩展辅助函数（使用 x509-cert::ext 类型）
 // ====================================================================================
@@ -165,7 +153,7 @@ pub fn create_key_usage_extension(key_usage: u16) -> Extension {
     der_bytes.push((key_usage & 0xFF) as u8); // low byte
 
     Extension {
-        extn_id: ObjectIdentifier::from_bytes(crate::sm2::ID_CE_KEY_USAGE).unwrap(),
+        extn_id: crate::sm2::ID_CE_KEY_USAGE,
         critical: true,
         extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
             .expect("Failed to create OctetString"),
@@ -194,7 +182,7 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
         .expect("Failed to encode BasicConstraints");
 
     Extension {
-        extn_id: ObjectIdentifier::from_bytes(crate::sm2::ID_CE_BASIC_CONSTRAINTS).unwrap(),
+        extn_id: crate::sm2::ID_CE_BASIC_CONSTRAINTS,
         critical: is_ca,
         extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
             .expect("Failed to create OctetString"),
@@ -208,23 +196,18 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
 ///
 /// # 返回
 /// x509-cert 的 Extension 类型
-pub fn create_extended_key_usage_extension(usages: &[Vec<u8>]) -> Extension {
+pub fn create_extended_key_usage_extension(usages: &[ObjectIdentifier]) -> Extension {
     use x509_cert::der::Encode;
     use x509_cert::ext::pkix::ExtendedKeyUsage;
 
-    let oids: Vec<_> = usages
-        .iter()
-        .map(|bytes| ObjectIdentifier::from_bytes(bytes).unwrap())
-        .collect();
-
-    let ext_key_usage = ExtendedKeyUsage(oids);
+    let ext_key_usage = ExtendedKeyUsage(usages.iter().copied().collect());
 
     let der_bytes = ext_key_usage
         .to_der()
         .expect("Failed to encode ExtendedKeyUsage");
 
     Extension {
-        extn_id: ObjectIdentifier::from_bytes(crate::sm2::ID_CE_EXT_KEY_USAGE).unwrap(),
+        extn_id: crate::sm2::ID_CE_EXT_KEY_USAGE,
         critical: false,
         extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
             .expect("Failed to create OctetString"),
@@ -900,13 +883,13 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
 
     // 解析第一个 OID (id-ecPublicKey = 1.2.840.10045.2.1)
     let (first_oid, params) = der::parse_tlv(alg_id, 0x06).ok_or_else(err)?;
-    if first_oid != crate::sm2::EC_PUBKEY_OID {
+    if first_oid != crate::sm2::EC_PUBKEY_OID.as_bytes() {
         return Err(err());
     }
 
     // 解析第二个 OID (SM2 = 1.2.156.10197.1.301)
     let (second_oid, _) = der::parse_tlv(params, 0x06).ok_or_else(err)?;
-    if second_oid != crate::sm2::SM2_PUBKEY_OID {
+    if second_oid != crate::sm2::SM2_PUBKEY_OID.as_bytes() {
         return Err(err());
     }
 
@@ -1413,75 +1396,6 @@ impl CertificateBuilder {
     /// 自引用
     pub fn add_extension(mut self, extension: Extension) -> Self {
         self.extensions.push(extension);
-        self
-    }
-
-    /// 设置 CA 证书扩展（Basic Constraints + Key Usage）
-    ///
-    /// # 参数
-    /// - `path_len`: 路径长度约束（可选）
-    ///
-    /// # 返回
-    /// 自引用
-    pub fn ca_extensions(mut self, path_len: Option<u8>) -> Self {
-        // Basic Constraints
-        self.extensions
-            .push(create_basic_constraints_extension(true, path_len));
-        // Key Usage: keyCertSign + cRLSign
-        self.extensions
-            .push(create_key_usage_extension(key_usage_flags::CA_BASIC));
-        self
-    }
-
-    /// 设置签名证书扩展（Key Usage + Extended Key Usage）
-    ///
-    /// # 参数
-    /// - `eku_oids`: 扩展密钥用途 OID 列表
-    ///
-    /// # 返回
-    /// 自引用
-    pub fn signing_extensions(mut self, eku_oids: &[&[u8]]) -> Self {
-        // Key Usage: digitalSignature + nonRepudiation
-        self.extensions
-            .push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
-        // Extended Key Usage
-        if !eku_oids.is_empty() {
-            let usages: Vec<Vec<u8>> = eku_oids.iter().map(|oid| oid.to_vec()).collect();
-            self.extensions
-                .push(create_extended_key_usage_extension(&usages));
-        }
-        self
-    }
-
-    /// 设置加密证书扩展（Key Usage）
-    ///
-    /// # 返回
-    /// 自引用
-    pub fn encryption_extensions(mut self) -> Self {
-        // Key Usage: keyAgreement + keyEncipherment
-        self.extensions.push(create_key_usage_extension(
-            key_usage_flags::ENCRYPTION_BASIC,
-        ));
-        self
-    }
-
-    /// 设置通用证书扩展（签名 + 加密）
-    ///
-    /// # 参数
-    /// - `eku_oids`: 扩展密钥用途 OID 列表
-    ///
-    /// # 返回
-    /// 自引用
-    pub fn both_extensions(mut self, eku_oids: &[&[u8]]) -> Self {
-        // Key Usage: digitalSignature + nonRepudiation + keyAgreement + keyEncipherment
-        self.extensions
-            .push(create_key_usage_extension(key_usage_flags::BOTH_BASIC));
-        // Extended Key Usage
-        if !eku_oids.is_empty() {
-            let usages: Vec<Vec<u8>> = eku_oids.iter().map(|oid| oid.to_vec()).collect();
-            self.extensions
-                .push(create_extended_key_usage_extension(&usages));
-        }
         self
     }
 
@@ -2613,7 +2527,7 @@ mod tests {
         let mut extensions = Vec::new();
         extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
         extensions.push(create_extended_key_usage_extension(&vec![
-            crate::sm2::ID_KP_CODE_SIGNING.to_vec(),
+            crate::sm2::ID_KP_CODE_SIGNING,
         ]));
 
         let cert = generate_self_signed_cert(
@@ -2681,8 +2595,8 @@ mod tests {
         let mut extensions = Vec::new();
         extensions.push(create_key_usage_extension(key_usage_flags::BOTH_BASIC));
         extensions.push(create_extended_key_usage_extension(&vec![
-            crate::sm2::ID_KP_SERVER_AUTH.to_vec(),
-            crate::sm2::ID_KP_CLIENT_AUTH.to_vec(),
+            crate::sm2::ID_KP_SERVER_AUTH,
+            crate::sm2::ID_KP_CLIENT_AUTH,
         ]));
 
         let cert = generate_self_signed_cert(
@@ -2758,7 +2672,7 @@ mod tests {
         let mut ee_extensions = Vec::new();
         ee_extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
         ee_extensions.push(create_extended_key_usage_extension(&vec![
-            crate::sm2::ID_KP_CODE_SIGNING.to_vec(),
+            crate::sm2::ID_KP_CODE_SIGNING,
         ]));
 
         let ee_cert = issue_certificate(
@@ -2834,7 +2748,7 @@ mod tests {
         let mut ee_extensions = Vec::new();
         ee_extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
         ee_extensions.push(create_extended_key_usage_extension(&vec![
-            crate::sm2::ID_KP_CODE_SIGNING.to_vec(),
+            crate::sm2::ID_KP_CODE_SIGNING,
         ]));
         let ee_cert = issue_certificate(
             &ca_cert,

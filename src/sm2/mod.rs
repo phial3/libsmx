@@ -39,6 +39,8 @@ use rand_core::Rng;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use x509_cert::der::asn1::ObjectIdentifier;
+
 use crate::error::Error;
 use crate::sm2::ec::{multi_scalar_mul, AffinePoint, JacobianPoint};
 use crate::sm2::field::{
@@ -53,42 +55,42 @@ use crate::sm3::Sm3Hasher;
 pub const DEFAULT_ID: &[u8] = b"1234567812345678";
 
 // ====================================================================================
-// OID 常量定义
+// OID 常量定义（使用 ObjectIdentifier 类型）
 // ====================================================================================
 
 /// SM2 椭圆曲线公钥算法 sm2p256v1 OID (1.2.156.10197.1.301)
-pub const SM2_PUBKEY_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D];
+pub const SM2_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.301");
 
 /// SM2withSM3 签名算法 OID (1.2.156.10197.1.501)
 /// 与 SM2_SIGN_OID 相同，用于 X.509 证书签名算法标识
-pub const SM2_WITH_SM3_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75];
+pub const SM2_WITH_SM3_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
 
 /// SM3 哈希算法 OID (1.2.156.10197.1.401)
-pub const SM3_OID: &[u8] = &[0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x65, 0x01];
+pub const SM3_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.401");
 
 /// EC 公钥算法 OID (1.2.840.10045.2.1)
 /// 通用椭圆曲线公钥算法 OID（id-ecPublicKey），与 SM2 算法 OID 配合使用
-pub const EC_PUBKEY_OID: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
+pub const EC_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
 
 /// PKCS#7/CMS SignedData OID (1.2.840.113549.1.7.2)
 /// 用于 PKCS#7/CMS 签名数据内容类型
-pub const PKCS7_SIGNED_DATA_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+pub const PKCS7_SIGNED_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 
 /// id-data OID (1.2.840.113549.1.7.1)
 /// 用于 PKCS#7/CMS 数据内容类型
-pub const ID_DATA_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01];
+pub const ID_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
 
 /// content-type 属性 OID (1.2.840.113549.1.9.3)
 /// 用于 CMS 签名属性 content-type
-pub const CONTENT_TYPE_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03];
+pub const CONTENT_TYPE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
 
 /// message-digest 属性 OID (1.2.840.113549.1.9.4)
 /// 用于 CMS 签名属性 message-digest
-pub const MESSAGE_DIGEST_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04];
+pub const MESSAGE_DIGEST_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4");
 
 /// signing-time 属性 OID (1.2.840.113549.1.9.5)
 /// 用于 CMS 签名属性 signing-time
-pub const SIGNING_TIME_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05];
+pub const SIGNING_TIME_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.5");
 
 // ====================================================================================
 // 证书扩展 OID (X.509 v3 Extensions)
@@ -96,59 +98,61 @@ pub const SIGNING_TIME_OID: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 
 
 /// id-ce-basicConstraints OID (2.5.29.19)
 /// 基本约束扩展，用于标识 CA 证书和路径长度约束
-pub const ID_CE_BASIC_CONSTRAINTS: &[u8] = &[0x55, 0x1D, 0x13];
+pub const ID_CE_BASIC_CONSTRAINTS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");
 
 /// id-ce-keyUsage OID (2.5.29.15)
 /// 密钥用途扩展，标识证书公钥的用途
-pub const ID_CE_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x0F];
+pub const ID_CE_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
 
 /// id-ce-extKeyUsage OID (2.5.29.37)
 /// 扩展密钥用途扩展，指示证书的一个或多个用途
-pub const ID_CE_EXT_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x25];
+pub const ID_CE_EXT_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37");
 
 /// id-ce-subjectAltName OID (2.5.29.17)
 /// 主体备用名称扩展
-pub const ID_CE_SUBJECT_ALT_NAME: &[u8] = &[0x55, 0x1D, 0x11];
+pub const ID_CE_SUBJECT_ALT_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.17");
 
 /// id-ce-issuerAltName OID (2.5.29.18)
 /// 签发者备用名称扩展
-pub const ID_CE_ISSUER_ALT_NAME: &[u8] = &[0x55, 0x1D, 0x12];
+pub const ID_CE_ISSUER_ALT_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.18");
 
 /// id-ce-certificatePolicies OID (2.5.29.32)
 /// 证书策略扩展
-pub const ID_CE_CERTIFICATE_POLICIES: &[u8] = &[0x55, 0x1D, 0x20];
+pub const ID_CE_CERTIFICATE_POLICIES: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.32");
 
 /// id-ce-cRLDistributionPoints OID (2.5.29.31)
 /// CRL 分发点扩展
-pub const ID_CE_CRL_DISTRIBUTION_POINTS: &[u8] = &[0x55, 0x1D, 0x1F];
+pub const ID_CE_CRL_DISTRIBUTION_POINTS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.31");
 
 /// id-ce-authorityKeyIdentifier OID (2.5.29.35)
 /// 机构密钥标识符扩展
-pub const ID_CE_AUTHORITY_KEY_IDENTIFIER: &[u8] = &[0x55, 0x1D, 0x23];
+pub const ID_CE_AUTHORITY_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.35");
 
 /// id-ce-subjectKeyIdentifier OID (2.5.29.14)
 /// 主体密钥标识符扩展
-pub const ID_CE_SUBJECT_KEY_IDENTIFIER: &[u8] = &[0x55, 0x1D, 0x0E];
+pub const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.14");
 
 /// anyExtendedKeyUsage OID (2.5.29.37.0)
 /// 任何扩展密钥用途
-pub const ANY_EXTENDED_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x25, 0x00];
+pub const ANY_EXTENDED_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37.0");
 
+/// 扩展密钥用途 OID 常量
+///
 /// id-kp-serverAuth OID (1.3.6.1.5.5.7.3.1)
 /// 服务器认证密钥用途
-pub const ID_KP_SERVER_AUTH: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
+pub const ID_KP_SERVER_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.1");
 
 /// id-kp-clientAuth OID (1.3.6.1.5.5.7.3.2)
 /// 客户端认证密钥用途
-pub const ID_KP_CLIENT_AUTH: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02];
+pub const ID_KP_CLIENT_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.2");
 
 /// id-kp-codeSigning OID (1.3.6.1.5.5.7.3.3)
 /// 代码签名密钥用途
-pub const ID_KP_CODE_SIGNING: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
+pub const ID_KP_CODE_SIGNING: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.3");
 
 /// id-kp-emailProtection OID (1.3.6.1.5.5.7.3.4)
 /// 电子邮件保护密钥用途
-pub const ID_KP_EMAIL_PROTECTION: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x04];
+pub const ID_KP_EMAIL_PROTECTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.4");
 
 /// SM2 椭圆曲线算法标识符（用于 SubjectPublicKeyInfo）
 ///
