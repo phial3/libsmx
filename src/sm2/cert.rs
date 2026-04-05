@@ -41,10 +41,10 @@ use crate::error::Error;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
-
 use x509_cert::der::asn1::ObjectIdentifier;
 use x509_cert::der::pem::{decode_vec, encode_string};
-use x509_cert::der::Decode;
+use x509_cert::der::{Decode, Encode};
+use x509_cert::ext::pkix::{ExtendedKeyUsage, KeyUsage, KeyUsages};
 use x509_cert::ext::Extension;
 use x509_cert::time::Validity;
 use x509_cert::Certificate;
@@ -96,65 +96,77 @@ pub struct GmCertificate {
 }
 
 // ====================================================================================
-// 证书扩展配置（使用 x509-cert 标准类型）
-// ====================================================================================
-
-/// 密钥用途标志
-///
-/// 直接定义常用组合，避免自定义枚举
-pub mod key_usage_flags {
-    /// 数字签名 (bit 0)
-    pub const DIGITAL_SIGNATURE: u16 = 0b00000000_00000001;
-    /// 不可否认 (bit 1)
-    pub const NON_REPUDIATION: u16 = 0b00000000_00000010;
-    /// 密钥加密 (bit 2)
-    pub const KEY_ENCIPHERMENT: u16 = 0b00000000_00000100;
-    /// 数据加密 (bit 3)
-    pub const DATA_ENCIPHERMENT: u16 = 0b00000000_00001000;
-    /// 密钥协商 (bit 4)
-    pub const KEY_AGREEMENT: u16 = 0b00000000_00010000;
-    /// 证书签名 (bit 5)
-    pub const KEY_CERT_SIGN: u16 = 0b00000000_00100000;
-    /// CRL 签名 (bit 6)
-    pub const CRL_SIGN: u16 = 0b00000000_01000000;
-    /// 仅加密 (bit 7)
-    pub const ENCIPHER_ONLY: u16 = 0b00000000_10000000;
-    /// 仅解密 (bit 8)
-    pub const DECIPHER_ONLY: u16 = 0b00000001_00000000;
-
-    /// CA 证书常用组合
-    pub const CA_BASIC: u16 = KEY_CERT_SIGN | CRL_SIGN;
-    /// 签名证书常用组合
-    pub const SIGNING_BASIC: u16 = DIGITAL_SIGNATURE | NON_REPUDIATION;
-    /// 加密证书常用组合
-    pub const ENCRYPTION_BASIC: u16 = KEY_AGREEMENT | KEY_ENCIPHERMENT;
-    /// 通用证书（签名 + 加密）
-    pub const BOTH_BASIC: u16 = DIGITAL_SIGNATURE | NON_REPUDIATION | KEY_AGREEMENT | KEY_ENCIPHERMENT;
-}
-
-// ====================================================================================
 // 证书扩展辅助函数（使用 x509-cert::ext 类型）
 // ====================================================================================
 
-/// 创建 Key Usage 扩展
+/// 常用 KeyUsage 组合（便捷函数）
+///
+/// 使用 x509-cert 的 KeyUsages 枚举创建常用组合
+pub mod key_usage_presets {
+    use super::{KeyUsage, KeyUsages};
+
+    /// CA 证书常用组合：证书签名 + CRL 签名
+    pub fn ca_basic() -> KeyUsage {
+        KeyUsage(KeyUsages::KeyCertSign | KeyUsages::CRLSign)
+    }
+
+    /// 签名证书常用组合：数字签名 + 不可否认
+    pub fn signing_basic() -> KeyUsage {
+        KeyUsage(KeyUsages::DigitalSignature | KeyUsages::NonRepudiation)
+    }
+
+    /// 加密证书常用组合：密钥协商 + 密钥加密
+    pub fn encryption_basic() -> KeyUsage {
+        KeyUsage(KeyUsages::KeyAgreement | KeyUsages::KeyEncipherment)
+    }
+
+    /// 通用证书（签名 + 加密）
+    pub fn both_basic() -> KeyUsage {
+        KeyUsage(
+            KeyUsages::DigitalSignature
+                | KeyUsages::NonRepudiation
+                | KeyUsages::KeyAgreement
+                | KeyUsages::KeyEncipherment
+                | KeyUsages::DataEncipherment,
+        )
+    }
+}
+
+/// 创建 Key Usage 扩展（使用 x509-cert 的 KeyUsage 类型）
 ///
 /// # 参数
-/// - `key_usage`: 密钥用途位掩码（bit 掩码，bit 0=digitalSignature, bit 1=nonRepudiation, 等）
+/// - `key_usage`: 密钥用途（使用 x509-cert 的 KeyUsage 类型）
 ///
 /// # 返回
 /// x509-cert 的 Extension 类型
-pub fn create_key_usage_extension(key_usage: u16) -> Extension {
-    // 直接手动创建 BIT STRING DER 编码
-    let mut der_bytes = Vec::new();
-    der_bytes.push(0x03); // BIT STRING tag
-    der_bytes.push(0x03); // length (2 bytes: unused_bits + value)
-    der_bytes.push(0x00); // unused bits
-    der_bytes.push((key_usage >> 8) as u8); // high byte
-    der_bytes.push((key_usage & 0xFF) as u8); // low byte
+pub fn create_key_usage_extension(key_usage: KeyUsage) -> Extension {
+    let der_bytes = key_usage.to_der().expect("Failed to encode KeyUsage");
 
     Extension {
         extn_id: crate::sm2::ID_CE_KEY_USAGE,
         critical: true,
+        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
+            .expect("Failed to create OctetString"),
+    }
+}
+
+/// 创建 Extended Key Usage 扩展
+///
+/// # 参数
+/// - `usages`: 密钥用途 OID 列表
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_extended_key_usage_extension(usages: &[ObjectIdentifier]) -> Extension {
+    let ext_key_usage = ExtendedKeyUsage(usages.to_vec());
+
+    let der_bytes = ext_key_usage
+        .to_der()
+        .expect("Failed to encode ExtendedKeyUsage");
+
+    Extension {
+        extn_id: crate::sm2::ID_CE_EXT_KEY_USAGE,
+        critical: false,
         extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
             .expect("Failed to create OctetString"),
     }
@@ -169,7 +181,6 @@ pub fn create_key_usage_extension(key_usage: u16) -> Extension {
 /// # 返回
 /// x509-cert 的 Extension 类型
 pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> Extension {
-    use x509_cert::der::Encode;
     use x509_cert::ext::pkix::BasicConstraints;
 
     let basic_constraints = BasicConstraints {
@@ -187,52 +198,6 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
         extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
             .expect("Failed to create OctetString"),
     }
-}
-
-/// 创建 Extended Key Usage 扩展
-///
-/// # 参数
-/// - `usages`: 密钥用途 OID 列表
-///
-/// # 返回
-/// x509-cert 的 Extension 类型
-pub fn create_extended_key_usage_extension(usages: &[ObjectIdentifier]) -> Extension {
-    use x509_cert::der::Encode;
-    use x509_cert::ext::pkix::ExtendedKeyUsage;
-
-    let ext_key_usage = ExtendedKeyUsage(usages.iter().copied().collect());
-
-    let der_bytes = ext_key_usage
-        .to_der()
-        .expect("Failed to encode ExtendedKeyUsage");
-
-    Extension {
-        extn_id: crate::sm2::ID_CE_EXT_KEY_USAGE,
-        critical: false,
-        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
-            .expect("Failed to create OctetString"),
-    }
-}
-
-/// 创建 Subject Alternative Name 扩展
-///
-/// # 参数
-/// - `general_names`: 通用名称列表（支持 email, dns, uri, ip 等）
-///
-/// # 返回
-/// x509-cert 的 Extension 类型
-pub fn create_subject_alt_name_extension(
-    general_names: x509_cert::ext::pkix::name::GeneralNames,
-) -> Extension {
-    use x509_cert::ext::pkix::SubjectAltName;
-    use x509_cert::ext::ToExtension;
-    use x509_cert::name::Name;
-
-    let san = SubjectAltName(general_names);
-    let empty_name = Name::default();
-
-    san.to_extension(&empty_name, &[])
-        .expect("Failed to create SubjectAltName extension")
 }
 
 /// 从 DER 数据解析扩展
@@ -1392,7 +1357,7 @@ impl CertificateBuilder {
         self
     }
 
-    /// 添加证书扩展
+    /// 添加证书扩展（使用 x509-cert 的 Extension 类型）
     ///
     /// # 参数
     /// - `extension`: x509-cert 的 Extension 类型
@@ -1401,6 +1366,43 @@ impl CertificateBuilder {
     /// 自引用
     pub fn add_extension(mut self, extension: Extension) -> Self {
         self.extensions.push(extension);
+        self
+    }
+
+    /// 添加基本约束扩展（便捷方法）
+    ///
+    /// # 参数
+    /// - `is_ca`: 是否为 CA 证书
+    /// - `path_len`: 路径长度约束（仅当 is_ca=true 时有效）
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn add_basic_constraints(mut self, is_ca: bool, path_len: Option<u8>) -> Self {
+        self.extensions.push(create_basic_constraints_extension(is_ca, path_len));
+        self
+    }
+
+    /// 添加密钥用途扩展（便捷方法）
+    ///
+    /// # 参数
+    /// - `key_usage`: 密钥用途（使用 x509-cert 的 KeyUsage 类型）
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn add_key_usage(mut self, key_usage: KeyUsage) -> Self {
+        self.extensions.push(create_key_usage_extension(key_usage));
+        self
+    }
+
+    /// 添加扩展密钥用途扩展（便捷方法）
+    ///
+    /// # 参数
+    /// - `usages`: 密钥用途 OID 列表
+    ///
+    /// # 返回
+    /// 自引用
+    pub fn add_extended_key_usage(mut self, usages: &[ObjectIdentifier]) -> Self {
+        self.extensions.push(create_extended_key_usage_extension(usages));
         self
     }
 
@@ -1431,7 +1433,6 @@ impl CertificateBuilder {
         let not_after = self.not_after.ok_or(Error::InvalidCertificate)?;
 
         // 生成有效期 DER（使用 x509-cert 的 Time 类型）
-        use x509_cert::der::Encode;
         let not_before_time =
             x509_cert::time::Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
         let not_after_time =
@@ -2108,6 +2109,7 @@ fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
 /// # 返回
 /// - `Ok(GmCertificate)`: 签发成功的新证书
 /// - `Err(Error)`: 签发失败
+#[allow(clippy::too_many_arguments)]
 pub fn issue_certificate<R: Rng>(
     ca_cert: &GmCertificate,
     ca_priv_key: &PrivateKey,
@@ -2248,7 +2250,7 @@ mod tests {
             X500Attribute::new(X500AttributeType::CommonName, common_name),
         ])
     }
-    
+
     /// 构建测试用的序列号
     ///
     /// # 参数
@@ -2284,10 +2286,10 @@ mod tests {
             encoded.extend_from_slice(time_str.as_bytes());
             encoded
         };
-        
+
         let not_before_der = encode_utctime(not_before);
         let not_after_der = encode_utctime(not_after);
-        
+
         // 构建 Validity SEQUENCE
         let mut validity = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
         validity.push(0x30); // SEQUENCE tag
@@ -2363,7 +2365,7 @@ mod tests {
         serial: Vec<u8>,
         validity: Vec<u8>,
     }
-    
+
     // -- 证书测试 ------------------------------------------------------------
 
     #[test]
@@ -2374,7 +2376,13 @@ mod tests {
         let params = CertTestBuilder::new().build();
 
         let cert = generate_self_signed_cert(
-            &priv_key, &params.subject, &params.validity, &params.serial, DEFAULT_ID, None, &mut rng,
+            &priv_key,
+            &params.subject,
+            &params.validity,
+            &params.serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -2422,7 +2430,13 @@ mod tests {
             .build();
 
         let cert = generate_self_signed_cert(
-            &priv_key, &params.subject, &params.validity, &params.serial, DEFAULT_ID, None, &mut rng,
+            &priv_key,
+            &params.subject,
+            &params.validity,
+            &params.serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -2437,7 +2451,13 @@ mod tests {
         let params = CertTestBuilder::new().build();
 
         let cert = generate_self_signed_cert(
-            &priv_key, &params.subject, &params.validity, &params.serial, DEFAULT_ID, None, &mut rng,
+            &priv_key,
+            &params.subject,
+            &params.validity,
+            &params.serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
         )
         .expect("Certificate generation should succeed");
 
@@ -2596,7 +2616,7 @@ mod tests {
         // 创建 CA 证书扩展
         let mut extensions = Vec::new();
         extensions.push(create_basic_constraints_extension(true, Some(0)));
-        extensions.push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+        extensions.push(create_key_usage_extension(key_usage_presets::ca_basic()));
 
         let cert = generate_self_signed_cert(
             &priv_key,
@@ -2629,8 +2649,10 @@ mod tests {
 
         // 创建签名证书扩展
         let mut extensions = Vec::new();
-        extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
-        extensions.push(create_extended_key_usage_extension(&vec![
+        extensions.push(create_key_usage_extension(
+            key_usage_presets::signing_basic(),
+        ));
+        extensions.push(create_extended_key_usage_extension(&[
             crate::sm2::ID_KP_CODE_SIGNING,
         ]));
 
@@ -2664,7 +2686,7 @@ mod tests {
 
         // 创建加密证书扩展
         let extensions = vec![create_key_usage_extension(
-            key_usage_flags::ENCRYPTION_BASIC,
+            key_usage_presets::encryption_basic(),
         )];
 
         let cert = generate_self_signed_cert(
@@ -2697,8 +2719,8 @@ mod tests {
 
         // 创建通用证书扩展
         let mut extensions = Vec::new();
-        extensions.push(create_key_usage_extension(key_usage_flags::BOTH_BASIC));
-        extensions.push(create_extended_key_usage_extension(&vec![
+        extensions.push(create_key_usage_extension(key_usage_presets::both_basic()));
+        extensions.push(create_extended_key_usage_extension(&[
             crate::sm2::ID_KP_SERVER_AUTH,
             crate::sm2::ID_KP_CLIENT_AUTH,
         ]));
@@ -2754,7 +2776,7 @@ mod tests {
         // 生成 CA 证书
         let mut ca_extensions = Vec::new();
         ca_extensions.push(create_basic_constraints_extension(true, Some(0)));
-        ca_extensions.push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+        ca_extensions.push(create_key_usage_extension(key_usage_presets::ca_basic()));
 
         let ca_cert = generate_self_signed_cert(
             &ca_priv_key,
@@ -2774,8 +2796,10 @@ mod tests {
 
         // 使用 CA 签发终端实体证书
         let mut ee_extensions = Vec::new();
-        ee_extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
-        ee_extensions.push(create_extended_key_usage_extension(&vec![
+        ee_extensions.push(create_key_usage_extension(
+            key_usage_presets::signing_basic(),
+        ));
+        ee_extensions.push(create_extended_key_usage_extension(&[
             crate::sm2::ID_KP_CODE_SIGNING,
         ]));
 
@@ -2826,7 +2850,7 @@ mod tests {
         // 2. 生成 CA 证书（自签名）
         let mut ca_extensions = Vec::new();
         ca_extensions.push(create_basic_constraints_extension(true, Some(0)));
-        ca_extensions.push(create_key_usage_extension(key_usage_flags::CA_BASIC));
+        ca_extensions.push(create_key_usage_extension(key_usage_presets::ca_basic()));
         let ca_cert = generate_self_signed_cert(
             &ca_priv_key,
             &ca_subject,
@@ -2850,8 +2874,10 @@ mod tests {
 
         // 4. 使用 CA 签发终端实体证书（形成证书链）
         let mut ee_extensions = Vec::new();
-        ee_extensions.push(create_key_usage_extension(key_usage_flags::SIGNING_BASIC));
-        ee_extensions.push(create_extended_key_usage_extension(&vec![
+        ee_extensions.push(create_key_usage_extension(
+            key_usage_presets::signing_basic(),
+        ));
+        ee_extensions.push(create_extended_key_usage_extension(&[
             crate::sm2::ID_KP_CODE_SIGNING,
         ]));
         let ee_cert = issue_certificate(
