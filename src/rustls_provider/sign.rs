@@ -4,18 +4,29 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
 
+use crate::sm2::der::{public_key_to_spki_der, sig_to_der};
+use crate::sm2::{sign_message, verify_message, PrivateKey, DEFAULT_ID};
 use pki_types::{
     AlgorithmIdentifier, PrivateKeyDer, SignatureVerificationAlgorithm, SubjectPublicKeyInfoDer,
 };
 use rustls::crypto::{SignatureScheme, Signer, SigningKey};
 use rustls::error::Error;
 
-use crate::sm2::{
-    der::{public_key_to_spki_der, sig_to_der},
-    sign_message, verify_message, PrivateKey, DEFAULT_ID, SM2_SIGNATURE_ALGORITHM,
-    SM2_SPKI_ALGORITHM,
-};
-use x509_cert::der::Encode;
+// SM2 公钥算法标识符的 DER 编码（静态常量）
+const SM2_SPKI_ALGORITHM_DER: &[u8] = &[
+    0x30, 0x13, // SEQUENCE, length = 19
+    0x06, 0x07, // OID, length = 7
+    0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, // id-ecPublicKey (1.2.840.10045.2.1)
+    0x06, 0x08, // OID, length = 8
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D, // SM2 (1.2.156.10197.1.301)
+];
+
+// SM2WithSM3 签名算法标识符的 DER 编码（静态常量）
+const SM2_SIGNATURE_ALGORITHM_DER: &[u8] = &[
+    0x30, 0x0A, // SEQUENCE, length = 10
+    0x06, 0x08, // OID, length = 8
+    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75, // SM2withSM3 (1.2.156.10197.1.501)
+];
 
 /// 从 DER 编码的私钥加载 SM2 签名密钥
 pub(crate) fn load_private_key(
@@ -44,11 +55,11 @@ pub struct Sm2Sm3Algorithm;
 
 impl SignatureVerificationAlgorithm for Sm2Sm3Algorithm {
     fn public_key_alg_id(&self) -> AlgorithmIdentifier {
-        AlgorithmIdentifier::from_slice(&SM2_SPKI_ALGORITHM.to_der().unwrap())
+        AlgorithmIdentifier::from_slice(SM2_SPKI_ALGORITHM_DER)
     }
 
     fn signature_alg_id(&self) -> AlgorithmIdentifier {
-        AlgorithmIdentifier::from_slice(&SM2_SIGNATURE_ALGORITHM.to_der().unwrap())
+        AlgorithmIdentifier::from_slice(SM2_SIGNATURE_ALGORITHM_DER)
     }
 
     fn verify_signature(

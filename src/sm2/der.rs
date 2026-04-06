@@ -33,8 +33,8 @@ use alloc::vec::Vec;
 use crate::error::Error;
 use crate::sm2::PrivateKey;
 use x509_cert::der::{Decode, Encode};
-use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 use x509_cert::der::asn1::BitString;
+use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
 ///
