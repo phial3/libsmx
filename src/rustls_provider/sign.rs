@@ -12,9 +12,10 @@ use rustls::error::Error;
 
 use crate::sm2::{
     der::{public_key_to_spki_der, sig_to_der},
-    sign_message, verify_message, PrivateKey, DEFAULT_ID, SM2_EC_PUBKEY_PARAMETER,
-    SM2_WITH_SM3_ALGORITHM_IDENTIFIER,
+    sign_message, verify_message, PrivateKey, DEFAULT_ID, SM2_SIGNATURE_ALGORITHM,
+    SM2_SPKI_ALGORITHM,
 };
+use x509_cert::der::Encode;
 
 /// 从 DER 编码的私钥加载 SM2 签名密钥
 pub(crate) fn load_private_key(
@@ -43,11 +44,11 @@ pub struct Sm2Sm3Algorithm;
 
 impl SignatureVerificationAlgorithm for Sm2Sm3Algorithm {
     fn public_key_alg_id(&self) -> AlgorithmIdentifier {
-        AlgorithmIdentifier::from_slice(SM2_EC_PUBKEY_PARAMETER)
+        AlgorithmIdentifier::from_slice(&SM2_SPKI_ALGORITHM.to_der().unwrap())
     }
 
     fn signature_alg_id(&self) -> AlgorithmIdentifier {
-        AlgorithmIdentifier::from_slice(SM2_WITH_SM3_ALGORITHM_IDENTIFIER)
+        AlgorithmIdentifier::from_slice(&SM2_SIGNATURE_ALGORITHM.to_der().unwrap())
     }
 
     fn verify_signature(

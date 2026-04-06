@@ -1458,7 +1458,8 @@ impl CertificateBuilder {
         tbs.extend_from_slice(&self.serial_number);
 
         // 签名算法 (SM2withSM3)
-        tbs.extend_from_slice(crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER);
+        use x509_cert::der::Encode;
+        tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
         // 签发者
         tbs.extend_from_slice(&issuer);
@@ -1507,7 +1508,7 @@ impl CertificateBuilder {
         Ok(GmCertificate {
             version: 2,
             serial_number: self.serial_number,
-            signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+            signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
             issuer,
             validity: validity_seq,
             subject,
@@ -1928,7 +1929,8 @@ pub fn generate_self_signed_cert<R: Rng>(
     tbs.extend_from_slice(serial_number);
 
     // 签名算法 (SM2withSM3)
-    tbs.extend_from_slice(crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER);
+    use x509_cert::der::Encode;
+    tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
     // 签发者 = 主体
     tbs.extend_from_slice(subject);
@@ -1983,7 +1985,7 @@ pub fn generate_self_signed_cert<R: Rng>(
     Ok(GmCertificate {
         version: 2,
         serial_number: serial_number.to_vec(),
-        signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
         issuer: subject.to_vec(),
         validity: validity.to_vec(),
         subject: subject.to_vec(),
@@ -2123,7 +2125,8 @@ pub fn issue_certificate<R: Rng>(
     tbs.extend_from_slice(serial_number);
 
     // 签名算法 (SM2withSM3)
-    tbs.extend_from_slice(crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER);
+    use x509_cert::der::Encode;
+    tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
     // 签发者（使用 CA 的主体）
     tbs.extend_from_slice(&ca_cert.subject);
@@ -2178,7 +2181,7 @@ pub fn issue_certificate<R: Rng>(
     Ok(GmCertificate {
         version: 2,
         serial_number: serial_number.to_vec(),
-        signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
         issuer: ca_cert.subject.clone(), // 签发者是 CA
         validity: validity.to_vec(),
         subject: subject.to_vec(),
@@ -2388,7 +2391,7 @@ mod tests {
         let cert = GmCertificate {
             version: 2,
             serial_number: params.serial,
-            signature_algorithm: crate::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+            signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
             issuer: params.issuer,
             validity: params.validity,
             subject: params.subject,

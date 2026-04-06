@@ -15,6 +15,7 @@ use libsmx::sm2::cms;
 use libsmx::sm2::{generate_keypair, public_key_from_spki_der, public_key_to_spki_der, DEFAULT_ID};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use x509_cert::der::Encode;
 
 /// 创建简单的 DER Name 结构（空 RDNSequence）
 /// 格式：SET OF {}
@@ -52,7 +53,7 @@ fn create_test_cert(pub_key: &[u8; 65]) -> GmCertificate {
     GmCertificate {
         version: 2, // v3
         serial_number: vec![0x01],
-        signature_algorithm: libsmx::sm2::SM2_WITH_SM3_ALGORITHM_IDENTIFIER.to_vec(),
+        signature_algorithm: libsmx::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
         issuer,
         validity,
         subject,

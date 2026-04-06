@@ -225,10 +225,7 @@ pub fn create_digital_signature<R: Rng>(
             parameters: None,
         },
         signed_attrs: Some(signed_attrs),
-        signature_algorithm: AlgorithmIdentifier {
-            oid: crate::sm2::SM2_SIGNATURE_OID,
-            parameters: None,
-        },
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
         signature: signature.to_vec(),
         unsigned_attrs: None,
     };

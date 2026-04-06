@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 use crate::error::Error;
 use crate::sm2::PrivateKey;
 use x509_cert::der::{Decode, Encode};
-use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier, SubjectPublicKeyInfo};
+use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 use x509_cert::der::asn1::BitString;
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
@@ -297,9 +297,11 @@ pub fn private_key_to_sec1_der(priv_key: &PrivateKey) -> Vec<u8> {
 /// 解析 SM2 私钥的 PKCS#8 格式（RFC 5958）
 #[cfg(feature = "alloc")]
 pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
+    use x509_cert::der::Encode;
+
     let sec1 = private_key_to_sec1_der(priv_key);
-    // AlgorithmIdentifier：包含 id-ecPublicKey 和 SM2 OID
-    let alg_id = crate::sm2::SM2_EC_PUBKEY_PARAMETER;
+    // AlgorithmIdentifier：SM2公钥算法
+    let alg_id_der = crate::sm2::SM2_SPKI_ALGORITHM.to_der().expect("Failed to encode AlgorithmIdentifier");
     // version INTEGER = 0：02 01 00
     let version: &[u8] = &[0x02, 0x01, 0x00];
     // privateKey OCTET STRING 包装 sec1
@@ -308,12 +310,12 @@ pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
     priv_oct.push(sec1.len() as u8);
     priv_oct.extend_from_slice(&sec1);
     // inner = version + alg_id + priv_oct
-    let inner_len = version.len() + alg_id.len() + priv_oct.len();
+    let inner_len = version.len() + alg_id_der.len() + priv_oct.len();
     let mut der = Vec::with_capacity(2 + inner_len);
     der.push(0x30);
     der.push(inner_len as u8);
     der.extend_from_slice(version);
-    der.extend_from_slice(&alg_id);
+    der.extend_from_slice(&alg_id_der);
     der.extend_from_slice(&priv_oct);
     der
 }
@@ -378,12 +380,6 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
     #[cfg(feature = "alloc")]
     pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
         use alloc::vec;
-        
-        // 构建 AlgorithmIdentifier
-        let algorithm = AlgorithmIdentifier {
-            oid: crate::sm2::EC_PUBKEY_OID,
-            parameters: Some(crate::sm2::SM2_CURVE_OID),
-        };
 
         // 构建 BIT STRING（添加 0x00 前缀表示 unused bits = 0）
         let mut bit_string_bytes = vec![0x00];
@@ -395,7 +391,7 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 
         // 使用 x509-cert 的 SubjectPublicKeyInfo 结构
         let spki = SubjectPublicKeyInfo {
-            algorithm,
+            algorithm: crate::sm2::SM2_SPKI_ALGORITHM,
             subject_public_key: bit_string,
         };
 

@@ -39,7 +39,7 @@ use rand_core::Rng;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use x509_cert::spki::ObjectIdentifier;
+use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
 
 use crate::error::Error;
 use crate::sm2::ec::{multi_scalar_mul, AffinePoint, JacobianPoint};
@@ -155,28 +155,30 @@ pub const ID_KP_CODE_SIGNING: ObjectIdentifier = ObjectIdentifier::new_unwrap("1
 /// 电子邮件保护密钥用途
 pub const ID_KP_EMAIL_PROTECTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.4");
 
-/// SM2 椭圆曲线算法标识符（用于 SubjectPublicKeyInfo）
+/// SM2 公钥算法标识符（用于 SubjectPublicKeyInfo）
 ///
-/// 完整的 AlgorithmIdentifier DER 编码，包含 id-ecPublicKey 和 SM2 曲线参数：
-/// SEQUENCE { OID id-ecPublicKey (1.2.840.10045.2.1), OID SM2 (1.2.156.10197.1.301) }
-pub const SM2_EC_PUBKEY_PARAMETER: &[u8] = &[
-    0x30, 0x13, // SEQUENCE, length = 19
-    0x06, 0x07, // OID, length = 7
-    0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, // id-ecPublicKey (1.2.840.10045.2.1)
-    0x06, 0x08, // OID, length = 8
-    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D, // SM2 (1.2.156.10197.1.301)
-];
+/// 完整的 AlgorithmIdentifier，包含 id-ecPublicKey 和 SM2 曲线参数：
+/// AlgorithmIdentifier {
+///     oid: EC_PUBKEY_OID (1.2.840.10045.2.1),
+///     parameters: Some(SM2_CURVE_OID) (1.2.156.10197.1.301)
+/// }
+pub const SM2_SPKI_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmIdentifier {
+    oid: EC_PUBKEY_OID,
+    parameters: Some(SM2_CURVE_OID),
+};
 
-/// SM2withSM3 签名算法标识符（用于 X.509 证书签名算法）
+/// SM2 签名算法标识符（用于 X.509 证书签名算法和 CMS 签名）
 ///
-/// 完整的 AlgorithmIdentifier for SM2withSM3 DER 编码：
-/// SEQUENCE { OID SM2withSM3 (1.2.156.10197.1.501) }
+/// 完整的 AlgorithmIdentifier for SM2withSM3：
+/// AlgorithmIdentifier {
+///     oid: SM2_SIGNATURE_OID (1.2.156.10197.1.501),
+///     parameters: None
+/// }
 /// 注意：国密标准中 SM2withSM3 算法标识符不包含 parameters
-pub const SM2_WITH_SM3_ALGORITHM_IDENTIFIER: &[u8] = &[
-    0x30, 0x0A, // SEQUENCE, length = 10
-    0x06, 0x08, // OID, length = 8
-    0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75, // SM2withSM3 (1.2.156.10197.1.501)
-];
+pub const SM2_SIGNATURE_ALGORITHM: AlgorithmIdentifier<()> = AlgorithmIdentifier {
+    oid: SM2_SIGNATURE_OID,
+    parameters: None,
+};
 
 // ── 私钥类型 ──────────────────────────────────────────────────────────────────
 
