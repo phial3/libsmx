@@ -387,7 +387,7 @@ pub fn verify_digital_signature(
     id: &[u8],
 ) -> Result<VerificationResult, Error> {
     // 解析 ContentInfo
-    let content_info = parse_content_info_production(signed_data_der)?;
+    let content_info = parse_content_info_from_der(signed_data_der)?;
 
     // 验证 contentType - 比较字节数组
     if content_info.content_type != crate::sm2::PKCS7_SIGNED_DATA_OID.as_bytes() {
@@ -395,7 +395,7 @@ pub fn verify_digital_signature(
     }
 
     // 解析 SignedData
-    let signed_data = parse_signed_data_production(&content_info.content)?;
+    let signed_data = parse_signed_data_from_der(&content_info.content)?;
 
     // 获取原始内容
     let content = signed_data
@@ -599,7 +599,7 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 
     // content [0] EXPLICIT
     let mut content_tlv = vec![0xA0];
-    encode_length_production(&mut content_tlv, signed_data_der.len())?;
+    encode_length(&mut content_tlv, signed_data_der.len())?;
     content_tlv.extend(&signed_data_der);
 
     // 计算总长度
@@ -607,7 +607,7 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 
     // SEQUENCE
     content_info.push(0x30);
-    encode_length_production(&mut content_info, total_len)?;
+    encode_length(&mut content_info, total_len)?;
     content_info.extend(&oid_tlv);
     content_info.extend(&content_tlv);
 
@@ -642,7 +642,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
         let certs_set_der = wrap_set(certs_set);
         // 再包装为 [0] IMPLICIT
         let mut certs_tlv = vec![0xA0];
-        encode_length_production(&mut certs_tlv, certs_set_der.len())?;
+        encode_length(&mut certs_tlv, certs_set_der.len())?;
         certs_tlv.extend(certs_set_der);
         content.extend(certs_tlv);
     }
@@ -668,7 +668,7 @@ fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, 
     if let Some(ref data) = info.content {
         let octet_tlv = encode_octet_string(data)?;
         let mut content_tlv = vec![0xA0];
-        encode_length_production(&mut content_tlv, octet_tlv.len())?;
+        encode_length(&mut content_tlv, octet_tlv.len())?;
         content_tlv.extend(octet_tlv);
         content.extend(content_tlv);
     }
@@ -724,7 +724,7 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
         SignerIdentifier::SubjectKeyIdentifier(ski) => {
             // [0] IMPLICIT OCTET STRING
             let mut result = vec![0x80];
-            encode_length_production(&mut result, ski.len())?;
+            encode_length(&mut result, ski.len())?;
             result.extend(ski);
             Ok(result)
         }
@@ -743,7 +743,7 @@ fn encode_algorithm_identifier(alg: &AlgorithmIdentifier<()>) -> Result<Vec<u8>,
 fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
     let bytes = oid.as_bytes();
     let mut result = vec![0x06];
-    encode_length_production(&mut result, bytes.len())?;
+    encode_length(&mut result, bytes.len())?;
     result.extend(bytes);
     Ok(result)
 }
@@ -756,7 +756,7 @@ fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
 /// 编码 INTEGER（字节数组）
 fn encode_integer_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
     let mut result = vec![0x02];
-    encode_length_production(&mut result, bytes.len())?;
+    encode_length(&mut result, bytes.len())?;
     result.extend(bytes);
     Ok(result)
 }
@@ -764,7 +764,7 @@ fn encode_integer_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
 /// 编码 OCTET STRING
 fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
     let mut result = vec![0x04];
-    encode_length_production(&mut result, data.len())?;
+    encode_length(&mut result, data.len())?;
     result.extend(data);
     Ok(result)
 }
@@ -772,13 +772,13 @@ fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
 /// 编码 UTCTime
 fn encode_utc_time(time: &[u8]) -> Result<Vec<u8>, Error> {
     let mut result = vec![0x17]; // UTCTime tag
-    encode_length_production(&mut result, time.len())?;
+    encode_length(&mut result, time.len())?;
     result.extend(time);
     Ok(result)
 }
 
-/// 生产级长度编码（支持任意长度）
-fn encode_length_production(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
+/// DER 长度编码（支持短形式和长形式）
+fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
     if len < 128 {
         // 短形式
         out.push(len as u8);
@@ -843,8 +843,8 @@ fn wrap_set(content: Vec<u8>) -> Vec<u8> {
 // 生产级 DER 解析
 // ====================================================================================
 
-/// 解析 ContentInfo（生产级）
-fn parse_content_info_production(data: &[u8]) -> Result<ContentInfo, Error> {
+/// 从 DER 解析 ContentInfo
+fn parse_content_info_from_der(data: &[u8]) -> Result<ContentInfo, Error> {
     let err = || Error::InvalidSignature;
 
     // SEQUENCE
@@ -862,11 +862,10 @@ fn parse_content_info_production(data: &[u8]) -> Result<ContentInfo, Error> {
     })
 }
 
-/// 解析 SignedData（生产级）
-fn parse_signed_data_production(data: &[u8]) -> Result<SignedData, Error> {
+/// 从 DER 解析 SignedData
+fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
     let err = || Error::InvalidSignature;
 
-    // SEQUENCE
     let (seq_body, _) = der::parse_tlv(data, 0x30).ok_or_else(err)?;
     let mut rest = seq_body;
 
@@ -906,7 +905,7 @@ fn parse_signed_data_production(data: &[u8]) -> Result<SignedData, Error> {
     let mut crls = Vec::new();
     if rest.first() == Some(&0xA1) {
         let (crls_tlv, r) = der::parse_tlv(rest, 0xA1).ok_or_else(err)?;
-        crls = parse_crls_production(crls_tlv)?;
+        crls = parse_crls(crls_tlv)?;
         rest = r;
     }
 
@@ -993,9 +992,9 @@ fn parse_certificates(data: &[u8]) -> Result<Vec<GmCertificate>, Error> {
 }
 
 /// 解析 CRL 集合（占位）
-fn parse_crls_production(_data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
+fn parse_crls(_data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
     // 暂不实现 CRL 解析
-    Ok(Vec::new())
+    unimplemented!();
 }
 
 /// 解析签名者信息列表
