@@ -16,26 +16,25 @@
 //!
 //! ## 公钥 SPKI 格式
 //! rustls `SigningKey::public_key()` 需要 `SubjectPublicKeyInfoDer`：
+//! 使用 x509-cert 的 SubjectPublicKeyInfo 结构：
 //! ```text
-//! SEQUENCE {
-//!   SEQUENCE {
-//!     OID id-ecPublicKey (1.2.840.10045.2.1)
-//!     OID SM2           (1.2.156.10197.1.301)
-//!   }
-//!   BIT STRING (04 || x(32B) || y(32B))
+//! SubjectPublicKeyInfo {
+//!   algorithm: AlgorithmIdentifier {
+//!     algorithm: OID id-ecPublicKey (1.2.840.10045.2.1)
+//!     parameters: OID SM2 (1.2.156.10197.1.301)
+//!   },
+//!   subjectPublicKey: BIT STRING (04 || x(32B) || y(32B))
 //! }
 //! ```
-//!
-//! ## DER INTEGER 编码规则
-//! - 去除前导零（但若最高位为 1，需在前补 0x00 防止被解析为负数）
-//! - tag = 0x02，length 占 1 字节（r/s < 256 位时长度 ≤ 33）
-//! - SEQUENCE tag = 0x30
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 use crate::error::Error;
 use crate::sm2::PrivateKey;
+use x509_cert::der::{Decode, Encode};
+use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier, SubjectPublicKeyInfo};
+use x509_cert::der::asn1::BitString;
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
 ///
@@ -159,15 +158,6 @@ fn strip_leading_zero(bytes: &[u8]) -> &[u8] {
 
 fn split_first(data: &[u8]) -> Option<(&u8, &[u8])> {
     data.split_first()
-}
-
-/// 构建 SPKI AlgorithmIdentifier
-///
-/// 返回包含 id-ecPublicKey 和 SM2 OID 的 AlgorithmIdentifier：
-/// SEQUENCE { OID id-ecPublicKey, OID SM2 }
-#[cfg(feature = "alloc")]
-fn algorithm_identifier_spki() -> Vec<u8> {
-    crate::sm2::SM2_EC_PUBKEY_PARAMETER.to_vec()
 }
 
 // ── DER 长度解码 ──────────────────────────────────────────────────────────────
@@ -304,11 +294,12 @@ pub fn private_key_to_sec1_der(priv_key: &PrivateKey) -> Vec<u8> {
 ///     privateKey           OCTET STRING (SEC1 DER)
 /// }
 /// ```
+/// 解析 SM2 私钥的 PKCS#8 格式（RFC 5958）
 #[cfg(feature = "alloc")]
 pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
     let sec1 = private_key_to_sec1_der(priv_key);
     // AlgorithmIdentifier：包含 id-ecPublicKey 和 SM2 OID
-    let alg_id = algorithm_identifier_spki();
+    let alg_id = crate::sm2::SM2_EC_PUBKEY_PARAMETER;
     // version INTEGER = 0：02 01 00
     let version: &[u8] = &[0x02, 0x01, 0x00];
     // privateKey OCTET STRING 包装 sec1
@@ -365,75 +356,99 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 
 /// 将 SM2 公钥（65 字节，04||x||y）编码为 SubjectPublicKeyInfo DER
 ///
-/// 格式（RFC 5480）：
-/// ```text
-/// SEQUENCE {
-///   SEQUENCE {
-///     OID 1.2.840.10045.2.1  (id-ecPublicKey, 7 字节)
-///     OID 1.2.156.10197.1.301 (SM2, 8 字节)
-///   }
-///   BIT STRING 0x00 || pub_key (65 字节 + 1 字节前缀)
-/// }
-/// ```
+/// 使用 x509-cert 的 SubjectPublicKeyInfo 结构，格式符合 RFC 5480 标准。
 ///
-/// 此格式是 rustls `SigningKey::public_key()` 所需的 `SubjectPublicKeyInfoDer`。
-#[cfg(feature = "alloc")]
-pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
-    // AlgorithmIdentifier SEQUENCE { OID id-ecPublicKey, OID SM2 }
-    let alg = algorithm_identifier_spki();
+/// # 参数
+/// - `pub_key`: SM2 公钥（65 字节未压缩格式：0x04 || X(32B) || Y(32B)）
+///
+/// # 返回
+/// DER 编码的 SubjectPublicKeyInfo
+///
+/// # 示例
+/// ```no_run
+/// use libsmx::sm2::generate_keypair;
+/// use libsmx::sm2::der::public_key_to_spki_der;
+/// use rand::rngs::StdRng;
+/// use rand::SeedableRng;
+///
+/// let mut rng = StdRng::seed_from_u64(12345);
+/// let (_, pub_key) = generate_keypair(&mut rng);
+/// let spki_der = public_key_to_spki_der(&pub_key);
+/// ```
+    #[cfg(feature = "alloc")]
+    pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
+        use alloc::vec;
+        
+        // 构建 AlgorithmIdentifier
+        let algorithm = AlgorithmIdentifier {
+            oid: crate::sm2::EC_PUBKEY_OID,
+            parameters: Some(crate::sm2::SM2_PUBKEY_OID),
+        };
 
-    // BIT STRING: 0x03 <len> 0x00 <pub_key>
-    // Reason: 0x00 是 unused bits 字段，表示最后一字节无填充位
-    let bit_str_len = 1 + pub_key.len(); // 0x00 前缀 + 65 字节公钥
-    let mut bit_str = Vec::with_capacity(2 + bit_str_len);
-    bit_str.push(0x03);
-    bit_str.push(bit_str_len as u8);
-    bit_str.push(0x00); // unused bits = 0
-    bit_str.extend_from_slice(pub_key);
+        // 构建 BIT STRING（添加 0x00 前缀表示 unused bits = 0）
+        let mut bit_string_bytes = vec![0x00];
+        bit_string_bytes.extend_from_slice(pub_key);
 
-    // 外层 SEQUENCE
-    let outer_len = alg.len() + bit_str.len();
-    let mut der = Vec::with_capacity(2 + outer_len);
-    der.push(0x30);
-    der.push(outer_len as u8);
-    der.extend_from_slice(&alg);
-    der.extend_from_slice(&bit_str);
-    der
-}
+        // 使用 BitString 包装公钥数据（直接传递 Vec）
+        let bit_string = BitString::new(0, bit_string_bytes)
+            .expect("Failed to create BitString");
+
+        // 使用 x509-cert 的 SubjectPublicKeyInfo 结构
+        let spki = SubjectPublicKeyInfo {
+            algorithm,
+            subject_public_key: bit_string,
+        };
+
+        // 编码为 DER
+        spki.to_der().expect("Failed to encode SubjectPublicKeyInfo")
+    }
 
 /// 从 SubjectPublicKeyInfo DER 解析 SM2 公钥
 ///
-/// 格式（RFC 5480）：
-/// ```text
-/// SEQUENCE {
-///   SEQUENCE {
-///     OID 1.2.840.10045.2.1  (id-ecPublicKey)
-///     OID 1.2.156.10197.1.301 (SM2)
-///   }
-///   BIT STRING 0x00 || pub_key (65 字节)
-/// }
-/// ```
+/// 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析，格式符合 RFC 5480 标准。
+///
+/// # 参数
+/// - `der`: DER 编码的 SubjectPublicKeyInfo
+///
+/// # 返回
+/// - `Ok([u8; 65])`: SM2 公钥（65 字节未压缩格式：0x04 || X(32B) || Y(32B)）
+/// - `Err(Error)`: 解析失败
 ///
 /// # 错误
 /// DER 格式不合法或公钥格式不合法时返回 `Error::InvalidPublicKey`
 pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
-    let err = || Error::InvalidPublicKey;
+    // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
+    let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> = SubjectPublicKeyInfo::from_der(der)
+        .map_err(|_| Error::InvalidPublicKey)?;
 
-    let (seq_body, _) = parse_tlv(der, 0x30).ok_or_else(err)?;
-    let (_, rest) = parse_tlv(seq_body, 0x30).ok_or_else(err)?;
-    let (bit_str_bytes, _) = parse_tlv(rest, 0x03).ok_or_else(err)?;
-
-    if bit_str_bytes.is_empty() || bit_str_bytes[0] != 0 {
-        return Err(err());
+    // 验证算法 OID（id-ecPublicKey）
+    if spki.algorithm.oid != crate::sm2::EC_PUBKEY_OID {
+        return Err(Error::InvalidPublicKey);
     }
 
-    let pub_key = &bit_str_bytes[1..];
-    if pub_key.len() != 65 {
-        return Err(err());
+    // 验证参数 OID（SM2 曲线）
+    match spki.algorithm.parameters {
+        Some(oid) if oid == crate::sm2::SM2_PUBKEY_OID => {},
+        _ => return Err(Error::InvalidPublicKey),
+    }
+
+    // 提取公钥数据（跳过 BIT STRING 的 0x00 前缀）
+    let pub_key_bytes: &[u8] = spki.subject_public_key.as_bytes()
+        .ok_or(Error::InvalidPublicKey)?;
+    
+    // 验证 BIT STRING 格式（第一个字节应为 0x00，表示 unused bits = 0）
+    if pub_key_bytes.is_empty() || pub_key_bytes[0] != 0 {
+        return Err(Error::InvalidPublicKey);
+    }
+
+    // 提取 65 字节公钥
+    let pub_key_data = &pub_key_bytes[1..];
+    if pub_key_data.len() != 65 {
+        return Err(Error::InvalidPublicKey);
     }
 
     let mut result = [0u8; 65];
-    result.copy_from_slice(pub_key);
+    result.copy_from_slice(pub_key_data);
     Ok(result)
 }
 

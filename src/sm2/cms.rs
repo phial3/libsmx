@@ -44,7 +44,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use x509_cert::der::asn1::ObjectIdentifier;
+use x509_cert::der::{Decode, Encode};
+use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
 
 use crate::error::Error;
 use crate::sm2::cert::GmCertificate;
@@ -75,7 +76,7 @@ pub struct SignedData {
     /// 版本号 (1, 3 或 5)
     pub version: u32,
     /// 摘要算法标识符集合
-    pub digest_algorithms: Vec<AlgorithmIdentifier>,
+    pub digest_algorithms: Vec<AlgorithmIdentifier<()>>,
     /// 封装内容信息
     pub encap_content_info: EncapsulatedContentInfo,
     /// 证书集合
@@ -86,24 +87,13 @@ pub struct SignedData {
     pub signer_infos: Vec<SignerInfo>,
 }
 
-/// 算法标识符 (AlgorithmIdentifier)
-///
-/// 符合 X.509 标准的算法标识符结构。
-#[derive(Debug, Clone)]
-pub struct AlgorithmIdentifier {
-    /// 算法 OID
-    pub algorithm: Vec<u8>,
-    /// 算法参数 (可选)
-    pub parameters: Option<Vec<u8>>,
-}
-
 /// 封装内容信息 (EncapsulatedContentInfo)
 ///
 /// 符合 RFC 5652 CMS 标准的 EncapsulatedContentInfo 结构。
 #[derive(Debug, Clone)]
 pub struct EncapsulatedContentInfo {
     /// 内容类型 OID
-    pub content_type: Vec<u8>,
+    pub content_type: ObjectIdentifier,
     /// 内容数据 (可选)
     pub content: Option<Vec<u8>>,
 }
@@ -118,11 +108,11 @@ pub struct SignerInfo {
     /// 签名者标识符
     pub sid: SignerIdentifier,
     /// 摘要算法
-    pub digest_algorithm: AlgorithmIdentifier,
+    pub digest_algorithm: AlgorithmIdentifier<()>,
     /// 签名属性 (可选)
     pub signed_attrs: Option<Vec<u8>>,
     /// 签名算法
-    pub signature_algorithm: AlgorithmIdentifier,
+    pub signature_algorithm: AlgorithmIdentifier<()>,
     /// 签名值
     pub signature: Vec<u8>,
     /// 未签名属性 (可选)
@@ -231,12 +221,12 @@ pub fn create_digital_signature<R: Rng>(
             serial_number: cert.serial_number.clone(),
         },
         digest_algorithm: AlgorithmIdentifier {
-            algorithm: crate::sm2::SM3_OID.as_bytes().to_vec(),
-            parameters: Some(vec![0x05, 0x00]), // NULL
+            oid: crate::sm2::SM3_OID,
+            parameters: None,
         },
         signed_attrs: Some(signed_attrs),
         signature_algorithm: AlgorithmIdentifier {
-            algorithm: crate::sm2::SM2_WITH_SM3_OID.as_bytes().to_vec(),
+            oid: crate::sm2::SM2_WITH_SM3_OID,
             parameters: None,
         },
         signature: signature.to_vec(),
@@ -247,11 +237,11 @@ pub fn create_digital_signature<R: Rng>(
     let signed_data = SignedData {
         version: 1,
         digest_algorithms: vec![AlgorithmIdentifier {
-            algorithm: crate::sm2::SM3_OID.as_bytes().to_vec(),
-            parameters: Some(vec![0x05, 0x00]),
+            oid: crate::sm2::SM3_OID,
+            parameters: None,
         }],
         encap_content_info: EncapsulatedContentInfo {
-            content_type: crate::sm2::ID_DATA_OID.as_bytes().to_vec(),
+            content_type: crate::sm2::ID_DATA_OID,
             content: Some(data.to_vec()),
         },
         certificates: vec![cert.clone()],
@@ -675,11 +665,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 /// 编码 EncapsulatedContentInfo 编码封装内容信息
 fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
-
-    // contentType - 将 Vec<u8>转换为 ObjectIdentifier
-    let content_type_oid = ObjectIdentifier::from_bytes(&info.content_type)
-        .map_err(|_| Error::DerDecodeError { field: "content_type", reason: "invalid OID" })?;
-    content.extend(encode_oid(content_type_oid)?);
+    content.extend(&info.content_type.as_bytes().to_vec());
 
     // content [0] EXPLICIT (可选)
     if let Some(ref data) = info.content {
@@ -749,16 +735,11 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
 }
 
 /// 编码算法标识符
-fn encode_algorithm_identifier(alg: &AlgorithmIdentifier) -> Result<Vec<u8>, Error> {
-    let mut content = Vec::new();
-    // 将 Vec<u8>转换为 ObjectIdentifier
-    let algorithm_oid = ObjectIdentifier::from_bytes(&alg.algorithm)
-        .map_err(|_| Error::DerDecodeError { field: "algorithm", reason: "invalid OID" })?;
-    content.extend(encode_oid(algorithm_oid)?);
-    if let Some(ref params) = alg.parameters {
-        content.extend(params);
-    }
-    Ok(wrap_sequence(content))
+fn encode_algorithm_identifier(alg: &AlgorithmIdentifier<()>) -> Result<Vec<u8>, Error> {
+    alg.to_der().map_err(|_| Error::DerDecodeError {
+        field: "algorithm",
+        reason: "encoding failed",
+    })
 }
 
 /// 编码 OID
@@ -947,8 +928,8 @@ fn parse_signed_data_production(data: &[u8]) -> Result<SignedData, Error> {
 }
 
 /// 解析摘要算法列表
-fn parse_digest_algorithms(data: &[u8]) -> Result<Vec<AlgorithmIdentifier>, Error> {
-    let mut result = Vec::new();
+fn parse_digest_algorithms(data: &[u8]) -> Result<Vec<AlgorithmIdentifier<()>>, Error> {
+    let mut result = Vec::<AlgorithmIdentifier<()>>::new();
     let mut rest = data;
 
     while !rest.is_empty() {
@@ -980,7 +961,12 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
     }
 
     Ok(EncapsulatedContentInfo {
-        content_type: content_type.to_vec(),
+        content_type: ObjectIdentifier::from_bytes(content_type).map_err(|_| {
+            Error::DerDecodeError {
+                field: "content_type",
+                reason: "invalid OID",
+            }
+        })?,
         content,
     })
 }
@@ -1119,24 +1105,10 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
 }
 
 /// 解析算法标识符
-fn parse_algorithm_identifier(data: &[u8]) -> Result<AlgorithmIdentifier, Error> {
-    let err = || Error::InvalidSignature;
-    let mut rest = data;
-
-    // algorithm OID
-    let (oid, r) = der::parse_tlv(rest, 0x06).ok_or_else(err)?;
-    rest = r;
-
-    // parameters (可选)
-    let parameters = if rest.is_empty() {
-        None
-    } else {
-        Some(rest.to_vec())
-    };
-
-    Ok(AlgorithmIdentifier {
-        algorithm: oid.to_vec(),
-        parameters,
+fn parse_algorithm_identifier(der_data: &[u8]) -> Result<AlgorithmIdentifier<()>, Error> {
+    AlgorithmIdentifier::from_der(der_data).map_err(|_| Error::DerDecodeError {
+        field: "algorithm",
+        reason: "decoding failed",
     })
 }
 
@@ -1171,17 +1143,17 @@ mod tests {
     fn test_validity() -> Vec<u8> {
         // 使用 DER 编码逻辑构建有效期
         // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
-        
+
         // 编码 UTCTime: tag(0x17) + length + time_string
         let encode_utctime = |time_str: &str| -> Vec<u8> {
             let mut encoded = vec![0x17, time_str.len() as u8];
             encoded.extend_from_slice(time_str.as_bytes());
             encoded
         };
-        
+
         let not_before = encode_utctime("240101000000Z");
         let not_after = encode_utctime("300101000000Z");
-        
+
         // 包装为 SEQUENCE
         let mut validity = Vec::with_capacity(2 + not_before.len() + not_after.len());
         validity.push(0x30); // SEQUENCE tag

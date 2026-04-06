@@ -41,11 +41,12 @@ use crate::error::Error;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
-use x509_cert::der::asn1::ObjectIdentifier;
+use x509_cert::der::asn1::BitString;
 use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::{Decode, Encode};
 use x509_cert::ext::pkix::{ExtendedKeyUsage, KeyUsage, KeyUsages};
 use x509_cert::ext::Extension;
+use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 use x509_cert::time::Validity;
 use x509_cert::Certificate;
 
@@ -825,55 +826,41 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
 /// - `Ok([u8; 65])`: 65 字节未压缩公钥
 /// - `Err(Error::InvalidCertificate)`: 提取失败（格式错误或不是 SM2 公钥）
 pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
-    let err = || Error::InvalidCertificate;
-    let spki = &cert.subject_public_key_info;
+    // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
+    let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> =
+        SubjectPublicKeyInfo::from_der(&cert.subject_public_key_info)
+            .map_err(|_| Error::InvalidCertificate)?;
 
-    // 解析 SubjectPublicKeyInfo SEQUENCE
-    let (seq_body, _) = der::parse_tlv(spki, 0x30).ok_or_else(err)?;
-
-    // 解析 AlgorithmIdentifier SEQUENCE
-    let (alg_id, rest) = der::parse_tlv(seq_body, 0x30).ok_or_else(err)?;
-
-    // 按照 RFC 5480 严格解析 AlgorithmIdentifier
-    // AlgorithmIdentifier ::= SEQUENCE {
-    //     algorithm  OBJECT IDENTIFIER,
-    //     parameters ANY DEFINED BY algorithm OPTIONAL
-    // }
-    //
-    // 对于 SM2，格式为:
-    // SEQUENCE {
-    //     OID 1.2.840.10045.2.1 (id-ecPublicKey)
-    //     OID 1.2.156.10197.1.301 (SM2)
-    // }
-
-    // 解析第一个 OID (id-ecPublicKey = 1.2.840.10045.2.1)
-    let (first_oid_bytes, params) = der::parse_tlv(alg_id, 0x06).ok_or_else(err)?;
-    let first_oid = ObjectIdentifier::from_bytes(first_oid_bytes).map_err(|_| err())?;
-    if first_oid != crate::sm2::EC_PUBKEY_OID {
-        return Err(err());
+    // 验证算法 OID (id-ecPublicKey = 1.2.840.10045.2.1)
+    if spki.algorithm.oid != crate::sm2::EC_PUBKEY_OID {
+        return Err(Error::InvalidCertificate);
     }
 
-    // 解析第二个 OID (SM2 = 1.2.156.10197.1.301)
-    let (second_oid_bytes, _) = der::parse_tlv(params, 0x06).ok_or_else(err)?;
-    let second_oid = ObjectIdentifier::from_bytes(second_oid_bytes).map_err(|_| err())?;
-    if second_oid != crate::sm2::SM2_PUBKEY_OID {
-        return Err(err());
+    // 验证参数 OID (SM2 = 1.2.156.10197.1.301)
+    match spki.algorithm.parameters {
+        Some(oid) if oid == crate::sm2::SM2_PUBKEY_OID => {}
+        _ => return Err(Error::InvalidCertificate),
     }
 
-    // 解析公钥 BIT STRING
-    let (pub_key_bit_str, _) = der::parse_tlv(rest, 0x03).ok_or_else(err)?;
-    if pub_key_bit_str.len() < 66 || pub_key_bit_str[0] != 0 {
-        return Err(err());
+    // 提取公钥数据（跳过 BIT STRING 的 0x00 前缀）
+    let pub_key_bytes: &[u8] = spki
+        .subject_public_key
+        .as_bytes()
+        .ok_or(Error::InvalidCertificate)?;
+
+    // 验证 BIT STRING 格式（第一个字节应为 0x00，表示 unused bits = 0）
+    if pub_key_bytes.is_empty() || pub_key_bytes[0] != 0 {
+        return Err(Error::InvalidCertificate);
     }
 
-    // 提取公钥字节（跳过 unused bits 字节）
-    let pub_key_bytes = &pub_key_bit_str[1..];
-    if pub_key_bytes.len() != 65 || pub_key_bytes[0] != 0x04 {
-        return Err(err());
+    // 提取 65 字节公钥
+    let pub_key_data = &pub_key_bytes[1..];
+    if pub_key_data.len() != 65 || pub_key_data[0] != 0x04 {
+        return Err(Error::InvalidCertificate);
     }
 
     let mut pub_key = [0u8; 65];
-    pub_key.copy_from_slice(pub_key_bytes);
+    pub_key.copy_from_slice(pub_key_data);
     Ok(pub_key)
 }
 

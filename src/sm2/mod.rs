@@ -39,7 +39,7 @@ use rand_core::Rng;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use x509_cert::der::asn1::ObjectIdentifier;
+use x509_cert::spki::ObjectIdentifier;
 
 use crate::error::Error;
 use crate::sm2::ec::{multi_scalar_mul, AffinePoint, JacobianPoint};
