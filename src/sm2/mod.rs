@@ -58,12 +58,13 @@ pub const DEFAULT_ID: &[u8] = b"1234567812345678";
 // OID 常量定义（使用 ObjectIdentifier 类型）
 // ====================================================================================
 
-/// SM2 椭圆曲线公钥算法 sm2p256v1 OID (1.2.156.10197.1.301)
-pub const SM2_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.301");
+/// SM2 椭圆曲线参数 OID (1.2.156.10197.1.301)
+/// 国密 SM2 椭圆曲线公钥算法参数标识符（sm2p256v1）
+pub const SM2_CURVE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.301");
 
-/// SM2withSM3 签名算法 OID (1.2.156.10197.1.501)
-/// 与 SM2_SIGN_OID 相同，用于 X.509 证书签名算法标识
-pub const SM2_WITH_SM3_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
+/// SM2 签名算法 OID (1.2.156.10197.1.501)
+/// SM2withSM3 签名算法标识符，用于 X.509 证书签名算法
+pub const SM2_SIGNATURE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
 
 /// SM3 哈希算法 OID (1.2.156.10197.1.401)
 pub const SM3_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.401");
@@ -76,9 +77,9 @@ pub const EC_PUBKEY_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.84
 /// 用于 PKCS#7/CMS 签名数据内容类型
 pub const PKCS7_SIGNED_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 
-/// id-data OID (1.2.840.113549.1.7.1)
+/// PKCS#7/CMS Data OID (1.2.840.113549.1.7.1)
 /// 用于 PKCS#7/CMS 数据内容类型
-pub const ID_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
+pub const PKCS7_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
 
 /// content-type 属性 OID (1.2.840.113549.1.9.3)
 /// 用于 CMS 签名属性 content-type

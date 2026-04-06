@@ -382,7 +382,7 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
         // 构建 AlgorithmIdentifier
         let algorithm = AlgorithmIdentifier {
             oid: crate::sm2::EC_PUBKEY_OID,
-            parameters: Some(crate::sm2::SM2_PUBKEY_OID),
+            parameters: Some(crate::sm2::SM2_CURVE_OID),
         };
 
         // 构建 BIT STRING（添加 0x00 前缀表示 unused bits = 0）
@@ -428,7 +428,7 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
 
     // 验证参数 OID（SM2 曲线）
     match spki.algorithm.parameters {
-        Some(oid) if oid == crate::sm2::SM2_PUBKEY_OID => {},
+        Some(oid) if oid == crate::sm2::SM2_CURVE_OID => {},
         _ => return Err(Error::InvalidPublicKey),
     }
 

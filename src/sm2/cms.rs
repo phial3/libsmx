@@ -226,7 +226,7 @@ pub fn create_digital_signature<R: Rng>(
         },
         signed_attrs: Some(signed_attrs),
         signature_algorithm: AlgorithmIdentifier {
-            oid: crate::sm2::SM2_WITH_SM3_OID,
+            oid: crate::sm2::SM2_SIGNATURE_OID,
             parameters: None,
         },
         signature: signature.to_vec(),
@@ -241,7 +241,7 @@ pub fn create_digital_signature<R: Rng>(
             parameters: None,
         }],
         encap_content_info: EncapsulatedContentInfo {
-            content_type: crate::sm2::ID_DATA_OID,
+            content_type: crate::sm2::PKCS7_DATA_OID,
             content: Some(data.to_vec()),
         },
         certificates: vec![cert.clone()],
@@ -304,7 +304,7 @@ fn encode_content_type_attr() -> Result<Vec<u8>, Error> {
     attr.extend(encode_oid(crate::sm2::CONTENT_TYPE_OID)?);
 
     // attrValues = SET { id-data }
-    let id_data_tlv = encode_oid(crate::sm2::ID_DATA_OID)?;
+    let id_data_tlv = encode_oid(crate::sm2::PKCS7_DATA_OID)?;
     let set_content = wrap_set(id_data_tlv);
     attr.extend(set_content);
 

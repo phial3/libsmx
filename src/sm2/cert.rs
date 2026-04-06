@@ -838,7 +838,7 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
 
     // 验证参数 OID (SM2 = 1.2.156.10197.1.301)
     match spki.algorithm.parameters {
-        Some(oid) if oid == crate::sm2::SM2_PUBKEY_OID => {}
+        Some(oid) if oid == crate::sm2::SM2_CURVE_OID => {}
         _ => return Err(Error::InvalidCertificate),
     }
 
