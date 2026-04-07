@@ -5,7 +5,6 @@ mod tests {
     use rand::SeedableRng;
     use std::fs;
     use std::path::Path;
-    use std::time::Duration;
 
     /// 创建自签名测试证书（使用 Builder 模式）
     ///
@@ -17,6 +16,7 @@ mod tests {
         priv_key: &PrivateKey,
         rng: &mut StdRng,
     ) -> cert::GmCertificate {
+        use std::time::Duration;
         use cert::{X500Attribute, X500AttributeType};
 
         cert::GmCertificate::builder()
@@ -46,6 +46,7 @@ mod tests {
         priv_key: &PrivateKey,
         rng: &mut StdRng,
     ) -> cert::GmCertificate {
+        use std::time::Duration;
         use cert::{X500Attribute, X500AttributeType};
 
         let not_before = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(978307200); // 2001-01-01
