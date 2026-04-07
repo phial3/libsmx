@@ -1395,29 +1395,18 @@ impl CertificateBuilder {
         let not_before = self.not_before.ok_or(Error::InvalidCertificate)?;
         let not_after = self.not_after.ok_or(Error::InvalidCertificate)?;
 
-        // 生成有效期 DER（使用 x509-cert 的 Time 类型）
-        let not_before_time =
-            x509_cert::time::Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
-        let not_after_time =
-            x509_cert::time::Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
+        // 生成有效期 DER（使用 x509-cert 的 Validity 类型）
+        let not_before_time = x509_cert::time::Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
+        let not_after_time = x509_cert::time::Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
 
-        let not_before_der = not_before_time
+        let validity = Validity::<x509_cert::certificate::Rfc5280>::new(
+            not_before_time,
+            not_after_time,
+        );
+
+        let validity_seq = validity
             .to_der()
             .map_err(|_| Error::InvalidCertificate)?;
-        let not_after_der = not_after_time
-            .to_der()
-            .map_err(|_| Error::InvalidCertificate)?;
-
-        let mut validity_vec: Vec<u8> =
-            Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
-        validity_vec.extend(&not_before_der);
-        validity_vec.extend(&not_after_der);
-
-        // 包装为 SEQUENCE
-        let mut validity_seq: Vec<u8> = Vec::with_capacity(2 + validity_vec.len());
-        validity_seq.push(0x30);
-        validity_seq.push(validity_vec.len() as u8);
-        validity_seq.extend(validity_vec);
 
         // 构建 SPKI
         let spki = der::public_key_to_spki_der(pub_key);
