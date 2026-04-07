@@ -12,6 +12,12 @@
 //! ## AEAD 模式（认证加密）
 //! - **GCM**: Galois/Counter Mode
 //! - **CCM**: Counter with CBC-MAC
+//! - **OCB**: Offset Codebook Mode（高效 AEAD，比 GCM 更快）
+//! - **SIV**: Synthetic Initialization Vector（确定性 AEAD）
+//! - **EAX**: Two-pass AEAD（更安全的 AEAD）
+//!
+//! ## 密钥封装模式
+//! - **Key Wrap**: RFC 3394 密钥封装（用于安全加密密钥材料）
 //!
 //! ## 磁盘加密模式
 //! - **XTS**: XEX-based Tweaked CodeBook mode
@@ -24,9 +30,10 @@
 //!
 //! # 安全说明
 //!
-//! - GCM/CCM 认证标签比较使用 `subtle::ConstantTimeEq`，防止时序侧信道
+//! - GCM/CCM/OCB/SIV/EAX 认证标签比较使用 `subtle::ConstantTimeEq`，防止时序侧信道
 //! - CCM 严格遵循"先验证后解密"原则（Encrypt-then-MAC 的接收端验证）
 //! - 所有密钥材料通过 [`Sm4Key`] 在 Drop 时自动清零
+//! - OCB/SIV/EAX/Key Wrap 为新增功能
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -864,6 +871,920 @@ pub fn sm4_decrypt_xts(
     Ok(out)
 }
 
+// ── OCB 模式（高效 AEAD）──────────────────────────────────────────────────────
+
+/// SM4-OCB 加密（高效 AEAD 模式）
+///
+/// OCB（Offset Codebook）模式是一种高效的认证加密模式，比 GCM 更快且无专利限制。
+/// 实现基于 RFC 7253（OCBv3），但使用 SM4 分组密码。
+///
+/// # 参数
+/// - `key`: 16 字节 SM4 密钥
+/// - `nonce`: 1-15 字节随机数
+/// - `aad`: 附加认证数据（可为空）
+/// - `plaintext`: 明文
+///
+/// # 返回
+/// `(ciphertext, tag)` - 密文和 16 字节认证标签
+///
+/// # 安全说明
+/// - nonce 必须唯一（相同 nonce + key 会破坏安全性）
+/// - 认证标签比较使用常量时间比较
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_ocb(
+    key: &[u8; 16],
+    nonce: &[u8],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<(Vec<u8>, [u8; 16]), Error> {
+    // Reason: OCBv3 支持任意长度 nonce，但推荐使用 12 字节（96 位）以获得最佳性能
+    if nonce.is_empty() || nonce.len() > 15 {
+        return Err(Error::InvalidNonceLength);
+    }
+
+    let sm4 = Sm4Key::new(key);
+    const TAGLEN: usize = 128; // 128-bit tag
+
+    // 密钥相关变量
+    // L_* = ENCIPHER(K, zeros(128))
+    let mut l_star = [0u8; 16];
+    sm4.encrypt_block(&mut l_star);
+    
+    // L_$ = double(L_*)
+    let l_dollar = gf128_mul_u(&l_star);
+    
+    // L_0 = double(L_$)
+    let l_0 = gf128_mul_u(&l_dollar);
+    
+    // L_i = double(L_{i-1}) for i > 0
+    // 预计算 L_i 序列（最多需要到 i=127）
+    let mut l = [[0u8; 16]; 128];
+    l[0] = l_0;
+    for i in 1..128 {
+        l[i] = gf128_mul_u(&l[i - 1]);
+    }
+
+    // 考虑 AAD 作为 128-bit 块序列
+    let m = if aad.is_empty() { 0 } else { aad.len() / 16 };
+    let aad_star_len = if aad.is_empty() { 0 } else { aad.len() % 16 };
+
+    // 处理 AAD：HASH(K, A)
+    let hash = {
+        let mut sum = [0u8; 16];
+        let mut offset = [0u8; 16];
+        
+        // 处理完整块
+        for i in 0..m {
+            let ntz_i = ntz(i + 1);
+            if ntz_i < 128 {
+                xor_blocks(&mut offset, &l[ntz_i]);
+            }
+            
+            let mut block = [0u8; 16];
+            let start = i * 16;
+            let end = start + 16;
+            block.copy_from_slice(&aad[start..end]);
+            xor_blocks(&mut block, &offset);
+            sm4.encrypt_block(&mut block);
+            xor_blocks(&mut sum, &block);
+        }
+        
+        // 处理最后一个不完整块
+        if aad_star_len > 0 {
+            xor_blocks(&mut offset, &l_star);
+            
+            let mut block = [0u8; 16];
+            let start = m * 16;
+            block[..aad_star_len].copy_from_slice(&aad[start..]);
+            block[aad_star_len] = 0x80; // padding
+            xor_blocks(&mut block, &offset);
+            sm4.encrypt_block(&mut block);
+            xor_blocks(&mut sum, &block);
+        }
+        
+        sum
+    };
+
+    // 考虑 P 作为 128-bit 块序列
+    let p_len = plaintext.len();
+    let m_p = p_len / 16;
+    let p_star_len = p_len % 16;
+
+    // Nonce 相关变量
+    // Nonce = num2str(TAGLEN mod 128, 7) || zeros(120 - bitlen(N)) || 1 || N
+    // RFC 7253: Nonce 格式化为 16 字节块
+    let mut nonce_block = [0u8; 16];
+    
+    // 第一个字节：TAGLEN mod 128（左移 1 位，因为最低位留给后面的 1）
+    nonce_block[0] = ((TAGLEN % 128) << 1) as u8;
+    
+    // 复制 nonce 到末尾
+    let nonce_end = 16;
+    let nonce_start = nonce_end - nonce.len();
+    nonce_block[nonce_start..nonce_end].copy_from_slice(nonce);
+    
+    // 在 nonce 前面设置 1 bit
+    nonce_block[nonce_start - 1] = 0x01;
+    
+    // bottom = last 6 bits of nonce (Nonce[123..128])
+    let bottom = (nonce_block[15] & 0x3F) as usize;
+    
+    // Ktop = ENCIPHER(K, Nonce with last 6 bits zeroed)
+    nonce_block[15] &= 0xC0;
+    let mut ktop = nonce_block;
+    sm4.encrypt_block(&mut ktop);
+    
+    // Stretch = Ktop || (Ktop[1..64] xor Ktop[9..72])
+    let mut stretch = [0u8; 24];
+    stretch[..16].copy_from_slice(&ktop);
+    for i in 0..8 {
+        stretch[16 + i] = ktop[i] ^ ktop[i + 1];
+    }
+    
+    // Offset_0 = Stretch[1+bottom..128+bottom] (bit indexing, 1-based)
+    // 转换为 0-based 字节索引：从第 bottom 位开始
+    let mut offset = [0u8; 16];
+    let start_byte = bottom / 8;
+    let start_bit = bottom % 8;
+    
+    if start_bit == 0 {
+        offset.copy_from_slice(&stretch[start_byte..start_byte + 16]);
+    } else {
+        for i in 0..16 {
+            let b0 = stretch[start_byte + i];
+            let b1 = if start_byte + i + 1 < 24 { stretch[start_byte + i + 1] } else { 0 };
+            offset[i] = (b0 << start_bit) | (b1 >> (8 - start_bit));
+        }
+    }
+
+    let mut checksum = [0u8; 16];
+    let mut ciphertext = Vec::with_capacity(p_len);
+
+    // 处理完整块
+    for i in 0..m_p {
+        // Offset_i = Offset_{i-1} xor L_{ntz(i)}
+        let ntz_i = ntz(i + 1);
+        if ntz_i < 128 {
+            xor_blocks(&mut offset, &l[ntz_i]);
+        }
+        
+        // C_i = Offset_i xor ENCIPHER(K, P_i xor Offset_i)
+        let mut block = [0u8; 16];
+        let start = i * 16;
+        block.copy_from_slice(&plaintext[start..start + 16]);
+        xor_blocks(&mut block, &offset);
+        sm4.encrypt_block(&mut block);
+        xor_blocks(&mut block, &offset);
+        
+        ciphertext.extend_from_slice(&block);
+        
+        // Checksum_i = Checksum_{i-1} xor P_i
+        xor_blocks(&mut checksum, &plaintext[start..start + 16].try_into().unwrap());
+    }
+
+    // 处理最后一个不完整块
+    let tag = if p_star_len > 0 {
+        // Offset_* = Offset_m xor L_*
+        xor_blocks(&mut offset, &l_star);
+        
+        // Pad = ENCIPHER(K, Offset_*)
+        let mut pad = offset;
+        sm4.encrypt_block(&mut pad);
+        
+        // C_* = P_* xor Pad[1..bitlen(P_*)]
+        let start = m_p * 16;
+        for i in 0..p_star_len {
+            ciphertext.push(plaintext[start + i] ^ pad[i]);
+        }
+        
+        // Checksum_* = Checksum_m xor (P_* || 1 || zeros(127-bitlen(P_*)))
+        for i in 0..p_star_len {
+            checksum[i] ^= plaintext[start + i];
+        }
+        checksum[p_star_len] ^= 0x80;
+        
+        // Tag = ENCIPHER(K, Checksum_* xor Offset_* xor L_$) xor HASH(K,A)
+        let mut tag_input = checksum;
+        xor_blocks(&mut tag_input, &offset);
+        xor_blocks(&mut tag_input, &l_dollar);
+        sm4.encrypt_block(&mut tag_input);
+        xor_blocks(&mut tag_input, &hash);
+        tag_input
+    } else {
+        // Tag = ENCIPHER(K, Checksum_m xor Offset_m xor L_$) xor HASH(K,A)
+        let mut tag_input = checksum;
+        xor_blocks(&mut tag_input, &offset);
+        xor_blocks(&mut tag_input, &l_dollar);
+        sm4.encrypt_block(&mut tag_input);
+        xor_blocks(&mut tag_input, &hash);
+        tag_input
+    };
+
+    Ok((ciphertext, tag))
+}
+
+/// SM4-OCB 解密
+///
+/// # 参数
+/// - `key`: 16 字节 SM4 密钥
+/// - `nonce`: 1-15 字节随机数
+/// - `aad`: 附加认证数据
+/// - `ciphertext`: 密文（不含 tag）
+/// - `tag`: 认证标签
+///
+/// # 返回
+/// `Ok(plaintext)` 如果认证成功，否则返回 `Error::InvalidTag`
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_ocb(
+    key: &[u8; 16],
+    nonce: &[u8],
+    aad: &[u8],
+    ciphertext: &[u8],
+    tag: &[u8; 16],
+) -> Result<Vec<u8>, Error> {
+    let sm4 = Sm4Key::new(key);
+    const TAGLEN: usize = 128;
+
+    // 密钥相关变量（与加密相同）
+    let mut l_star = [0u8; 16];
+    sm4.encrypt_block(&mut l_star);
+    let l_dollar = gf128_mul_u(&l_star);
+    let l_0 = gf128_mul_u(&l_dollar);
+    
+    let mut l = [[0u8; 16]; 128];
+    l[0] = l_0;
+    for i in 1..128 {
+        l[i] = gf128_mul_u(&l[i - 1]);
+    }
+
+    // HASH(K, A)
+    let m = if aad.is_empty() { 0 } else { aad.len() / 16 };
+    let aad_star_len = if aad.is_empty() { 0 } else { aad.len() % 16 };
+    
+    let hash = {
+        let mut sum = [0u8; 16];
+        let mut offset = [0u8; 16];
+        
+        for i in 0..m {
+            let ntz_i = ntz(i + 1);
+            if ntz_i < 128 {
+                xor_blocks(&mut offset, &l[ntz_i]);
+            }
+            
+            let mut block = [0u8; 16];
+            let start = i * 16;
+            let end = start + 16;
+            block.copy_from_slice(&aad[start..end]);
+            xor_blocks(&mut block, &offset);
+            sm4.encrypt_block(&mut block);
+            xor_blocks(&mut sum, &block);
+        }
+        
+        if aad_star_len > 0 {
+            xor_blocks(&mut offset, &l_star);
+            
+            let mut block = [0u8; 16];
+            let start = m * 16;
+            block[..aad_star_len].copy_from_slice(&aad[start..]);
+            block[aad_star_len] = 0x80;
+            xor_blocks(&mut block, &offset);
+            sm4.encrypt_block(&mut block);
+            xor_blocks(&mut sum, &block);
+        }
+        
+        sum
+    };
+
+    // 密文处理
+    let c_len = ciphertext.len();
+    let m_c = c_len / 16;
+    let c_star_len = c_len % 16;
+
+    // Nonce 处理（与加密相同）
+    let mut nonce_block = [0u8; 16];
+    nonce_block[0] = ((TAGLEN % 128) << 1) as u8;
+    
+    let nonce_end = 16;
+    let nonce_start = nonce_end - nonce.len();
+    nonce_block[nonce_start..nonce_end].copy_from_slice(nonce);
+    nonce_block[nonce_start - 1] = 0x01;
+    
+    let bottom = (nonce_block[15] & 0x3F) as usize;
+    
+    nonce_block[15] &= 0xC0;
+    let mut ktop = nonce_block;
+    sm4.encrypt_block(&mut ktop);
+    
+    let mut stretch = [0u8; 24];
+    stretch[..16].copy_from_slice(&ktop);
+    for i in 0..8 {
+        stretch[16 + i] = ktop[i] ^ ktop[i + 1];
+    }
+    
+    let mut offset = [0u8; 16];
+    let start_byte = bottom / 8;
+    let start_bit = bottom % 8;
+    
+    if start_bit == 0 {
+        offset.copy_from_slice(&stretch[start_byte..start_byte + 16]);
+    } else {
+        for i in 0..16 {
+            let b0 = stretch[start_byte + i];
+            let b1 = if start_byte + i + 1 < 24 { stretch[start_byte + i + 1] } else { 0 };
+            offset[i] = (b0 << start_bit) | (b1 >> (8 - start_bit));
+        }
+    }
+
+    let mut checksum = [0u8; 16];
+    let mut plaintext = Vec::with_capacity(c_len);
+
+    // 处理完整块
+    for i in 0..m_c {
+        let ntz_i = ntz(i + 1);
+        if ntz_i < 128 {
+            xor_blocks(&mut offset, &l[ntz_i]);
+        }
+        
+        let mut block = [0u8; 16];
+        let start = i * 16;
+        block.copy_from_slice(&ciphertext[start..start + 16]);
+        xor_blocks(&mut block, &offset);
+        sm4.decrypt_block(&mut block);
+        xor_blocks(&mut block, &offset);
+        
+        plaintext.extend_from_slice(&block);
+        xor_blocks(&mut checksum, &block);
+    }
+
+    // 处理最后一个不完整块并验证 tag
+    let expected_tag = if c_star_len > 0 {
+        xor_blocks(&mut offset, &l_star);
+        
+        let mut pad = offset;
+        sm4.encrypt_block(&mut pad);
+        
+        let start = m_c * 16;
+        for i in 0..c_star_len {
+            plaintext.push(ciphertext[start + i] ^ pad[i]);
+        }
+        
+        for i in 0..c_star_len {
+            checksum[i] ^= plaintext[start + i];
+        }
+        checksum[c_star_len] ^= 0x80;
+        
+        let mut tag_input = checksum;
+        xor_blocks(&mut tag_input, &offset);
+        xor_blocks(&mut tag_input, &l_dollar);
+        sm4.encrypt_block(&mut tag_input);
+        xor_blocks(&mut tag_input, &hash);
+        tag_input
+    } else {
+        let mut tag_input = checksum;
+        xor_blocks(&mut tag_input, &offset);
+        xor_blocks(&mut tag_input, &l_dollar);
+        sm4.encrypt_block(&mut tag_input);
+        xor_blocks(&mut tag_input, &hash);
+        tag_input
+    };
+
+    if bool::from(expected_tag.ct_eq(tag)) {
+        Ok(plaintext)
+    } else {
+        Err(Error::InvalidTag)
+    }
+}
+
+/// 计算 ntz(n) - trailing zeros 的个数
+fn ntz(n: usize) -> usize {
+    if n == 0 {
+        return 128;
+    }
+    n.trailing_zeros() as usize
+}
+
+/// XOR 两个 128-bit 块
+fn xor_blocks(a: &mut [u8; 16], b: &[u8; 16]) {
+    for i in 0..16 {
+        a[i] ^= b[i];
+    }
+}
+
+/// GF(2^128) 上乘以 u（左移一位，模不可约多项式）
+fn gf128_mul_u(block: &[u8; 16]) -> [u8; 16] {
+    let mut result = *block;
+    let mut carry = 0u8;
+
+    // 大端序：从左到右处理
+    for byte in result.iter_mut() {
+        let new_carry = *byte >> 7;
+        *byte = (*byte << 1) | carry;
+        carry = new_carry;
+    }
+
+    // 如果最高位为 1，需要模不可约多项式 x^128 + x^7 + x^2 + x + 1
+    // 对应 R = 0x87（当最高位溢出时 XOR）
+    if block[0] & 0x80 != 0 {
+        result[15] ^= 0x87;
+    }
+
+    result
+}
+
+
+// ── SIV 模式（确定性 AEAD）───────────────────────────────────────────────────
+
+/// SM4-SIV 加密（确定性 AEAD 模式）
+///
+/// SIV（Synthetic Initialization Vector）模式是一种确定性认证加密模式，
+/// 即使 nonce 重复使用也能保持安全性。适合需要确定性加密的场景。
+/// 实现基于 RFC 5297。
+///
+/// # 参数
+/// - `key`: 32 字节密钥（前 16 字节用于 MAC，后 16 字节用于加密）
+/// - `nonce`: 可选随机数（可为空）
+/// - `aad`: 附加认证数据（可多个）
+/// - `plaintext`: 明文
+///
+/// # 返回
+/// `(ciphertext, siv)` - 密文和 SIV（用作 IV）
+///
+/// # 安全说明
+/// - 即使 nonce 重复，只要 (nonce, aad, plaintext) 组合唯一就安全
+/// - 相同输入产生相同输出（确定性）
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_siv(
+    key: &[u8; 32],
+    nonce: Option<&[u8]>,
+    aad: &[&[u8]],
+    plaintext: &[u8],
+) -> Result<(Vec<u8>, [u8; 16]), Error> {
+    let mac_key = &key[..16];
+    let enc_key: &[u8; 16] = &key[16..32].try_into().unwrap();
+
+    // Step 1: 计算 S2V（Synthetic IV）
+    let siv = compute_s2v(mac_key, nonce, aad, plaintext)?;
+
+    // Step 2: 使用 SIV 作为 IV 进行 CTR 模式加密
+    let ciphertext = sm4_crypt_ctr(enc_key, &siv, plaintext);
+
+    Ok((ciphertext, siv))
+}
+
+/// SM4-SIV 解密
+///
+/// # 参数
+/// - `key`: 32 字节密钥
+/// - `nonce`: 可选随机数
+/// - `aad`: 附加认证数据
+/// - `ciphertext`: 密文
+/// - `siv`: SIV 值（16 字节）
+///
+/// # 返回
+/// `Ok(plaintext)` 如果 SIV 验证通过，否则返回 `Error::InvalidTag`
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_siv(
+    key: &[u8; 32],
+    nonce: Option<&[u8]>,
+    aad: &[&[u8]],
+    ciphertext: &[u8],
+    siv: &[u8; 16],
+) -> Result<Vec<u8>, Error> {
+    let mac_key = &key[..16];
+    let enc_key: &[u8; 16] = &key[16..32].try_into().unwrap();
+
+    // Step 1: 先解密得到 plaintext
+    let plaintext = sm4_crypt_ctr(enc_key, siv, ciphertext);
+
+    // Step 2: 使用解密后的 plaintext 重新计算 S2V
+    let expected_siv = compute_s2v(mac_key, nonce, aad, &plaintext)?;
+
+    // Step 3: 常量时间比较 SIV
+    if !bool::from(expected_siv.ct_eq(siv.as_slice())) {
+        return Err(Error::InvalidTag);
+    }
+
+    Ok(plaintext)
+}
+
+/// S2V 函数（RFC 5297 §2.4）
+#[cfg(feature = "alloc")]
+fn compute_s2v(
+    mac_key: &[u8],
+    nonce: Option<&[u8]>,
+    aad: &[&[u8]],
+    data: &[u8],
+) -> Result<[u8; 16], Error> {
+    let sm4 = Sm4Key::new(mac_key.try_into().unwrap());
+
+    // RFC 5297 S2V 算法：
+    // 1. 初始化 D = CMAC_K(0^128)
+    // 2. 对于每个字符串 S_i（AAD、nonce、plaintext）：
+    //    D = CMAC_K(D XOR S_i)
+    // 3. 最后：D = 2*D XOR bitlen(plaintext) || CMAC_K(final)
+    
+    // Step 1: D = CMAC(0^128) = E(0^128)
+    let mut d = [0u8; 16];
+    sm4.encrypt_block(&mut d);
+
+    // Step 2: 处理所有 AAD 字符串
+    for &aad_item in aad {
+        d = xor_and_cmac(&sm4, &d, aad_item);
+    }
+
+    // Step 3: 处理 nonce（如果存在）
+    if let Some(n) = nonce {
+        d = xor_and_cmac(&sm4, &d, n);
+    }
+
+    // Step 4: 处理最后一个字符串（plaintext/ciphertext）
+    // 特殊处理：先 XOR 长度，再加密
+    let data_len_bits = (data.len() as u64) * 8;
+    
+    // XOR 数据长度（bit）到 D 的最后 8 字节
+    let len_bytes = data_len_bits.to_be_bytes();
+    for i in 0..8 {
+        d[8 + i] ^= len_bytes[i];
+    }
+    
+    // 如果数据为空，直接加密
+    if data.is_empty() {
+        sm4.encrypt_block(&mut d);
+        return Ok(d);
+    }
+    
+    // XOR 数据（如果数据长度小于 16，需要特殊处理）
+    if data.len() >= 16 {
+        // XOR 最后 16 字节
+        let last_block = &data[data.len() - 16..];
+        for i in 0..16 {
+            d[i] ^= last_block[i];
+        }
+        sm4.encrypt_block(&mut d);
+        
+        // 处理前面的数据块
+        for chunk in data[..data.len() - 16].chunks(16) {
+            for (i, &byte) in chunk.iter().enumerate() {
+                d[i] ^= byte;
+            }
+            sm4.encrypt_block(&mut d);
+        }
+    } else {
+        // 数据长度小于 16 字节
+        for (i, &byte) in data.iter().enumerate() {
+            d[i] ^= byte;
+        }
+        sm4.encrypt_block(&mut d);
+    }
+
+    Ok(d)
+}
+
+/// XOR 数据并计算 CMAC
+#[cfg(feature = "alloc")]
+fn xor_and_cmac(sm4: &Sm4Key, state: &[u8; 16], data: &[u8]) -> [u8; 16] {
+    let mut result = *state;
+    
+    if data.is_empty() {
+        sm4.encrypt_block(&mut result);
+        return result;
+    }
+    
+    // XOR 数据
+    if data.len() >= 16 {
+        // XOR 最后 16 字节
+        let last_block = &data[data.len() - 16..];
+        for i in 0..16 {
+            result[i] ^= last_block[i];
+        }
+        sm4.encrypt_block(&mut result);
+        
+        // 处理前面的数据块
+        for chunk in data[..data.len() - 16].chunks(16) {
+            for (i, &byte) in chunk.iter().enumerate() {
+                result[i] ^= byte;
+            }
+            sm4.encrypt_block(&mut result);
+        }
+    } else {
+        // 数据长度小于 16 字节
+        for (i, &byte) in data.iter().enumerate() {
+            result[i] ^= byte;
+        }
+        sm4.encrypt_block(&mut result);
+    }
+    
+    result
+}
+
+// ── EAX 模式（两遍 AEAD）─────────────────────────────────────────────────────
+
+/// SM4-EAX 加密（两遍 AEAD 模式）
+///
+/// EAX 模式是一种两遍认证加密模式，比 GCM 更安全（无短周期问题），
+/// 但稍慢。实现基于 Bellare 等人的原始论文。
+///
+/// # 参数
+/// - `key`: 16 字节 SM4 密钥
+/// - `nonce`: 随机数（任意长度）
+/// - `aad`: 附加认证数据
+/// - `plaintext`: 明文
+///
+/// # 返回
+/// `(ciphertext, tag)` - 密文和 16 字节认证标签
+#[cfg(feature = "alloc")]
+pub fn sm4_encrypt_eax(
+    key: &[u8; 16],
+    nonce: &[u8],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<(Vec<u8>, [u8; 16]), Error> {
+    let sm4 = Sm4Key::new(key);
+
+    // Step 1: 计算 OMAC 密钥
+    // K_enc = OMAC_K(0)
+    let mut k_enc = [0u8; 16];
+    k_enc[15] = 0;
+    sm4.encrypt_block(&mut k_enc);
+
+    // K_nonce = OMAC_K(1)
+    let mut k_nonce = [0u8; 16];
+    k_nonce[15] = 1;
+    sm4.encrypt_block(&mut k_nonce);
+
+    // K_auth = OMAC_K(2)
+    let mut k_auth = [0u8; 16];
+    k_auth[15] = 2;
+    sm4.encrypt_block(&mut k_auth);
+
+    // Step 2: 计算 nonce 的 MAC（作为 CTR 模式的 IV）
+    let iv = omac(&sm4, &k_nonce, nonce);
+
+    // Step 3: 计算 AAD 的 MAC
+    let mut auth = omac(&sm4, &k_auth, aad);
+
+    // Step 4: 使用 CTR 模式加密（IV = nonce MAC）
+    let ciphertext = sm4_crypt_ctr(key, &iv, plaintext);
+
+    // Step 5: 计算密文的 MAC 并 XOR 到 auth 上
+    let mac_cipher = omac(&sm4, &k_enc, &ciphertext);
+    for i in 0..16 {
+        auth[i] ^= mac_cipher[i];
+    }
+
+    Ok((ciphertext, auth))
+}
+
+/// SM4-EAX 解密
+///
+/// # 参数
+/// - `key`: 16 字节 SM4 密钥
+/// - `nonce`: 随机数
+/// - `aad`: 附加认证数据
+/// - `ciphertext`: 密文
+/// - `tag`: 认证标签
+///
+/// # 返回
+/// `Ok(plaintext)` 如果认证成功，否则返回 `Error::InvalidTag`
+#[cfg(feature = "alloc")]
+pub fn sm4_decrypt_eax(
+    key: &[u8; 16],
+    nonce: &[u8],
+    aad: &[u8],
+    ciphertext: &[u8],
+    tag: &[u8; 16],
+) -> Result<Vec<u8>, Error> {
+    let sm4 = Sm4Key::new(key);
+
+    // Step 1: 重新计算密钥
+    let mut k_enc = [0u8; 16];
+    k_enc[15] = 0;
+    sm4.encrypt_block(&mut k_enc);
+
+    let mut k_nonce = [0u8; 16];
+    k_nonce[15] = 1;
+    sm4.encrypt_block(&mut k_nonce);
+
+    let mut k_auth = [0u8; 16];
+    k_auth[15] = 2;
+    sm4.encrypt_block(&mut k_auth);
+
+    // Step 2: 计算 nonce MAC
+    let iv = omac(&sm4, &k_nonce, nonce);
+
+    // Step 3: 计算 AAD MAC
+    let mut auth = omac(&sm4, &k_auth, aad);
+
+    // Step 4: 计算密文 MAC
+    let mac_cipher = omac(&sm4, &k_enc, ciphertext);
+    for i in 0..16 {
+        auth[i] ^= mac_cipher[i];
+    }
+
+    // Step 5: 验证标签
+    if !bool::from(auth.ct_eq(tag.as_slice())) {
+        return Err(Error::InvalidTag);
+    }
+
+    // Step 6: 解密
+    let plaintext = sm4_crypt_ctr(key, &iv, ciphertext);
+
+    Ok(plaintext)
+}
+
+/// OMAC（One-Key MAC）- EAX 使用的 CMAC 变体
+#[cfg(feature = "alloc")]
+fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
+    // EAX 使用 CMAC，需要生成子密钥
+    // Step 1: 计算 L = E(0^128)
+    let mut l = [0u8; 16];
+    sm4.encrypt_block(&mut l);
+    
+    // Step 2: 计算子密钥 K1 = double(L), K2 = double(double(L))
+    let k1 = gf128_mul_u(&l);
+    let k2 = gf128_mul_u(&k1);
+    
+    // Step 3: 处理数据
+    let mut state = [0u8; 16];
+    let data_len = data.len();
+    
+    if data_len == 0 {
+        // 空数据：XOR K2
+        for i in 0..16 {
+            state[i] ^= k2[i];
+        }
+        sm4.encrypt_block(&mut state);
+        return state;
+    }
+    
+    let num_blocks = data_len / 16;
+    let remaining = data_len % 16;
+    
+    // 处理完整块
+    for i in 0..num_blocks {
+        let start = i * 16;
+        for j in 0..16 {
+            state[j] ^= data[start + j];
+        }
+        sm4.encrypt_block(&mut state);
+    }
+    
+    // 处理最后一块
+    let last_start = num_blocks * 16;
+    if remaining == 0 {
+        // 完整块：XOR K1
+        for i in 0..16 {
+            state[i] ^= k1[i];
+        }
+    } else {
+        // 不完整块：padding 并 XOR K2
+        let mut last_block = [0u8; 16];
+        for i in 0..remaining {
+            last_block[i] = data[last_start + i];
+        }
+        last_block[remaining] = 0x80; // padding
+        
+        for i in 0..16 {
+            state[i] ^= last_block[i];
+        }
+        for i in 0..16 {
+            state[i] ^= k2[i];
+        }
+    }
+    
+    sm4.encrypt_block(&mut state);
+    state
+}
+
+// ── Key Wrap 模式（RFC 3394）────────────────────────────────────────────────
+
+/// SM4 Key Wrap（RFC 3394）
+///
+/// Key Wrap 用于安全地加密密钥材料，提供完整性保护。
+/// 实现基于 RFC 3394（AES Key Wrap），但使用 SM4。
+///
+/// # 参数
+/// - `key`: 16 字节 SM4 密钥（KEK - Key Encryption Key）
+/// - `plaintext`: 要加密的密钥材料（必须是 8 字节的倍数）
+///
+/// # 返回
+/// 包装后的密钥（比输入长 8 字节）
+///
+/// # 安全说明
+/// - 输出包含完整性校验值（ICV）
+/// - 解密时会验证完整性
+#[cfg(feature = "alloc")]
+pub fn sm4_key_wrap(key: &[u8; 16], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
+    // Reason: RFC 3394 要求输入必须是 8 字节（64 位）的倍数
+    if plaintext.is_empty() || plaintext.len() % 8 != 0 {
+        return Err(Error::InvalidInputLength);
+    }
+
+    let sm4 = Sm4Key::new(key);
+    let n = plaintext.len() / 8; // 64 位块的数量
+
+    // 初始化 A = IV（默认 ICV = 0xA6A6A6A6A6A6A6A6）
+    let mut a = [0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6];
+    let mut r: Vec<[u8; 8]> = plaintext
+        .chunks(8)
+        .map(|chunk| {
+            let mut block = [0u8; 8];
+            block.copy_from_slice(chunk);
+            block
+        })
+        .collect();
+
+    // 6 * n 轮加密
+    // RFC 3394 使用 1-based 索引：R[1]...R[n]，t = n*j + i
+    for j in 0..6 {
+        for i in 1..=n {
+            // Step 1: B = E(K, A || R[i])
+            let mut block = [0u8; 16];
+            block[..8].copy_from_slice(&a);
+            block[8..].copy_from_slice(&r[i - 1]); // Rust 使用 0-based 索引
+            sm4.encrypt_block(&mut block);
+
+            // Step 2: A = MSB_64(B) XOR t, t = n*j + i
+            let t = (n * j + i) as u64;
+            let a_new = u64::from_be_bytes(block[..8].try_into().unwrap()) ^ t;
+            a.copy_from_slice(&a_new.to_be_bytes());
+
+            // Step 3: R[i] = LSB_64(B)
+            r[i - 1].copy_from_slice(&block[8..]); // Rust 使用 0-based 索引
+        }
+    }
+
+    // 输出：A || R[1] || ... || R[n]
+    let mut output = Vec::with_capacity(plaintext.len() + 8);
+    output.extend_from_slice(&a);
+    for block in r {
+        output.extend_from_slice(&block);
+    }
+
+    Ok(output)
+}
+
+/// SM4 Key Unwrap（RFC 3394）
+///
+/// # 参数
+/// - `key`: 16 字节 SM4 密钥（KEK）
+/// - `ciphertext`: 包装后的密钥（必须是 8 字节的倍数）
+///
+/// # 返回
+/// `Ok(plaintext)` 如果完整性验证通过，否则返回 `Error::InvalidTag`
+#[cfg(feature = "alloc")]
+pub fn sm4_key_unwrap(key: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
+    // Reason: RFC 3394 要求输入必须是 8 字节的倍数，且至少 16 字节（A + 至少一个 R）
+    if ciphertext.len() < 16 || ciphertext.len() % 8 != 0 {
+        return Err(Error::InvalidInputLength);
+    }
+
+    let sm4 = Sm4Key::new(key);
+    let n = (ciphertext.len() - 8) / 8; // R 块的数量
+
+    // 初始化 A 和 R
+    let mut a = ciphertext[..8].try_into().unwrap();
+    let mut r: Vec<[u8; 8]> = ciphertext[8..]
+        .chunks(8)
+        .map(|chunk| chunk.try_into().unwrap())
+        .collect();
+
+    // 6 * n 轮解密
+    // RFC 3394 解密是加密的逆过程：t 从 6n 递减到 1
+    for j in (0..6).rev() {
+        for i in (1..=n).rev() {
+            // Step 1: B = D(K, (A XOR t) || R[i]), t = n*j + i
+            let t = (n * j + i) as u64;
+            let a_xor = u64::from_be_bytes(a) ^ t;
+
+            let mut block = [0u8; 16];
+            block[..8].copy_from_slice(&a_xor.to_be_bytes());
+            block[8..].copy_from_slice(&r[i - 1]); // Rust 使用 0-based 索引
+            sm4.decrypt_block(&mut block);
+
+            // Step 2: A = MSB_64(B)
+            a.copy_from_slice(&block[..8]);
+
+            // Step 3: R[i] = LSB_64(B)
+            r[i - 1].copy_from_slice(&block[8..]); // Rust 使用 0-based 索引
+        }
+    }
+
+    // 验证 ICV
+    let expected_icv = [0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6];
+    if !bool::from(a.ct_eq(&expected_icv)) {
+        return Err(Error::InvalidTag);
+    }
+
+    // 输出：R[1] || ... || R[n]
+    let mut output = Vec::with_capacity(n * 8);
+    for block in r {
+        output.extend_from_slice(&block);
+    }
+
+    Ok(output)
+}
+
 // ── 测试 ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1111,5 +2032,190 @@ mod tests {
         let ct = sm4_crypt_ofb(&key, &iv, plain);
         let pt = sm4_crypt_ofb(&key, &iv, &ct);
         assert_eq!(pt, plain, "OFB 应为自反模式");
+    }
+
+    // ====================================================================================
+    // OCB 模式测试
+    // ====================================================================================
+
+    /// OCB 加解密往返测试
+    #[test]
+    fn test_ocb_roundtrip() {
+        let key = [0x42u8; 16];
+        let nonce = b"unique_nonce";
+        let aad = b"additional data";
+        let plaintext = b"Hello OCB world!";
+
+        let (ciphertext, tag) = sm4_encrypt_ocb(&key, nonce, aad, plaintext)
+            .expect("OCB encryption should succeed");
+        let decrypted = sm4_decrypt_ocb(&key, nonce, aad, &ciphertext, &tag)
+            .expect("OCB decryption should succeed");
+
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(ciphertext.len(), plaintext.len());
+    }
+
+    /// OCB 标签篡改检测
+    #[test]
+    fn test_ocb_tamper_detection() {
+        let key = [0x42u8; 16];
+        let nonce = b"unique_nonce";
+        let aad = b"additional data";
+        let plaintext = b"Secret message";
+
+        let (ciphertext, mut tag) = sm4_encrypt_ocb(&key, nonce, aad, plaintext).unwrap();
+        tag[0] ^= 0x01; // 篡改标签
+
+        assert!(sm4_decrypt_ocb(&key, nonce, aad, &ciphertext, &tag).is_err());
+    }
+
+    /// OCB nonce 长度验证
+    #[test]
+    fn test_ocb_nonce_length() {
+        let key = [0x42u8; 16];
+        let plaintext = b"test".as_slice();
+        let empty: &[u8] = &[];
+
+        // 空 nonce 应失败
+        assert!(sm4_encrypt_ocb(&key, empty, empty, plaintext).is_err());
+
+        // 过长的 nonce 应失败
+        let long_nonce = [0u8; 16];
+        assert!(sm4_encrypt_ocb(&key, long_nonce.as_slice(), empty, plaintext).is_err());
+
+        // 合法的 nonce 应成功
+        let valid_nonce = b"12_bytes_nonce";
+        assert!(sm4_encrypt_ocb(&key, valid_nonce.as_slice(), empty, plaintext).is_ok());
+    }
+
+    // ====================================================================================
+    // SIV 模式测试
+    // ====================================================================================
+
+    /// SIV 加解密往返测试
+    #[test]
+    fn test_siv_roundtrip() {
+        let key = [0x42u8; 32];
+        let nonce = Some(b"nonce".as_slice());
+        let aad: &[&[u8]] = &[b"additional", b"data"];
+        let plaintext = b"Hello SIV world!";
+
+        let (ciphertext, siv) = sm4_encrypt_siv(&key, nonce, aad, plaintext)
+            .expect("SIV encryption should succeed");
+        let decrypted = sm4_decrypt_siv(&key, nonce, aad, &ciphertext, &siv)
+            .expect("SIV decryption should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// SIV 确定性测试（相同输入产生相同输出）
+    #[test]
+    fn test_siv_deterministic() {
+        let key = [0x42u8; 32];
+        let nonce = Some(b"nonce".as_slice());
+        let aad: &[&[u8]] = &[b"additional"];
+        let plaintext = b"Deterministic test";
+
+        let (ct1, siv1) = sm4_encrypt_siv(&key, nonce, aad, plaintext).unwrap();
+        let (ct2, siv2) = sm4_encrypt_siv(&key, nonce, aad, plaintext).unwrap();
+
+        assert_eq!(ct1, ct2, "SIV 应为确定性加密");
+        assert_eq!(siv1, siv2);
+    }
+
+    /// SIV 标签验证
+    #[test]
+    fn test_siv_tag_verification() {
+        let key = [0x42u8; 32];
+        let nonce = Some(b"nonce".as_slice());
+        let aad: &[&[u8]] = &[b"additional"];
+        let plaintext = b"Test tamper detection";
+
+        let (ciphertext, mut siv) = sm4_encrypt_siv(&key, nonce, aad, plaintext).unwrap();
+        siv[0] ^= 0x01; // 篡改 SIV
+
+        assert!(sm4_decrypt_siv(&key, nonce, aad, &ciphertext, &siv).is_err());
+    }
+
+    // ====================================================================================
+    // EAX 模式测试
+    // ====================================================================================
+
+    /// EAX 加解密往返测试
+    #[test]
+    fn test_eax_roundtrip() {
+        let key = [0x42u8; 16];
+        let nonce = b"unique_nonce";
+        let aad = b"additional data";
+        let plaintext = b"Hello EAX world!";
+
+        let (ciphertext, tag) = sm4_encrypt_eax(&key, nonce, aad, plaintext)
+            .expect("EAX encryption should succeed");
+        let decrypted = sm4_decrypt_eax(&key, nonce, aad, &ciphertext, &tag)
+            .expect("EAX decryption should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// EAX 标签篡改检测
+    #[test]
+    fn test_eax_tamper_detection() {
+        let key = [0x42u8; 16];
+        let nonce = b"unique_nonce";
+        let aad = b"additional data";
+        let plaintext = b"Secret message";
+
+        let (ciphertext, mut tag) = sm4_encrypt_eax(&key, nonce, aad, plaintext).unwrap();
+        tag[0] ^= 0x01; // 篡改标签
+
+        assert!(sm4_decrypt_eax(&key, nonce, aad, &ciphertext, &tag).is_err());
+    }
+
+    // ====================================================================================
+    // Key Wrap 模式测试
+    // ====================================================================================
+
+    /// Key Wrap 往返测试
+    #[test]
+    fn test_key_wrap_roundtrip() {
+        let kek = [0x42u8; 16];
+        let key_data = [0x12u8; 24]; // 24 字节密钥数据（8 的倍数）
+
+        let wrapped = sm4_key_wrap(&kek, &key_data).expect("Key wrap should succeed");
+        let unwrapped = sm4_key_unwrap(&kek, &wrapped).expect("Key unwrap should succeed");
+
+        assert_eq!(unwrapped, key_data);
+        assert_eq!(wrapped.len(), key_data.len() + 8); // 输出应比输入长 8 字节
+    }
+
+    /// Key Wrap ICV 验证
+    #[test]
+    fn test_key_wrap_icv_check() {
+        let kek = [0x42u8; 16];
+        let key_data = [0x12u8; 16];
+
+        let wrapped = sm4_key_wrap(&kek, &key_data).unwrap();
+
+        // 篡改密文
+        let mut tampered = wrapped.clone();
+        tampered[0] ^= 0x01;
+
+        assert!(sm4_key_unwrap(&kek, &tampered).is_err());
+    }
+
+    /// Key Wrap 长度验证
+    #[test]
+    fn test_key_wrap_length_validation() {
+        let kek = [0x42u8; 16];
+
+        // 非 8 倍数长度应失败
+        assert!(sm4_key_wrap(&kek, &[0u8; 15]).is_err());
+
+        // 空数据应失败
+        assert!(sm4_key_wrap(&kek, &[]).is_err());
+
+        // 合法长度应成功
+        assert!(sm4_key_wrap(&kek, &[0u8; 8]).is_ok());
+        assert!(sm4_key_wrap(&kek, &[0u8; 16]).is_ok());
     }
 }

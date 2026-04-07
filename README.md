@@ -15,7 +15,7 @@ Pure-Rust, `#![no_std]` implementation of Chinese commercial cryptography standa
 |-----------|----------|-------------|
 | **SM2** | GB/T 32918.1-5-2016 | Elliptic Curve Public Key Cryptography |
 | **SM3** | GB/T 32905-2016 | Cryptographic Hash Algorithm (256-bit) |
-| **SM4** | GB/T 32907-2016 | Block Cipher (128-bit key, ECB/CBC/CTR/GCM/CCM/XTS) |
+| **SM4** | GB/T 32907-2016 | Block Cipher (128-bit key, ECB/CBC/CTR/GCM/CCM/XTS/OCB/SIV/EAX/Key Wrap) |
 | **SM9** | GB/T 38635.1-2-2020 | Identity-Based Cryptography (BN256 pairing) |
 | **BLS** | IETF RFC 9380 | BLS Signatures & Threshold Signatures (BN256) |
 | **FPE** | NIST SP 800-38G | Format-Preserving Encryption (FF1-like) |

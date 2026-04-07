@@ -33,6 +33,10 @@ pub enum Error {
     AuthTagMismatch,
     /// 填充无效（PKCS#5/PKCS#7 解密时）
     InvalidPadding,
+    /// GCM/CCM/OCB nonce 长度无效（推荐 12 字节）
+    InvalidNonceLength,
+    /// AEAD 认证标签无效（OCB/SIV/EAX/Key Wrap 解密时）
+    InvalidTag,
 
     // ── SM9 错误 ────────────────────────────────────────────────────────────
     /// 输入点不在曲线上
@@ -138,6 +142,8 @@ impl fmt::Display for Error {
             Error::KeyExchangeFailed => write!(f, "key exchange failed"),
             Error::AuthTagMismatch => write!(f, "authentication tag mismatch"),
             Error::InvalidPadding => write!(f, "invalid padding"),
+            Error::InvalidNonceLength => write!(f, "invalid nonce length"),
+            Error::InvalidTag => write!(f, "invalid tag"),
             Error::NotOnCurve => write!(f, "point not on curve"),
             Error::ZeroScalar => write!(f, "zero scalar"),
             Error::IntegerOutOfRange => write!(f, "integer out of range"),
