@@ -46,6 +46,7 @@ use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::{Decode, Encode};
 use x509_cert::ext::pkix::{ExtendedKeyUsage, KeyUsage, KeyUsages};
 use x509_cert::ext::Extension;
+use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 use x509_cert::time::Validity;
 use x509_cert::Certificate;
@@ -1234,7 +1235,7 @@ fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
 pub struct CertificateBuilder {
     subject: Option<Vec<u8>>,
     issuer: Option<Vec<u8>>,
-    serial_number: Vec<u8>,
+    serial_number: SerialNumber,
     not_before: Option<std::time::SystemTime>,
     not_after: Option<std::time::SystemTime>,
     extensions: Vec<Extension>,
@@ -1247,7 +1248,7 @@ impl CertificateBuilder {
         Self {
             subject: None,
             issuer: None,
-            serial_number: vec![0x01], // 默认序列号为 1
+            serial_number: SerialNumber::from(1u32), // 默认序列号为 1
             not_before: None,
             not_after: None,
             extensions: Vec::new(),
@@ -1285,28 +1286,8 @@ impl CertificateBuilder {
     ///
     /// # 返回
     /// 自引用
-    pub fn serial_number(mut self, serial: impl Into<u64>) -> Self {
-        let value = serial.into();
-        // 将 u64 转换为 DER INTEGER 格式（大端）
-        let bytes = value.to_be_bytes();
-        // 跳过前导零
-        let start = bytes
-            .iter()
-            .position(|&b| b != 0)
-            .unwrap_or(bytes.len() - 1);
-        self.serial_number = bytes[start..].to_vec();
-        self
-    }
-
-    /// 设置序列号（字节数组）
-    ///
-    /// # 参数
-    /// - `serial`: 序列号字节数组
-    ///
-    /// # 返回
-    /// 自引用
-    pub fn serial_number_bytes(mut self, serial: &[u8]) -> Self {
-        self.serial_number = serial.to_vec();
+    pub fn serial_number(mut self, serial: impl Into<u32>) -> Self {
+        self.serial_number = SerialNumber::from(serial.into());
         self
     }
 
@@ -1453,9 +1434,7 @@ impl CertificateBuilder {
         tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
 
         // 序列号
-        tbs.push(0x02);
-        tbs.push(self.serial_number.len() as u8);
-        tbs.extend_from_slice(&self.serial_number);
+        tbs.extend_from_slice(&self.serial_number.to_der().unwrap());
 
         // 签名算法 (SM2withSM3)
         use x509_cert::der::Encode;
@@ -1507,7 +1486,7 @@ impl CertificateBuilder {
 
         Ok(GmCertificate {
             version: 2,
-            serial_number: self.serial_number,
+            serial_number: self.serial_number.to_der().unwrap(),
             signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
             issuer,
             validity: validity_seq,
