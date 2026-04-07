@@ -301,7 +301,7 @@ pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
 
     let sec1 = private_key_to_sec1_der(priv_key);
     // AlgorithmIdentifier：SM2公钥算法
-    let alg_id_der = crate::sm2::SM2_SPKI_ALGORITHM.to_der().expect("Failed to encode AlgorithmIdentifier");
+    let alg_id_der = crate::sm2::SM2_SPKI_ALGORITHM.to_der().unwrap();
     // version INTEGER = 0：02 01 00
     let version: &[u8] = &[0x02, 0x01, 0x00];
     // privateKey OCTET STRING 包装 sec1

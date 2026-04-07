@@ -1021,11 +1021,6 @@ impl X500AttributeType {
             X500AttributeType::BusinessCategory => ObjectIdentifier::new_unwrap("2.5.4.15"),
         }
     }
-
-    /// 获取属性类型的 OID DER 编码（向后兼容）
-    fn oid_der(&self) -> Vec<u8> {
-        self.oid().as_bytes().to_vec()
-    }
 }
 
 /// X.500 名称属性
@@ -1050,35 +1045,35 @@ impl X500Attribute {
         }
     }
 
+    /// 转换为 x509-cert 的 AttributeTypeAndValue
+    pub fn to_attribute_type_and_value(&self) -> x509_cert::attr::AttributeTypeAndValue {
+        use x509_cert::der::asn1::Utf8StringRef;
+        use x509_cert::der::Encode;
+        
+        let utf8_string = Utf8StringRef::new(&self.value)
+            .expect("Invalid UTF-8");
+        
+        // 编码 UTF8String 为 DER
+        let value_der = utf8_string.to_der()
+            .expect("Failed to encode UTF8String");
+        
+        // 从 DER 创建 Any 类型
+        let value_any = x509_cert::der::Any::from_der(&value_der)
+            .expect("Failed to create Any from UTF8String");
+        
+        x509_cert::attr::AttributeTypeAndValue {
+            oid: self.attr_type.oid(),
+            value: value_any,
+        }
+    }
+
     /// 将属性编码为 DER 格式
     ///
     /// 编码为 RelativeDistinguishedName (RDN) 格式：
     /// SET { SEQUENCE { OID, UTF8String } }
     fn to_der(&self) -> Vec<u8> {
-        let mut rdn = Vec::with_capacity(32);
-
-        // OID
-        rdn.extend(self.attr_type.oid_der());
-
-        // UTF8String value
-        let value_bytes = self.value.as_bytes();
-        rdn.push(0x0C); // UTF8String tag
-        rdn.push(value_bytes.len() as u8);
-        rdn.extend_from_slice(value_bytes);
-
-        // 包装为 SEQUENCE
-        let mut seq = Vec::with_capacity(2 + rdn.len());
-        seq.push(0x30);
-        seq.push(rdn.len() as u8);
-        seq.extend(rdn);
-
-        // 包装为 SET
-        let mut set = Vec::with_capacity(2 + seq.len());
-        set.push(0x31);
-        set.push(seq.len() as u8);
-        set.extend(seq);
-
-        set
+        let attr = self.to_attribute_type_and_value();
+        attr.to_der().expect("Failed to encode AttributeTypeAndValue")
     }
 }
 
