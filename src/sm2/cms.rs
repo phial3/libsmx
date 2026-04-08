@@ -52,7 +52,7 @@ use crate::sm2::cert::GmCertificate;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
-use x509_cert::ext::pkix::SubjectKeyIdentifier;
+
 // ====================================================================================
 // 数据结构
 // ====================================================================================
@@ -1776,7 +1776,7 @@ mod tests {
         let data = b"Test message for verification details";
 
         // 创建签名
-        let signed_data = create_digital_signature(
+        let _signed_data = create_digital_signature(
             data, &priv_key, &cert, DEFAULT_ID, &mut rng, false,
         )
         .expect("Signature creation should succeed");
