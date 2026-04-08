@@ -193,7 +193,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
         Ok(result) => {
             if result.is_valid {
                 println!("✅ 签名验证成功");
-                println!("   签名者数量：{}", result.signer_count);
+                println!("   签名者数量：{}", result.signer_results.len());
                 println!("   恢复内容：{}", String::from_utf8_lossy(&result.content));
 
                 if result.content != test_data.as_slice() {
@@ -208,7 +208,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
                 }
             } else {
                 println!("\n❌ 签名验证失败 - 签名无效");
-                println!("   签名者数量：{}", result.signer_count);
+                println!("   签名者数量：{}", result.signer_results.len());
                 println!(
                     "   恢复内容：{:?}",
                     String::from_utf8_lossy(&result.content)

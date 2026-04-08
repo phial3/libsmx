@@ -41,15 +41,19 @@ use crate::error::Error;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
-use x509_cert::der::asn1::BitString;
+use x509_cert::attr::AttributeTypeAndValue;
+use x509_cert::der::asn1::{BitString, OctetString, Utf8StringRef};
 use x509_cert::der::pem::{decode_vec, encode_string};
-use x509_cert::der::{Decode, Encode};
-use x509_cert::ext::pkix::{ExtendedKeyUsage, KeyUsage, KeyUsages};
+use x509_cert::der::{Any, Decode, Encode};
+use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages};
 use x509_cert::ext::Extension;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
-use x509_cert::time::Validity;
+use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
+
+#[cfg(feature = "alloc")]
+use alloc::string::String;
 
 // chrono 时间库导入（用于标准时间处理）
 #[cfg(feature = "std")]
@@ -93,7 +97,7 @@ pub struct GmCertificate {
     pub subject: Vec<u8>,
     /// 主体公钥信息
     pub subject_public_key_info: Vec<u8>,
-    /// 证书扩展项（可选，使用 x509-cert 标准类型）
+    /// 证书扩展项
     pub extensions: Option<Vec<Extension>>,
 }
 
@@ -147,8 +151,7 @@ pub fn create_key_usage_extension(key_usage: KeyUsage) -> Extension {
     Extension {
         extn_id: crate::sm2::ID_CE_KEY_USAGE,
         critical: true,
-        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
-            .expect("Failed to create OctetString"),
+        extn_value: OctetString::new(der_bytes).expect("Failed to create OctetString"),
     }
 }
 
@@ -169,8 +172,7 @@ pub fn create_extended_key_usage_extension(usages: &[ObjectIdentifier]) -> Exten
     Extension {
         extn_id: crate::sm2::ID_CE_EXT_KEY_USAGE,
         critical: false,
-        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
-            .expect("Failed to create OctetString"),
+        extn_value: OctetString::new(der_bytes).expect("Failed to create OctetString"),
     }
 }
 
@@ -183,8 +185,6 @@ pub fn create_extended_key_usage_extension(usages: &[ObjectIdentifier]) -> Exten
 /// # 返回
 /// x509-cert 的 Extension 类型
 pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> Extension {
-    use x509_cert::ext::pkix::BasicConstraints;
-
     let basic_constraints = BasicConstraints {
         ca: is_ca,
         path_len_constraint: path_len,
@@ -197,8 +197,7 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
     Extension {
         extn_id: crate::sm2::ID_CE_BASIC_CONSTRAINTS,
         critical: is_ca,
-        extn_value: x509_cert::der::asn1::OctetString::new(der_bytes)
-            .expect("Failed to create OctetString"),
+        extn_value: OctetString::new(der_bytes).expect("Failed to create OctetString"),
     }
 }
 
@@ -888,13 +887,6 @@ pub fn parse_x509_certificate(der: &[u8]) -> Result<Certificate, Error> {
     Certificate::from_der(der).map_err(|_| Error::InvalidCertificate)
 }
 
-// ====================================================================================
-// X.500 名称构建辅助（需要 alloc）
-// ====================================================================================
-
-#[cfg(feature = "alloc")]
-use alloc::string::String;
-
 /// X.500 可分辨名称属性类型
 ///
 /// 用于构建证书的 issuer 和 subject 字段。
@@ -1046,22 +1038,16 @@ impl X500Attribute {
     }
 
     /// 转换为 x509-cert 的 AttributeTypeAndValue
-    pub fn to_attribute_type_and_value(&self) -> x509_cert::attr::AttributeTypeAndValue {
-        use x509_cert::der::asn1::Utf8StringRef;
-        use x509_cert::der::Encode;
-        
-        let utf8_string = Utf8StringRef::new(&self.value)
-            .expect("Invalid UTF-8");
-        
+    pub fn to_attribute_type_and_value(&self) -> AttributeTypeAndValue {
+        let utf8_string = Utf8StringRef::new(&self.value).expect("Invalid UTF-8");
+
         // 编码 UTF8String 为 DER
-        let value_der = utf8_string.to_der()
-            .expect("Failed to encode UTF8String");
-        
+        let value_der = utf8_string.to_der().expect("Failed to encode UTF8String");
+
         // 从 DER 创建 Any 类型
-        let value_any = x509_cert::der::Any::from_der(&value_der)
-            .expect("Failed to create Any from UTF8String");
-        
-        x509_cert::attr::AttributeTypeAndValue {
+        let value_any = Any::from_der(&value_der).expect("Failed to create Any from UTF8String");
+
+        AttributeTypeAndValue {
             oid: self.attr_type.oid(),
             value: value_any,
         }
@@ -1396,17 +1382,12 @@ impl CertificateBuilder {
         let not_after = self.not_after.ok_or(Error::InvalidCertificate)?;
 
         // 生成有效期 DER（使用 x509-cert 的 Validity 类型）
-        let not_before_time = x509_cert::time::Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
-        let not_after_time = x509_cert::time::Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
+        let not_before_time = Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
+        let not_after_time = Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
 
-        let validity = Validity::<x509_cert::certificate::Rfc5280>::new(
-            not_before_time,
-            not_after_time,
-        );
+        let validity = Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time);
 
-        let validity_seq = validity
-            .to_der()
-            .map_err(|_| Error::InvalidCertificate)?;
+        let validity_seq = validity.to_der().map_err(|_| Error::InvalidCertificate)?;
 
         // 构建 SPKI
         let spki = der::public_key_to_spki_der(pub_key);
@@ -1421,7 +1402,6 @@ impl CertificateBuilder {
         tbs.extend_from_slice(&self.serial_number.to_der().unwrap());
 
         // 签名算法 (SM2withSM3)
-        use x509_cert::der::Encode;
         tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
         // 签发者
@@ -1892,7 +1872,6 @@ pub fn generate_self_signed_cert<R: Rng>(
     tbs.extend_from_slice(serial_number);
 
     // 签名算法 (SM2withSM3)
-    use x509_cert::der::Encode;
     tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
     // 签发者 = 主体
@@ -2088,7 +2067,6 @@ pub fn issue_certificate<R: Rng>(
     tbs.extend_from_slice(serial_number);
 
     // 签名算法 (SM2withSM3)
-    use x509_cert::der::Encode;
     tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
     // 签发者（使用 CA 的主体）

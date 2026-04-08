@@ -40,12 +40,12 @@ rustls = { git = "https://github.com/rustls/rustls.git", branch = "main", option
 pki-types = { package = "rustls-pki-types", version = "1", optional = true, features = ["alloc"] }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
 getrandom = { version = "0.4", optional = true }
-x509-cert = { version = "=0.3.0-rc.4", optional = true, features = ["builder"] }
+x509-cert = { version = "=0.3.0-rc.4", optional = true, features = ["pem"] }
 
 [features]
 default = ["alloc"]
-alloc = ["x509-cert"]
-std = ["alloc", "chrono/std"]
+alloc = ["dep:x509-cert"]
+std = ["alloc", "chrono/std", "x509-cert/default"]
 # rustls CryptoProvider 集成（RFC 8998 国密 TLS 套件）
 rustls-provider = ["alloc", "dep:rustls", "dep:pki-types", "dep:getrandom"]
 

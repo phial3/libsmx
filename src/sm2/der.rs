@@ -297,8 +297,6 @@ pub fn private_key_to_sec1_der(priv_key: &PrivateKey) -> Vec<u8> {
 /// 解析 SM2 私钥的 PKCS#8 格式（RFC 5958）
 #[cfg(feature = "alloc")]
 pub fn private_key_to_pkcs8_der(priv_key: &PrivateKey) -> Vec<u8> {
-    use x509_cert::der::Encode;
-
     let sec1 = private_key_to_sec1_der(priv_key);
     // AlgorithmIdentifier：SM2公钥算法
     let alg_id_der = crate::sm2::SM2_SPKI_ALGORITHM.to_der().unwrap();

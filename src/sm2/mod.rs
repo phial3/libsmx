@@ -33,13 +33,12 @@ use alloc::vec::Vec;
 
 #[cfg(feature = "alloc")]
 use x509_cert::der::pem::{decode_vec, encode_string};
+use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
 
 use crypto_bigint::U256;
 use rand_core::Rng;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
-
-use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
 
 use crate::error::Error;
 use crate::sm2::ec::{multi_scalar_mul, AffinePoint, JacobianPoint};
