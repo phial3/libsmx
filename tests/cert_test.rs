@@ -481,6 +481,7 @@ mod tests {
     #[test]
     #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_certificate_builder() {
+        use x509_cert::serial_number::SerialNumber;
         use cert::{X500Attribute, X500AttributeType};
         use std::time::Duration;
 
@@ -510,7 +511,7 @@ mod tests {
 
         // 验证证书结构
         assert_eq!(cert.version, 2); // v3
-        assert_eq!(cert.serial_number, vec![0x01]);
+        assert_eq!(cert.serial_number, SerialNumber::from(1u32));
         // 注意：issuer 和 subject 不相同，因为我们设置了不同的值
         println!("✅ 测试 12.2：验证证书结构 - 通过");
 

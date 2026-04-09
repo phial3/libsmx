@@ -14,6 +14,7 @@ use libsmx::sm2::PrivateKey;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::fs;
+use x509_cert::der::Encode;
 
 // ====================================================================================
 // 证书测试套件
@@ -106,19 +107,22 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
     println!("   版本：{}", cert.version);
     println!(
         "   序列号：{:02x?}",
-        &cert.serial_number[..8.min(cert.serial_number.len())]
+        &cert.serial_number.to_der().unwrap()[..8.min(cert.serial_number.to_der().unwrap().len())]
     );
+    let issuer_der = cert.issuer.to_der().unwrap();
     println!(
         "   颁发者：{:02x?}",
-        &cert.issuer[..16.min(cert.issuer.len())]
+        &issuer_der[..16.min(issuer_der.len())]
     );
+    let subject_der = cert.subject.to_der().unwrap();
     println!(
         "   主体：{:02x?}",
-        &cert.subject[..16.min(cert.subject.len())]
+        &subject_der[..16.min(subject_der.len())]
     );
+    let spki_der = cert.subject_public_key_info.to_der().unwrap();
     println!(
         "   公钥信息长度：{} 字节",
-        cert.subject_public_key_info.len()
+        spki_der.len()
     );
 
     // 2. 验证证书和私钥匹配
@@ -132,13 +136,14 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             println!("\n❌ 提取 SM2 公钥失败：{}", e);
             println!("   错误类型：{:?}", e);
             println!("\n   诊断信息:");
+            let spki_der = cert.subject_public_key_info.to_der().unwrap();
             println!(
                 "   - 公钥数据长度：{} 字节",
-                cert.subject_public_key_info.len()
+                spki_der.len()
             );
             println!(
                 "   - 公钥数据：{:02x?}",
-                &cert.subject_public_key_info[..32.min(cert.subject_public_key_info.len())]
+                &spki_der[..32.min(spki_der.len())]
             );
             println!("\n   可能原因:");
             println!("   - 证书使用的是非 SM2 曲线（如 P-256、secp256k1 等）");
@@ -225,9 +230,10 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             println!("   错误类型：{:?}", e);
             println!("\n   诊断信息:");
             println!("   - 签名长度：{} 字节", signature.len());
+            let spki_der = cert.subject_public_key_info.to_der().unwrap();
             println!(
                 "   - 证书公钥信息长度：{} 字节",
-                cert.subject_public_key_info.len()
+                spki_der.len()
             );
             println!("\n   可能原因:");
             println!("   - 证书使用的是非 SM2 曲线（如 P-256）");

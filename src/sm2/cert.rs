@@ -34,30 +34,30 @@
 //! ```
 
 #![cfg(feature = "alloc")]
+#[cfg(feature = "alloc")]
+use alloc::string::String;
+#[cfg(feature = "alloc")]
 use alloc::vec;
 use alloc::vec::Vec;
+// chrono 用于标准时间处理
+#[cfg(feature = "std")]
+use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 use crate::error::Error;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
 use x509_cert::attr::AttributeTypeAndValue;
-use x509_cert::der::asn1::{BitString, OctetString, Utf8StringRef};
+use x509_cert::der::asn1::{BitString, BitStringRef, OctetString, Utf8StringRef};
 use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::{Any, Decode, Encode};
 use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages};
 use x509_cert::ext::Extension;
+use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
-use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
+use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier, SubjectPublicKeyInfo};
 use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
-
-#[cfg(feature = "alloc")]
-use alloc::string::String;
-
-// chrono 时间库导入（用于标准时间处理）
-#[cfg(feature = "std")]
-use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 // ====================================================================================
 // 数据结构
@@ -71,32 +71,37 @@ use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 /// ## 字段说明
 ///
 /// - `version`: 证书版本号，0=v1, 1=v2, 2=v3
-/// - `serial_number`: 证书序列号，由签发者分配的唯一标识
-/// - `signature_algorithm`: 签名算法标识符（DER 编码）
-/// - `issuer`: 签发者名称（DER 编码的 X.500 Name）
-/// - `validity`: 有效期（DER 编码的 SEQUENCE）
-/// - `subject`: 主体名称（DER 编码的 X.500 Name）
-/// - `subject_public_key_info`: 主体公钥信息（DER 编码的 SubjectPublicKeyInfo）
+/// - `serial_number`: 证书序列号（使用 x509_cert 的 SerialNumber 类型）
+/// - `signature_algorithm`: 签名算法标识符（使用 AlgorithmIdentifier）
+/// - `issuer`: 签发者名称（使用 x509_cert 的 Name 类型）
+/// - `validity`: 有效期（使用 x509_cert 的 Validity 类型）
+/// - `subject`: 主体名称（使用 x509_cert 的 Name 类型）
+/// - `subject_public_key_info`: 主体公钥信息（使用 SubjectPublicKeyInfo）
 /// - `extensions`: 证书扩展项（可选，v3 证书特有）
 /// - `signature`: 签名值（原始字节）
+///
+/// ## 设计说明
+///
+/// 本结构使用 x509-cert 库的类型定义，提供类型安全的证书表示。
+/// 与 `x509_cert::Certificate` 的字段完全对应，便于互转和比较。
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct GmCertificate {
     /// 版本 (0=v1, 1=v2, 2=v3)
     pub version: u32,
     /// 序列号
-    pub serial_number: Vec<u8>,
+    pub serial_number: SerialNumber,
     /// 签名算法
-    pub signature_algorithm: Vec<u8>,
-    /// 签名值
+    pub signature_algorithm: AlgorithmIdentifier<ObjectIdentifier>,
+    /// 签名值（原始字节）
     pub signature: Vec<u8>,
     /// 签发者
-    pub issuer: Vec<u8>,
-    /// 有效期
-    pub validity: Vec<u8>,
+    pub issuer: Name,
     /// 主体
-    pub subject: Vec<u8>,
+    pub subject: Name,
+    /// 有效期
+    pub validity: Validity,
     /// 主体公钥信息
-    pub subject_public_key_info: Vec<u8>,
+    pub subject_public_key_info: SubjectPublicKeyInfo<ObjectIdentifier, BitString>,
     /// 证书扩展项
     pub extensions: Option<Vec<Extension>>,
 }
@@ -316,6 +321,66 @@ impl GmCertificate {
         extract_sm2_public_key(self)
     }
 
+    /// 获取主体公钥信息的 DER 编码
+    ///
+    /// 将 subject_public_key_info 字段编码为 DER 格式。
+    ///
+    /// # 返回
+    /// DER 编码的主体公钥信息
+    pub fn subject_public_key_info_der(&self) -> Vec<u8> {
+        self.subject_public_key_info.to_der().unwrap()
+    }
+
+    /// 获取签发者的 DER 编码
+    ///
+    /// 将 issuer 字段编码为 DER 格式。
+    ///
+    /// # 返回
+    /// DER 编码的签发者
+    pub fn issuer_der(&self) -> Vec<u8> {
+        self.issuer.to_der().unwrap()
+    }
+
+    /// 获取主体的 DER 编码
+    ///
+    /// 将 subject 字段编码为 DER 格式。
+    ///
+    /// # 返回
+    /// DER 编码的主体
+    pub fn subject_der(&self) -> Vec<u8> {
+        self.subject.to_der().unwrap()
+    }
+
+    /// 获取序列号的 DER 编码
+    ///
+    /// 将 serial_number 字段编码为 DER 格式。
+    ///
+    /// # 返回
+    /// DER 编码的序列号
+    pub fn serial_number_der(&self) -> Vec<u8> {
+        self.serial_number.to_der().unwrap()
+    }
+
+    /// 获取签名算法的 DER 编码
+    ///
+    /// 将 signature_algorithm 字段编码为 DER 格式。
+    ///
+    /// # 返回
+    /// DER 编码的签名算法
+    pub fn signature_algorithm_der(&self) -> Vec<u8> {
+        self.signature_algorithm.to_der().unwrap()
+    }
+
+    /// 获取有效期的 DER 编码
+    ///
+    /// 将 validity 字段编码为 DER 格式。
+    ///
+    /// # 返回
+    /// DER 编码的有效期
+    pub fn validity_der(&self) -> Vec<u8> {
+        self.validity.to_der().unwrap()
+    }
+
     /// 验证证书有效期
     ///
     /// 检查指定时间是否在证书的有效期内。
@@ -327,10 +392,8 @@ impl GmCertificate {
     /// - `Ok(())`: 证书在有效期内
     /// - `Err(Error::InvalidCertificate)`: 证书尚未生效或已过期
     pub fn verify_validity(&self, current_timestamp: u64) -> Result<(), Error> {
-        let validity = parse_validity(&self.validity)?;
-
-        let not_before = validity.not_before.to_unix_duration().as_secs();
-        let not_after = validity.not_after.to_unix_duration().as_secs();
+        let not_before = self.validity.not_before.to_unix_duration().as_secs();
+        let not_after = self.validity.not_after.to_unix_duration().as_secs();
 
         if current_timestamp < not_before {
             return Err(Error::InvalidCertificate);
@@ -417,6 +480,24 @@ impl GmCertificate {
 
         // 验证签名
         verify(&e, &pub_key, &sig_array)
+    }
+
+    /// 比较与 x509_cert::Certificate 的关键字段
+    ///
+    /// 检查当前 GmCertificate 与 x509_cert::Certificate 的关键字段是否一致。
+    /// 通过比较 DER 编码来确保字段一致。
+    ///
+    /// # 参数
+    /// - `other`: x509_cert::Certificate 引用
+    ///
+    /// # 返回
+    /// - `true`: 所有关键字段匹配
+    /// - `false`: 至少有一个字段不匹配
+    pub fn eq_x509_certificate(&self, other: &Certificate) -> bool {
+        // 比较整个证书的 DER 编码
+        let self_der = self.to_der();
+        let other_der = other.to_der().unwrap();
+        self_der == other_der
     }
 
     /// 验证证书数据的签名
@@ -507,92 +588,102 @@ impl GmCertificate {
     /// # 返回
     /// TBS 证书的 DER 编码字节数组
     fn tbs_certificate(&self) -> Vec<u8> {
-        let mut tbs = Vec::with_capacity(
-            4 + self.serial_number.len()
-                + self.signature_algorithm.len()
-                + self.issuer.len()
-                + self.validity.len()
-                + self.subject.len()
-                + self.subject_public_key_info.len(),
-        );
+        // 使用与 generate_gm_certificate 相同的编码逻辑
+        let mut tbs_bytes = Vec::new();
 
-        // 版本号（如果存在）
+        // 版本（v3 及以上需要显式编码）
         if self.version > 0 {
-            let version_der = vec![0x02, 1, self.version as u8];
-
-            // 包装为上下文标签 [0]
-            tbs.push(0xA0);
-            tbs.push(version_der.len() as u8);
-            tbs.extend(version_der);
+            // 编码为 [0] EXPLICIT INTEGER
+            let mut version_wrapper = Vec::new();
+            version_wrapper.push(0xA0); // Context tag [0]
+                                        // INTEGER TLV: tag(1) + len(1) + value(1) = 3 bytes for v3
+            let int_tlv_len = 3; // 0x02 + 0x01 + version
+            if int_tlv_len < 128 {
+                version_wrapper.push(int_tlv_len as u8);
+            } else {
+                panic!("Version TLV too long");
+            }
+            version_wrapper.push(0x02); // INTEGER tag
+            version_wrapper.push(0x01); // INTEGER length
+            version_wrapper.push(self.version as u8); // version value
+            tbs_bytes.extend(version_wrapper);
         }
 
         // 序列号
-        tbs.push(0x02);
-        tbs.push(self.serial_number.len() as u8);
-        tbs.extend_from_slice(&self.serial_number);
+        let mut serial_bytes = Vec::new();
+        self.serial_number.encode(&mut serial_bytes).unwrap();
+        tbs_bytes.extend(serial_bytes);
 
         // 签名算法
-        tbs.extend_from_slice(&self.signature_algorithm);
+        let mut sig_alg_bytes = Vec::new();
+        self.signature_algorithm.encode(&mut sig_alg_bytes).unwrap();
+        tbs_bytes.extend(sig_alg_bytes);
 
         // 签发者
-        tbs.extend_from_slice(&self.issuer);
+        let mut issuer_bytes = Vec::new();
+        self.issuer.encode(&mut issuer_bytes).unwrap();
+        tbs_bytes.extend(issuer_bytes);
 
         // 有效期
-        tbs.extend_from_slice(&self.validity);
+        let mut validity_bytes = Vec::new();
+        self.validity.encode(&mut validity_bytes).unwrap();
+        tbs_bytes.extend(validity_bytes);
 
         // 主体
-        tbs.extend_from_slice(&self.subject);
+        let mut subject_bytes = Vec::new();
+        self.subject.encode(&mut subject_bytes).unwrap();
+        tbs_bytes.extend(subject_bytes);
 
         // 主体公钥信息
-        tbs.extend_from_slice(&self.subject_public_key_info);
+        let mut spki_bytes = Vec::new();
+        self.subject_public_key_info
+            .encode(&mut spki_bytes)
+            .unwrap();
+        tbs_bytes.extend(spki_bytes);
 
         // 扩展（如果存在）
         if let Some(extensions) = &self.extensions {
             if !extensions.is_empty() {
-                // 编码扩展为 DER
                 let mut ext_content = Vec::new();
                 for ext in extensions {
-                    ext_content.extend_from_slice(&encode_extension(ext));
+                    let mut ext_bytes = Vec::new();
+                    ext.encode(&mut ext_bytes).unwrap();
+                    ext_content.extend(ext_bytes);
                 }
-
-                // 包装为 [3] EXPLICIT SEQUENCE OF Extension
-                let ext_seq = wrap_sequence(ext_content);
-                let mut tagged_ext = vec![0xA3];
-                let len = ext_seq.len();
-                if len < 128 {
-                    tagged_ext.push(len as u8);
-                } else if len < 256 {
-                    tagged_ext.push(0x81);
-                    tagged_ext.push(len as u8);
+                // 包装为 [3] 标签
+                let mut ext_wrapper = Vec::new();
+                ext_wrapper.push(0xA3);
+                if ext_content.len() < 128 {
+                    ext_wrapper.push(ext_content.len() as u8);
+                } else if ext_content.len() < 256 {
+                    ext_wrapper.push(0x81);
+                    ext_wrapper.push(ext_content.len() as u8);
                 } else {
-                    tagged_ext.push(0x82);
-                    tagged_ext.push((len >> 8) as u8);
-                    tagged_ext.push((len & 0xFF) as u8);
+                    ext_wrapper.push(0x82);
+                    ext_wrapper.push((ext_content.len() >> 8) as u8);
+                    ext_wrapper.push((ext_content.len() & 0xFF) as u8);
                 }
-                tagged_ext.extend(ext_seq);
-
-                tbs.extend(tagged_ext);
+                ext_wrapper.extend(ext_content);
+                tbs_bytes.extend(ext_wrapper);
             }
         }
 
         // 包装为 SEQUENCE
-        let mut seq = Vec::with_capacity(4 + tbs.len());
-        seq.push(0x30);
-
-        let len = tbs.len();
-        if len < 128 {
-            seq.push(len as u8);
-        } else if len < 256 {
-            seq.push(0x81);
-            seq.push(len as u8);
+        let mut result = Vec::new();
+        result.push(0x30);
+        if tbs_bytes.len() < 128 {
+            result.push(tbs_bytes.len() as u8);
+        } else if tbs_bytes.len() < 256 {
+            result.push(0x81);
+            result.push(tbs_bytes.len() as u8);
         } else {
-            seq.push(0x82);
-            seq.push((len >> 8) as u8);
-            seq.push((len & 0xFF) as u8);
+            result.push(0x82);
+            result.push((tbs_bytes.len() >> 8) as u8);
+            result.push((tbs_bytes.len() & 0xFF) as u8);
         }
+        result.extend(tbs_bytes);
 
-        seq.extend(tbs);
-        seq
+        result
     }
 }
 
@@ -633,36 +724,79 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
     // 解析外层 SEQUENCE
     let (seq_body, _) = der::parse_tlv(der, 0x30).ok_or_else(err)?;
 
-    // 解析 TBSCertificate SEQUENCE，得到 tbs_body 和外层剩余部分
-    let (tbs_body, after_tbs) = der::parse_tlv(seq_body, 0x30).ok_or_else(err)?;
-
-    // 从 TBSCertificate 解析版本
-    let (version, rest_tbs) = if tbs_body.starts_with(&[0xA0]) {
-        let (ver_tlv, rest) = der::parse_tlv(tbs_body, 0xA0).ok_or_else(err)?;
-        let (ver_bytes, _) = der::parse_tlv(ver_tlv, 0x02).ok_or_else(err)?;
-        let ver = ver_bytes.first().copied().unwrap_or(0) as u32;
-        (ver, rest)
+    // 解析 TBSCertificate SEQUENCE
+    let tbs_start = if seq_body[0] == 0x30 {
+        let len_byte = seq_body[1];
+        if len_byte < 0x80 {
+            2 + len_byte as usize
+        } else if len_byte == 0x81 {
+            3 + seq_body[2] as usize
+        } else {
+            4 + ((seq_body[2] as usize) << 8 | seq_body[3] as usize)
+        }
     } else {
-        (0, tbs_body)
+        panic!("DEBUG: TBSCertificate tag is {:02x}, expected 30, seq_body[0]={:02x}, der first 10 bytes={:02x?}", seq_body[0], seq_body[0], &der[..10.min(der.len())]);
     };
 
-    // 解析 TBSCertificate 中的字段
-    let (serial, rest_tbs) = der::parse_tlv(rest_tbs, 0x02).ok_or_else(err)?;
-    let (_sig_alg_tbs, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
-    let (issuer, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
-    let (validity_tlv, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
-    if validity_tlv.is_empty() || validity_tlv[0] != 0x30 {
-        return Err(err());
-    }
-    let validity = validity_tlv;
+    // 解析 TBSCertificate 内容
+    let mut rest_tbs = &seq_body[1..]; // 跳过 TBSCertificate 标签
+    let tbs_len_bytes = if rest_tbs[0] < 0x80 {
+        1
+    } else if rest_tbs[0] == 0x81 {
+        2
+    } else {
+        3
+    };
+    rest_tbs = &rest_tbs[tbs_len_bytes..]; // 跳过长度字段
 
-    let (subject, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
-    let (spki, _rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    // 解析版本
+    let (version, rest_tbs) = if rest_tbs.starts_with(&[0xA0]) {
+        let (ver_content, rest) = der::parse_tlv(rest_tbs, 0xA0).ok_or_else(err)?;
+        let ver = ver_content.first().copied().unwrap_or(0) as u32;
+        (ver, rest)
+    } else {
+        (0, rest_tbs)
+    };
 
-    // TBSCertificate 解析完成，_rest_tbs 包含扩展字段（如果有），我们不需要
+    // 解析序列号
+    let (serial_der, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    // 解析签名算法
+    let (sig_alg_tbs, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    // 解析签发者
+    let (issuer_der, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    // 解析有效期
+    let (validity_der, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    // 解析主体
+    let (subject_der, rest_tbs) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
+    // 解析主体公钥信息
+    let (spki_der, rest_tbs_opt) = der::parse_tlv_any_full(rest_tbs).ok_or_else(err)?;
 
-    // 从外层剩余部分解析签名算法和签名值
-    let (sig_alg, rest) = der::parse_tlv_any_full(after_tbs).ok_or_else(err)?;
+    // 检查扩展
+    let extensions = if !rest_tbs_opt.is_empty() && rest_tbs_opt[0] == 0xA3 {
+        let (ext_der, _) = der::parse_tlv_any_full(rest_tbs_opt).ok_or_else(err)?;
+        let mut exts = Vec::new();
+        let mut ext_rest = ext_der;
+        while !ext_rest.is_empty() {
+            let (ext_tlv, rest) = der::parse_tlv_any_full(ext_rest).ok_or_else(err)?;
+            // 尝试解析扩展，如果失败则跳过
+            if let Ok(ext) = Extension::from_der(ext_tlv) {
+                exts.push(ext);
+            }
+            // 无论成功还是失败，都要更新 ext_rest，避免死循环
+            ext_rest = rest;
+        }
+        if exts.is_empty() {
+            None
+        } else {
+            Some(exts)
+        }
+    } else {
+        None
+    };
+
+    // 解析签名算法和签名值
+    let after_tbs = &seq_body[tbs_start..];
+    let (_sig_alg, rest) = der::parse_tlv_any_full(after_tbs).ok_or_else(err)?;
 
     // 解析签名值（BIT STRING）
     let signature = if rest.len() > 3 && rest[0] == 0x03 {
@@ -675,15 +809,25 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
         rest.to_vec()
     };
 
+    // 将 DER 字节解析为结构化类型
+    let serial_number = SerialNumber::from_der(serial_der).map_err(|_| err())?;
+    let signature_algorithm = AlgorithmIdentifier::from_der(sig_alg_tbs).map_err(|_| err())?;
+    let issuer = Name::from_der(issuer_der).map_err(|_| err())?;
+    let validity = Validity::from_der(validity_der).map_err(|_| err())?;
+    let subject = Name::from_der(subject_der).map_err(|_| err())?;
+    let subject_public_key_info =
+        SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(spki_der)
+            .map_err(|_| err())?;
+
     Ok(GmCertificate {
         version,
-        serial_number: serial.to_vec(),
-        signature_algorithm: sig_alg.to_vec(),
-        issuer: issuer.to_vec(),
-        validity: validity.to_vec(),
-        subject: subject.to_vec(),
-        subject_public_key_info: spki.to_vec(),
-        extensions: None,
+        serial_number,
+        signature_algorithm,
+        issuer,
+        validity,
+        subject,
+        subject_public_key_info,
+        extensions,
         signature,
     })
 }
@@ -694,15 +838,9 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
 ///
 /// ## 编码流程
 ///
-/// 1. 编码版本号（v3 及以上显式编码）
-/// 2. 编码序列号（INTEGER）
-/// 3. 编码签名算法（直接使用已有 DER）
-/// 4. 编码签发者（直接使用已有 DER）
-/// 5. 编码有效期（直接使用已有 DER）
-/// 6. 编码主体（直接使用已有 DER）
-/// 7. 编码主体公钥信息（直接使用已有 DER）
-/// 8. 编码签名值（BIT STRING）
-/// 9. 包装为外层 SEQUENCE
+/// 1. 构建 TBSCertificate 结构
+/// 2. 使用 x509_cert 的 DER 编码功能
+/// 3. 包装为外层 Certificate SEQUENCE
 ///
 /// # 参数
 /// - `cert`: 证书结构
@@ -715,94 +853,109 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
 /// 此函数仅执行 DER 编码，不生成签名。
 /// 签名值必须预先计算并存储在 `cert.signature` 中。
 pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
-    // 首先构建 TBSCertificate 的内容
-    let mut tbs_components = Vec::with_capacity(256);
+    // 构建 TBSCertificate 的内容
+    let mut tbs_bytes = Vec::new();
 
     // 版本（v3 及以上需要显式编码）
     if cert.version > 0 {
-        let version_der = vec![0x02, 0x01, cert.version as u8];
-        let mut version_wrapper = Vec::with_capacity(2 + version_der.len());
-        version_wrapper.push(0xA0);
-        version_wrapper.push(version_der.len() as u8);
-        version_wrapper.extend(version_der);
-        tbs_components.push(version_wrapper);
+        // 编码为 [0] EXPLICIT INTEGER
+        let mut version_wrapper = Vec::new();
+        version_wrapper.push(0xA0); // Context tag [0]
+                                    // INTEGER TLV: tag(1) + len(1) + value(1) = 3 bytes for v3
+        let int_tlv_len = 3; // 0x02 + 0x01 + version
+        if int_tlv_len < 128 {
+            version_wrapper.push(int_tlv_len as u8);
+        } else {
+            panic!("Version TLV too long");
+        }
+        version_wrapper.push(0x02); // INTEGER tag
+        version_wrapper.push(0x01); // INTEGER length
+        version_wrapper.push(cert.version as u8); // version value
+        tbs_bytes.extend(version_wrapper);
     }
 
     // 序列号
-    let mut serial_der = Vec::with_capacity(2 + cert.serial_number.len());
-    serial_der.push(0x02);
-    serial_der.push(cert.serial_number.len() as u8);
-    serial_der.extend_from_slice(&cert.serial_number);
-    tbs_components.push(serial_der);
-
-    // 签名算法、签发者、有效期、主体、公钥信息直接使用已有 DER（已经是完整 TLV）
-    tbs_components.push(cert.signature_algorithm.clone());
-    tbs_components.push(cert.issuer.clone());
-    tbs_components.push(cert.validity.clone());
-    tbs_components.push(cert.subject.clone());
-    tbs_components.push(cert.subject_public_key_info.clone());
-
-    // 计算 TBSCertificate 的总长度
-    let tbs_total_len: usize = tbs_components.iter().map(|c| c.len()).sum();
-
-    // 构建 TBSCertificate SEQUENCE
-    let mut tbs_certificate = Vec::with_capacity(2 + tbs_total_len);
-    tbs_certificate.push(0x30); // SEQUENCE 标签
-
-    // 编码 TBSCertificate 长度字段
-    if tbs_total_len < 128 {
-        tbs_certificate.push(tbs_total_len as u8);
-    } else if tbs_total_len < 256 {
-        tbs_certificate.push(0x81);
-        tbs_certificate.push(tbs_total_len as u8);
-    } else {
-        tbs_certificate.push(0x82);
-        tbs_certificate.push((tbs_total_len >> 8) as u8);
-        tbs_certificate.push((tbs_total_len & 0xFF) as u8);
-    }
-
-    // 添加 TBSCertificate 的内容
-    for component in tbs_components {
-        tbs_certificate.extend(component);
-    }
-
-    // 现在构建外层 Certificate，包含 TBSCertificate、签名算法和签名值
-    let mut components = Vec::with_capacity(3);
-    components.push(tbs_certificate);
+    let mut serial_bytes = Vec::new();
+    cert.serial_number.encode(&mut serial_bytes).unwrap();
+    tbs_bytes.extend(serial_bytes);
 
     // 签名算法
-    components.push(cert.signature_algorithm.clone());
+    let mut sig_alg_bytes = Vec::new();
+    cert.signature_algorithm.encode(&mut sig_alg_bytes).unwrap();
+    tbs_bytes.extend(sig_alg_bytes);
 
-    // 签名值（BIT STRING 编码）
-    let mut sig_bit_str = Vec::with_capacity(3 + cert.signature.len());
-    sig_bit_str.push(0x03);
-    sig_bit_str.push((cert.signature.len() + 1) as u8);
-    sig_bit_str.push(0x00); // unused bits
-    sig_bit_str.extend_from_slice(&cert.signature);
-    components.push(sig_bit_str);
+    // 签发者
+    let mut issuer_bytes = Vec::new();
+    cert.issuer.encode(&mut issuer_bytes).unwrap();
+    tbs_bytes.extend(issuer_bytes);
 
-    // 计算总长度并构建外层 SEQUENCE
-    let total_len: usize = components.iter().map(|c| c.len()).sum();
-    let mut der = Vec::with_capacity(2 + total_len);
-    der.push(0x30);
+    // 有效期
+    let mut validity_bytes = Vec::new();
+    cert.validity.encode(&mut validity_bytes).unwrap();
+    tbs_bytes.extend(validity_bytes);
 
-    // 编码长度字段（支持短形式和长形式）
-    if total_len < 128 {
-        der.push(total_len as u8);
-    } else if total_len < 256 {
-        der.push(0x81);
-        der.push(total_len as u8);
+    // 主体
+    let mut subject_bytes = Vec::new();
+    cert.subject.encode(&mut subject_bytes).unwrap();
+    tbs_bytes.extend(subject_bytes);
+
+    // 主体公钥信息
+    let mut spki_bytes = Vec::new();
+    cert.subject_public_key_info
+        .encode(&mut spki_bytes)
+        .unwrap();
+    tbs_bytes.extend(spki_bytes);
+
+    // 现在构建外层 Certificate
+    let mut cert_bytes = Vec::new();
+
+    // TBSCertificate - 包装为 SEQUENCE
+    let mut tbs_with_header = Vec::new();
+    tbs_with_header.push(0x30); // SEQUENCE tag
+                                // 编码长度
+    if tbs_bytes.len() < 128 {
+        tbs_with_header.push(tbs_bytes.len() as u8);
+    } else if tbs_bytes.len() < 256 {
+        tbs_with_header.push(0x81);
+        tbs_with_header.push(tbs_bytes.len() as u8);
     } else {
-        der.push(0x82);
-        der.push((total_len >> 8) as u8);
-        der.push((total_len & 0xFF) as u8);
+        tbs_with_header.push(0x82);
+        tbs_with_header.push((tbs_bytes.len() >> 8) as u8);
+        tbs_with_header.push((tbs_bytes.len() & 0xFF) as u8);
     }
+    tbs_with_header.extend(tbs_bytes);
+    cert_bytes.extend(tbs_with_header);
 
-    for component in components {
-        der.extend(component);
+    // 签名算法（再次编码）
+    let mut sig_alg_bytes2 = Vec::new();
+    cert.signature_algorithm
+        .encode(&mut sig_alg_bytes2)
+        .unwrap();
+    cert_bytes.extend(sig_alg_bytes2);
+
+    // 签名值（BIT STRING）
+    let mut sig_bytes = Vec::new();
+    let bit_string = BitStringRef::new(0, &cert.signature).unwrap();
+    bit_string.encode(&mut sig_bytes).unwrap();
+    cert_bytes.extend(sig_bytes);
+
+    // 包装为外层 SEQUENCE
+    let mut result = Vec::new();
+    result.push(0x30); // SEQUENCE tag
+                       // 编码长度
+    if cert_bytes.len() < 128 {
+        result.push(cert_bytes.len() as u8);
+    } else if cert_bytes.len() < 256 {
+        result.push(0x81);
+        result.push(cert_bytes.len() as u8);
+    } else {
+        result.push(0x82);
+        result.push((cert_bytes.len() >> 8) as u8);
+        result.push((cert_bytes.len() & 0xFF) as u8);
     }
+    result.extend(cert_bytes);
 
-    der
+    result
 }
 
 /// 从国密证书中提取 SM2 公钥
@@ -827,9 +980,12 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
 /// - `Err(Error::InvalidCertificate)`: 提取失败（格式错误或不是 SM2 公钥）
 pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
     // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
+    let spki_der = cert
+        .subject_public_key_info
+        .to_der()
+        .map_err(|_| Error::InvalidCertificate)?;
     let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> =
-        SubjectPublicKeyInfo::from_der(&cert.subject_public_key_info)
-            .map_err(|_| Error::InvalidCertificate)?;
+        SubjectPublicKeyInfo::from_der(&spki_der).map_err(|_| Error::InvalidCertificate)?;
 
     // 验证算法 OID (id-ecPublicKey = 1.2.840.10045.2.1)
     if spki.algorithm.oid != crate::sm2::EC_PUBKEY_OID {
@@ -842,25 +998,19 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
         _ => return Err(Error::InvalidCertificate),
     }
 
-    // 提取公钥数据（跳过 BIT STRING 的 0x00 前缀）
+    // 提取公钥数据
     let pub_key_bytes: &[u8] = spki
         .subject_public_key
         .as_bytes()
         .ok_or(Error::InvalidCertificate)?;
 
-    // 验证 BIT STRING 格式（第一个字节应为 0x00，表示 unused bits = 0）
-    if pub_key_bytes.is_empty() || pub_key_bytes[0] != 0 {
-        return Err(Error::InvalidCertificate);
-    }
-
-    // 提取 65 字节公钥
-    let pub_key_data = &pub_key_bytes[1..];
-    if pub_key_data.len() != 65 || pub_key_data[0] != 0x04 {
+    // 验证公钥格式（应为 65 字节未压缩格式：0x04 || X(32B) || Y(32B)）
+    if pub_key_bytes.len() != 65 || pub_key_bytes[0] != 0x04 {
         return Err(Error::InvalidCertificate);
     }
 
     let mut pub_key = [0u8; 65];
-    pub_key.copy_from_slice(pub_key_data);
+    pub_key.copy_from_slice(pub_key_bytes);
     Ok(pub_key)
 }
 
@@ -1047,9 +1197,19 @@ impl X500Attribute {
 /// ## 输出格式
 ///
 /// ```text
-/// SEQUENCE {
-///     SET { SEQUENCE { OID, UTF8String } },  // RDN 1
-///     SET { SEQUENCE { OID, UTF8String } },  // RDN 2
+/// SEQUENCE {           // Name
+///     SET {            // RDN 1
+///         SEQUENCE {   // AttributeTypeAndValue
+///             OID
+///             value
+///         }
+///     }
+///     SET {            // RDN 2
+///         SEQUENCE {
+///             OID
+///             value
+///         }
+///     }
 ///     ...
 /// }
 /// ```
@@ -1058,12 +1218,13 @@ impl X500Attribute {
 /// - `attributes`: X.500 属性列表
 ///
 /// # 返回
-/// DER 编码的 X.500 名称
+/// x509_cert 的 Name 类型
 ///
 /// # 示例
 ///
 /// ```
 /// use libsmx::sm2::cert::{X500Attribute, X500AttributeType, build_x500_name};
+/// use x509_cert::der::Decode;
 ///
 /// let name = build_x500_name(&[
 ///    X500Attribute::new(X500AttributeType::Country, "CN"),
@@ -1076,55 +1237,48 @@ impl X500Attribute {
 /// ]);
 /// ```
 #[cfg(feature = "alloc")]
-pub fn build_x500_name(attributes: &[X500Attribute]) -> Vec<u8> {
-    let mut name = Vec::with_capacity(64);
+pub fn build_x500_name(attributes: &[X500Attribute]) -> Name {
+    let mut name_der = Vec::with_capacity(64);
 
-    // 编码所有 RDN
+    // 编码所有 RDN（每个 RDN 是一个 SET OF AttributeTypeAndValue）
     for attr in attributes {
-        name.extend(attr.to_der());
+        // 编码 AttributeTypeAndValue 为 SEQUENCE { OID, value }
+        let attr_der = attr.to_der();
+
+        // 包装为 SET { SEQUENCE { ... } }
+        let mut rdn = Vec::with_capacity(2 + attr_der.len());
+        rdn.push(0x31); // SET tag
+        rdn.push(attr_der.len() as u8);
+        rdn.extend(attr_der);
+
+        name_der.extend(rdn);
     }
 
-    // 包装为 SEQUENCE
-    let mut seq = Vec::with_capacity(2 + name.len());
+    // 包装为 SEQUENCE OF RDN
+    let mut seq = Vec::with_capacity(2 + name_der.len());
     seq.push(0x30);
-    seq.push(name.len() as u8);
-    seq.extend(name);
 
-    seq
+    // 编码长度（支持多字节长度）
+    let len = name_der.len();
+    if len < 128 {
+        seq.push(len as u8);
+    } else if len < 256 {
+        seq.push(0x81);
+        seq.push(len as u8);
+    } else {
+        seq.push(0x82);
+        seq.push((len >> 8) as u8);
+        seq.push((len & 0xFF) as u8);
+    }
+    seq.extend(name_der);
+
+    // 解析为 Name 类型
+    Name::from_der(&seq).unwrap()
 }
 
 // ====================================================================================
 // 时间处理
 // ====================================================================================
-
-/// 从证书有效期字段解析时间
-///
-/// 解析证书有效期 DER 编码，提取生效时间和过期时间。
-/// 支持 UTCTime（2 字节年份）和 GeneralizedTime（4 字节年份）格式。
-///
-/// ## 有效期格式
-///
-/// ```text
-/// Validity ::= SEQUENCE {
-///     notBefore    Time,
-///     notAfter     Time
-/// }
-///
-/// Time ::= CHOICE {
-///     utcTime        UTCTime,
-///     generalTime    GeneralizedTime
-/// }
-/// ```
-///
-/// # 参数
-/// - `validity_der`: 有效期 DER 编码数据
-///
-/// # 返回
-/// - `Ok(Validity)`: 解析成功的有效期结构
-/// - `Err(Error::InvalidCertificate)`: 解析失败（格式错误）
-fn parse_validity(validity_der: &[u8]) -> Result<Validity, Error> {
-    Validity::from_der(validity_der).map_err(|_| Error::InvalidCertificate)
-}
 
 /// 将日期字符串解析为 Unix 时间戳
 ///
@@ -1191,8 +1345,8 @@ fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
 /// ```
 #[cfg(all(feature = "alloc", feature = "std"))]
 pub struct CertificateBuilder {
-    subject: Option<Vec<u8>>,
-    issuer: Option<Vec<u8>>,
+    subject: Option<Name>,
+    issuer: Option<Name>,
     serial_number: SerialNumber,
     not_before: Option<std::time::SystemTime>,
     not_after: Option<std::time::SystemTime>,
@@ -1364,10 +1518,10 @@ impl CertificateBuilder {
 
         let validity = Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time);
 
-        let validity_seq = validity.to_der().map_err(|_| Error::InvalidCertificate)?;
-
-        // 构建 SPKI
-        let spki = der::public_key_to_spki_der(pub_key);
+        // 构建 SPKI DER 并解析为结构化类型
+        let spki_der = der::public_key_to_spki_der(pub_key);
+        let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
+            .map_err(|_| Error::InvalidPublicKey)?;
 
         // 构建 TBS 证书内容
         let mut tbs = Vec::with_capacity(256);
@@ -1381,17 +1535,19 @@ impl CertificateBuilder {
         // 签名算法 (SM2withSM3)
         tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
 
-        // 签发者
-        tbs.extend_from_slice(&issuer);
+        // 签发者（使用 DER 编码）
+        let issuer_der = issuer.to_der().map_err(|_| Error::InvalidCertificate)?;
+        tbs.extend_from_slice(&issuer_der);
 
         // 有效期
-        tbs.extend_from_slice(&validity_seq);
+        tbs.extend_from_slice(&validity.to_der().unwrap());
 
-        // 主体
-        tbs.extend_from_slice(&subject);
+        // 主体（使用 DER 编码）
+        let subject_der = subject.to_der().map_err(|_| Error::InvalidCertificate)?;
+        tbs.extend_from_slice(&subject_der);
 
-        // 公钥信息
-        tbs.extend(&spki);
+        // 公钥信息（直接使用已生成的 DER）
+        tbs.extend_from_slice(&spki_der);
 
         // 添加扩展（如果有）
         if !self.extensions.is_empty() {
@@ -1427,10 +1583,10 @@ impl CertificateBuilder {
 
         Ok(GmCertificate {
             version: 2,
-            serial_number: self.serial_number.to_der().unwrap(),
-            signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
+            serial_number: self.serial_number,
+            signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
             issuer,
-            validity: validity_seq,
+            validity,
             subject,
             subject_public_key_info: spki,
             extensions: if self.extensions.is_empty() {
@@ -1518,7 +1674,6 @@ pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Erro
 pub fn x509_to_gm_certificate(cert: &Certificate) -> Result<GmCertificate, Error> {
     // 将 Certificate 编码为 DER
     let der = cert.to_der().map_err(|_| Error::InvalidCertificate)?;
-    
     // 使用国密证书解析器解析
     parse_gm_certificate(&der)
 }
@@ -1642,11 +1797,10 @@ pub fn verify_tbs_certificate_signature(
 ///
 /// # 返回
 /// - `Ok(Vec<u8>)`: PEM 编码的公钥
-/// - `Err(Error::InvalidCertificate)`: 编码失败
+/// - `Err(Error::InvalidPublicKey)`: 编码失败
 pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<Vec<u8>, Error> {
     let der = der::public_key_to_spki_der(pub_key);
-    let pem = encode_string("PUBLIC KEY", Default::default(), &der)
-        .map_err(|_| Error::InvalidCertificate)?;
+    let pem = encode_string("PUBLIC KEY", Default::default(), &der).map_err(|_| Error::InvalidPublicKey)?;
     Ok(pem.as_bytes().to_vec())
 }
 
@@ -1659,9 +1813,9 @@ pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<Vec<u8>, Error> {
 ///
 /// # 返回
 /// - `Ok([u8; 65])`: 65 字节未压缩公钥
-/// - `Err(Error::InvalidCertificate)`: 解析失败
+/// - `Err(Error::InvalidPublicKey)`: 解析失败
 pub fn public_key_from_spki_pem(pem: &[u8]) -> Result<[u8; 65], Error> {
-    let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+    let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidPublicKey)?;
     der::public_key_from_spki_der(&der)
 }
 
@@ -1862,9 +2016,9 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 /// ```
 pub fn generate_self_signed_cert<R: Rng>(
     priv_key: &PrivateKey,
-    subject: &[u8],
-    validity: &[u8],
-    serial_number: &[u8],
+    subject: &Name,
+    validity: &Validity,
+    serial_number: &SerialNumber,
     id: &[u8],
     extensions: Option<Vec<Extension>>,
     rng: &mut R,
@@ -1873,81 +2027,41 @@ pub fn generate_self_signed_cert<R: Rng>(
     let pub_key = priv_key.public_key();
 
     // 构建 SubjectPublicKeyInfo
-    let spki = der::public_key_to_spki_der(&pub_key);
-
-    // 构建 TBS 证书内容
-    let mut tbs = Vec::with_capacity(256);
-
-    // 版本 (v3)
-    tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
-
-    // 序列号
-    tbs.push(0x02);
-    tbs.push(serial_number.len() as u8);
-    tbs.extend_from_slice(serial_number);
-
-    // 签名算法 (SM2withSM3)
-    tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
+    let spki_der = der::public_key_to_spki_der(&pub_key);
+    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
+        .map_err(|_| Error::InvalidCertificate)?;
 
     // 签发者 = 主体
-    tbs.extend_from_slice(subject);
+    let issuer_name = subject.clone();
 
-    // 有效期
-    tbs.extend_from_slice(validity);
-
-    // 主体
-    tbs.extend_from_slice(subject);
-
-    // 公钥信息
-    tbs.extend(&spki);
-
-    // 添加扩展（如果有）
-    let extensions_for_cert = if let Some(extensions) = extensions {
-        if !extensions.is_empty() {
-            // 编码扩展为 DER
-            let mut ext_content = Vec::new();
-            for ext in &extensions {
-                ext_content.extend_from_slice(&encode_extension(ext));
-            }
-
-            // 包装为 [3] EXPLICIT SEQUENCE OF Extension
-            let ext_seq = wrap_sequence(ext_content);
-            let mut tagged_ext = vec![0xA3];
-            let len = ext_seq.len();
-            if len < 128 {
-                tagged_ext.push(len as u8);
-            } else if len < 256 {
-                tagged_ext.push(0x81);
-                tagged_ext.push(len as u8);
-            } else {
-                tagged_ext.push(0x82);
-                tagged_ext.push((len >> 8) as u8);
-                tagged_ext.push((len & 0xFF) as u8);
-            }
-            tagged_ext.extend(ext_seq);
-
-            tbs.extend(tagged_ext);
-        }
-        Some(extensions)
-    } else {
-        None
+    // 首先构建 GmCertificate 结构（不含签名）
+    let cert_without_sig = GmCertificate {
+        version: 2,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer_name.clone(),
+        validity: validity.clone(),
+        subject: subject.clone(),
+        subject_public_key_info: spki,
+        extensions: extensions.clone(),
+        signature: Vec::new(), // 临时空签名
     };
 
-    // 包装为 SEQUENCE
-    let tbs_cert = wrap_sequence(tbs);
+    // 使用 generate_gm_certificate 的逻辑编码 TBS
+    let tbs = cert_without_sig.tbs_certificate();
 
     // 签名
-    let signature = sign_tbs_certificate(&tbs_cert, priv_key, id, rng)?;
+    let signature = sign_tbs_certificate(&tbs, priv_key, id, rng)?;
 
     Ok(GmCertificate {
         version: 2,
-        serial_number: serial_number.to_vec(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
-        issuer: subject.to_vec(),
-        validity: validity.to_vec(),
-        subject: subject.to_vec(),
-        subject_public_key_info: spki,
-        extensions: extensions_for_cert,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer_name.clone(),
+        validity: validity.clone(),
+        subject: subject.clone(),
+        subject_public_key_info: cert_without_sig.subject_public_key_info,
+        extensions,
         signature,
     })
 }
@@ -2059,90 +2173,50 @@ fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
 pub fn issue_certificate<R: Rng>(
     ca_cert: &GmCertificate,
     ca_priv_key: &PrivateKey,
-    subject: &[u8],
+    subject: &Name,
     subject_pub_key: &[u8; 65],
-    validity: &[u8],
-    serial_number: &[u8],
+    validity: &Validity,
+    serial_number: &SerialNumber,
     ca_id: &[u8],
     extensions: Option<Vec<Extension>>,
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
     // 构建 SubjectPublicKeyInfo
-    let spki = der::public_key_to_spki_der(subject_pub_key);
-
-    // 构建 TBS 证书内容
-    let mut tbs = Vec::with_capacity(256);
-
-    // 版本 (v3)
-    tbs.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
-
-    // 序列号
-    tbs.push(0x02);
-    tbs.push(serial_number.len() as u8);
-    tbs.extend_from_slice(serial_number);
-
-    // 签名算法 (SM2withSM3)
-    tbs.extend_from_slice(&crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap());
+    let spki_der = der::public_key_to_spki_der(subject_pub_key);
+    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
+        .map_err(|_| Error::InvalidCertificate)?;
 
     // 签发者（使用 CA 的主体）
-    tbs.extend_from_slice(&ca_cert.subject);
+    let issuer_name = ca_cert.subject.clone();
 
-    // 有效期
-    tbs.extend_from_slice(validity);
-
-    // 主体
-    tbs.extend_from_slice(subject);
-
-    // 公钥信息
-    tbs.extend(&spki);
-
-    // 添加扩展（如果有）
-    let extensions_for_cert = if let Some(extensions) = extensions {
-        if !extensions.is_empty() {
-            // 编码扩展为 DER
-            let mut ext_content = Vec::new();
-            for ext in &extensions {
-                ext_content.extend_from_slice(&encode_extension(ext));
-            }
-
-            // 包装为 [3] EXPLICIT SEQUENCE OF Extension
-            let ext_seq = wrap_sequence(ext_content);
-            let mut tagged_ext = vec![0xA3];
-            let len = ext_seq.len();
-            if len < 128 {
-                tagged_ext.push(len as u8);
-            } else if len < 256 {
-                tagged_ext.push(0x81);
-                tagged_ext.push(len as u8);
-            } else {
-                tagged_ext.push(0x82);
-                tagged_ext.push((len >> 8) as u8);
-                tagged_ext.push((len & 0xFF) as u8);
-            }
-            tagged_ext.extend(ext_seq);
-
-            tbs.extend(tagged_ext);
-        }
-        Some(extensions)
-    } else {
-        None
+    // 构建临时证书结构用于 TBS 编码
+    let cert_for_tbs = GmCertificate {
+        version: 2,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer_name.clone(),
+        validity: validity.clone(),
+        subject: subject.clone(),
+        subject_public_key_info: spki.clone(),
+        extensions: extensions.clone(),
+        signature: Vec::new(),
     };
 
-    // 包装为 SEQUENCE
-    let tbs_cert = wrap_sequence(tbs);
+    // 使用 tbs_certificate() 方法编码 TBS（与 generate_self_signed_cert 一致）
+    let tbs = cert_for_tbs.tbs_certificate();
 
     // 使用 CA 私钥签名
-    let signature = sign_tbs_certificate(&tbs_cert, ca_priv_key, ca_id, rng)?;
+    let signature = sign_tbs_certificate(&tbs, ca_priv_key, ca_id, rng)?;
 
     Ok(GmCertificate {
         version: 2,
-        serial_number: serial_number.to_vec(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
-        issuer: ca_cert.subject.clone(), // 签发者是 CA
-        validity: validity.to_vec(),
-        subject: subject.to_vec(),
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer_name.clone(),
+        validity: validity.clone(),
+        subject: subject.clone(),
         subject_public_key_info: spki,
-        extensions: extensions_for_cert,
+        extensions,
         signature,
     })
 }
@@ -2165,8 +2239,8 @@ mod tests {
     /// - `common_name`: 通用名称
     ///
     /// # 返回
-    /// DER 编码的 X.500 Name
-    fn build_test_issuer(common_name: &str) -> Vec<u8> {
+    /// Name 结构
+    fn build_test_issuer(common_name: &str) -> Name {
         build_x500_name(&[
             X500Attribute::new(X500AttributeType::Organization, "Test CA"),
             X500Attribute::new(X500AttributeType::CommonName, common_name),
@@ -2178,8 +2252,8 @@ mod tests {
     /// 默认有效期：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
     ///
     /// # 返回
-    /// DER 编码的 Validity SEQUENCE
-    fn test_validity() -> Vec<u8> {
+    /// Validity 结构
+    fn test_validity() -> Validity {
         build_test_validity("250101000000Z", "300101000000Z")
     }
 
@@ -2189,8 +2263,8 @@ mod tests {
     /// - `common_name`: 通用名称
     ///
     /// # 返回
-    /// DER 编码的 X.500 Name
-    fn build_test_subject(common_name: &str) -> Vec<u8> {
+    /// Name 结构
+    fn build_test_subject(common_name: &str) -> Name {
         build_x500_name(&[
             X500Attribute::new(X500AttributeType::Organization, "Test Org"),
             X500Attribute::new(X500AttributeType::CommonName, common_name),
@@ -2203,15 +2277,9 @@ mod tests {
     /// - `serial`: 序列号数值
     ///
     /// # 返回
-    /// DER 编码的 INTEGER
-    fn build_test_serial(serial: u64) -> Vec<u8> {
-        // 使用简单的字节数组编码，移除前导零
-        let bytes = serial.to_be_bytes();
-        let start = bytes
-            .iter()
-            .position(|&b| b != 0)
-            .unwrap_or(bytes.len() - 1);
-        bytes[start..].to_vec()
+    /// SerialNumber 结构
+    fn build_test_serial(serial: u64) -> SerialNumber {
+        SerialNumber::from(serial)
     }
 
     /// 构建测试用的有效期
@@ -2224,8 +2292,8 @@ mod tests {
     /// - `not_after`: 过期时间（UTC 时间字符串，格式："YYMMDDHHMMSSZ"）
     ///
     /// # 返回
-    /// DER 编码的 Validity SEQUENCE
-    fn build_test_validity(not_before: &str, not_after: &str) -> Vec<u8> {
+    /// Validity 结构
+    fn build_test_validity(not_before: &str, not_after: &str) -> Validity {
         // 构建 UTCTime DER 编码 (tag 0x17)
         let encode_utctime = |time_str: &str| -> Vec<u8> {
             let mut encoded = vec![0x17, time_str.len() as u8];
@@ -2237,12 +2305,13 @@ mod tests {
         let not_after_der = encode_utctime(not_after);
 
         // 构建 Validity SEQUENCE
-        let mut validity = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
-        validity.push(0x30); // SEQUENCE tag
-        validity.push((not_before_der.len() + not_after_der.len()) as u8);
-        validity.extend(not_before_der);
-        validity.extend(not_after_der);
-        validity
+        let mut validity_der = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
+        validity_der.push(0x30); // SEQUENCE tag
+        validity_der.push((not_before_der.len() + not_after_der.len()) as u8);
+        validity_der.extend(not_before_der);
+        validity_der.extend(not_after_der);
+
+        Validity::from_der(&validity_der).unwrap()
     }
 
     // -- 测试数据生成器 ------------------------------------------------------
@@ -2251,26 +2320,26 @@ mod tests {
     ///
     /// 用于生成各种测试场景的证书参数
     struct CertTestBuilder {
-        common_name: alloc::string::String,
+        common_name: String,
         serial: u64,
-        not_before: alloc::string::String,
-        not_after: alloc::string::String,
+        not_before: String,
+        not_after: String,
     }
 
     impl CertTestBuilder {
         /// 创建新的测试构建器，使用默认值
         fn new() -> Self {
             Self {
-                common_name: alloc::string::String::from("Test Server"),
+                common_name: String::from("Test Server"),
                 serial: 1,
-                not_before: alloc::string::String::from("250101000000Z"),
-                not_after: alloc::string::String::from("300101000000Z"),
+                not_before: String::from("250101000000Z"),
+                not_after: String::from("300101000000Z"),
             }
         }
 
         /// 设置通用名称
         fn with_common_name(mut self, name: &str) -> Self {
-            self.common_name = alloc::string::String::from(name);
+            self.common_name = String::from(name);
             self
         }
 
@@ -2282,8 +2351,8 @@ mod tests {
 
         /// 设置有效期
         fn with_validity(mut self, not_before: &str, not_after: &str) -> Self {
-            self.not_before = alloc::string::String::from(not_before);
-            self.not_after = alloc::string::String::from(not_after);
+            self.not_before = String::from(not_before);
+            self.not_after = String::from(not_after);
             self
         }
 
@@ -2306,10 +2375,10 @@ mod tests {
 
     /// 测试证书参数
     struct TestCertParams {
-        issuer: Vec<u8>,
-        subject: Vec<u8>,
-        serial: Vec<u8>,
-        validity: Vec<u8>,
+        issuer: Name,
+        subject: Name,
+        serial: SerialNumber,
+        validity: Validity,
     }
 
     // -- 证书测试 ------------------------------------------------------------
@@ -2347,11 +2416,17 @@ mod tests {
         let cert = GmCertificate {
             version: 2,
             serial_number: params.serial,
-            signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
+            signature_algorithm: AlgorithmIdentifier {
+                oid: crate::sm2::SM2_SIGNATURE_ALGORITHM.oid,
+                parameters: None,
+            },
             issuer: params.issuer,
             validity: params.validity,
             subject: params.subject,
-            subject_public_key_info: der::public_key_to_spki_der(&pub_key),
+            subject_public_key_info: SubjectPublicKeyInfo::from_der(&der::public_key_to_spki_der(
+                &pub_key,
+            ))
+            .unwrap(),
             extensions: None,
             signature: vec![0x00; 64],
         };
@@ -2541,7 +2616,9 @@ mod tests {
         assert!(pem.ends_with(b"-----END CERTIFICATE-----\n"));
 
         // 从 PEM 解析
-        let recovered = parse_gm_certificate_pem(&pem).expect("PEM parsing should succeed");
+        let recovered = parse_gm_certificate_pem(&pem).unwrap_or_else(|e| {
+            panic!("PEM parsing failed: {:?}", e);
+        });
         assert_eq!(cert.version, recovered.version);
         assert_eq!(cert.serial_number, recovered.serial_number);
         assert_eq!(cert.issuer, recovered.issuer);
@@ -2866,6 +2943,98 @@ mod tests {
     #[test]
     fn test_gm_x509_certificate_compatibility() {
         let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+
+        // 测试 SPKI roundtrip
+        let spki_der_original = der::public_key_to_spki_der(&pub_key);
+        let spki =
+            SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der_original)
+                .expect("Failed to parse SPKI");
+        let spki_der_roundtrip = spki.to_der().expect("Failed to encode SPKI");
+
+        // 验证 roundtrip 产生相同的 DER 字节
+        assert_eq!(spki_der_original, spki_der_roundtrip,
+                   "SPKI roundtrip should produce identical DER bytes\nOriginal:  {:02x?}\nRoundtrip: {:02x?}",
+                   spki_der_original, spki_der_roundtrip);
+
+        let issuer = build_test_issuer("Test CA");
+        let _subject = build_test_subject("Test User");
+        let serial = build_test_serial(12345);
+        let validity = test_validity();
+
+        // 生成自签名证书
+        let gm_cert = generate_self_signed_cert(
+            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        // 测试 DER 编码
+        let der = generate_gm_certificate(&gm_cert);
+
+        // 首先尝试使用 x509_cert::Certificate::from_der 解析
+        let x509_direct_result = Certificate::from_der(&der);
+        if let Err(e) = &x509_direct_result {
+            panic!(
+                "x509_cert::Certificate::from_der failed: {:?}\nDER length: {}\nDER (full):\n{}",
+                e,
+                der.len(),
+                hex::encode(&der)
+            );
+        }
+
+        // 测试 parse_gm_certificate 能否解析
+        let parsed_gm_cert = match parse_gm_certificate(&der) {
+            Ok(c) => c,
+            Err(e) => {
+                panic!(
+                    "parse_gm_certificate failed: {:?}\nDER length: {}\nDER (full):\n{}",
+                    e,
+                    der.len(),
+                    hex::encode(&der)
+                );
+            }
+        };
+        assert_eq!(gm_cert.serial_number, parsed_gm_cert.serial_number);
+        assert_eq!(gm_cert.issuer, parsed_gm_cert.issuer);
+        assert_eq!(gm_cert.subject, parsed_gm_cert.subject);
+
+        // 尝试使用 x509_cert::Certificate::from_der 解析
+        // 这应该成功，因为 x509-cert 是通用的，不关心具体 OID
+        let x509_result = gm_to_x509_certificate(&gm_cert);
+
+        // 如果解析失败，说明 DER 编码格式有问题
+        if let Err(e) = &x509_result {
+            // 打印 DER 内容以便调试
+            panic!("x509_cert::Certificate::from_der failed: {:?}\nDER length: {}\nDER (first 100 bytes): {:02x?}",
+                   e, der.len(), &der[..100.min(der.len())]);
+        }
+
+        let x509_cert = x509_result.unwrap();
+        // 使用 eq_x509_certificate 方法比较关键字段
+        assert!(
+            gm_cert.eq_x509_certificate(&x509_cert),
+            "GmCertificate should be equal to x509_cert::Certificate"
+        );
+
+        // 尝试转换回 GmCertificate
+        let back_to_gm = x509_to_gm_certificate(&x509_cert);
+        assert!(
+            back_to_gm.is_ok(),
+            "Conversion back to GM/T certificate should succeed"
+        );
+
+        let back_to_gm_cert = back_to_gm.unwrap();
+        assert_eq!(gm_cert.serial_number, back_to_gm_cert.serial_number);
+        assert_eq!(gm_cert.issuer, back_to_gm_cert.issuer);
+        assert_eq!(gm_cert.subject, back_to_gm_cert.subject);
+    }
+
+    #[test]
+    fn test_eq_x509_certificate_method() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, _) = generate_keypair(&mut rng);
 
         let issuer = build_test_issuer("Test CA");
@@ -2875,50 +3044,258 @@ mod tests {
 
         // 生成自签名证书
         let gm_cert = generate_self_signed_cert(
+            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        // 转换为 x509_cert::Certificate
+        let x509_cert = gm_to_x509_certificate(&gm_cert)
+            .expect("Conversion to x509_cert::Certificate should succeed");
+
+        // 测试 eq_x509_certificate 方法
+        assert!(
+            gm_cert.eq_x509_certificate(&x509_cert),
+            "GmCertificate should be equal to x509_cert::Certificate"
+        );
+
+        // 测试字段访问方法
+        // serial_number 是 SerialNumber 类型，验证 DER 编码正确
+        let serial_der = gm_cert.serial_number_der();
+        assert!(!serial_der.is_empty());
+
+        // issuer 是 Name 类型，验证 DER 编码正确
+        let issuer_der = gm_cert.issuer_der();
+        assert!(!issuer_der.is_empty());
+
+        // subject 是 Name 类型，验证 DER 编码正确
+        let subject_der = gm_cert.subject_der();
+        assert!(!subject_der.is_empty());
+
+        // validity 是 Validity 类型，验证 DER 编码正确
+        let validity_der = gm_cert.validity_der();
+        assert!(!validity_der.is_empty());
+
+        // signature_algorithm 是 AlgorithmIdentifier 类型，验证 DER 编码正确
+        let sig_alg_der = gm_cert.signature_algorithm_der();
+        assert!(!sig_alg_der.is_empty());
+
+        // subject_public_key_info 是 SubjectPublicKeyInfo 类型，验证 DER 编码正确
+        let spki_der = gm_cert.subject_public_key_info_der();
+        assert!(!spki_der.is_empty());
+
+        // signature 是 Vec<u8>，直接验证非空
+        assert!(!gm_cert.signature.is_empty());
+    }
+
+    #[test]
+    fn test_certificate_with_large_serial_number() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+
+        // 测试大序列号（64 位）
+        let serial = SerialNumber::from(0xFFFFFFFFFFFFFFFFu64);
+        let issuer = build_test_issuer("Test CA");
+        let validity = test_validity();
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate with large serial should succeed");
+
+        assert_eq!(cert.serial_number, serial);
+
+        // 验证 DER 编码/解码 roundtrip
+        let cert_der = generate_gm_certificate(&cert);
+        let parsed = parse_gm_certificate(&cert_der).expect("Parsing should succeed");
+        assert_eq!(parsed.serial_number, serial);
+    }
+
+    #[test]
+    fn test_certificate_with_long_name() {
+        use alloc::vec;
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+
+        // 测试长名称（多个属性）
+        let long_name_attributes = vec![
+            X500Attribute::new(X500AttributeType::Country, "CN"),
+            X500Attribute::new(X500AttributeType::State, "Beijing"),
+            X500Attribute::new(X500AttributeType::Locality, "Haidian"),
+            X500Attribute::new(X500AttributeType::Organization, "Test Organization Name"),
+            X500Attribute::new(X500AttributeType::OrganizationalUnit, "IT Department"),
+            X500Attribute::new(X500AttributeType::CommonName, "www.test.example.com"),
+            X500Attribute::new(X500AttributeType::EmailAddress, "admin@test.example.com"),
+        ];
+
+        let issuer = build_x500_name(&long_name_attributes);
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate with long name should succeed");
+
+        // 验证名称可以正确 DER 编码
+        let issuer_der = cert.issuer_der();
+        assert!(!issuer_der.is_empty());
+
+        // 验证 roundtrip
+        let cert_der = generate_gm_certificate(&cert);
+        let parsed = parse_gm_certificate(&cert_der).expect("Parsing should succeed");
+        assert_eq!(parsed.issuer, cert.issuer);
+    }
+
+    #[test]
+    #[cfg(all(feature = "alloc", feature = "std"))]
+    fn test_certificate_builder_with_name_type() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+        use std::time::Duration;
+
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+
+        // 使用 Name 类型直接构建
+        let subject_name = build_x500_name(&[X500Attribute::new(
+            X500AttributeType::CommonName,
+            "Test Subject",
+        )]);
+
+        let issuer_name = build_x500_name(&[X500Attribute::new(
+            X500AttributeType::CommonName,
+            "Test Issuer",
+        )]);
+
+        let cert = GmCertificate::builder()
+            .subject(&[X500Attribute::new(
+                X500AttributeType::CommonName,
+                "Test Subject",
+            )])
+            .issuer(&[X500Attribute::new(
+                X500AttributeType::CommonName,
+                "Test Issuer",
+            )])
+            .serial_number(42u32)
+            .validity_period(
+                std::time::SystemTime::now(),
+                std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
+            )
+            .build(&pub_key, &priv_key, DEFAULT_ID, &mut rng)
+            .expect("Builder with Name type should succeed");
+
+        assert_eq!(cert.subject, subject_name);
+        assert_eq!(cert.issuer, issuer_name);
+    }
+
+    #[test]
+    fn test_certificate_serial_number_edge_cases() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+
+        let issuer = build_test_issuer("Test CA");
+        let validity = test_validity();
+
+        // 测试序列号为 0
+        let serial_zero = SerialNumber::from(0u32);
+        let cert_zero = generate_self_signed_cert(
             &priv_key,
             &issuer,
             &validity,
-            &serial,
+            &serial_zero,
             DEFAULT_ID,
             None,
             &mut rng,
         )
+        .expect("Certificate with serial 0 should succeed");
+        assert_eq!(cert_zero.serial_number, serial_zero);
+
+        // 测试序列号为 1
+        let serial_one = SerialNumber::from(1u32);
+        let cert_one = generate_self_signed_cert(
+            &priv_key,
+            &issuer,
+            &validity,
+            &serial_one,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Certificate with serial 1 should succeed");
+        assert_eq!(cert_one.serial_number, serial_one);
+    }
+
+    #[test]
+    fn test_certificate_der_encoding_consistency() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, pub_key) = generate_keypair(&mut rng);
+
+        let issuer = build_test_issuer("Test CA");
+        let validity = test_validity();
+        let serial = build_test_serial(12345);
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
         .expect("Certificate generation should succeed");
 
-        // 测试 DER 编码
-        let der = generate_gm_certificate(&gm_cert);
-        
-        // 测试 parse_gm_certificate 能否解析
-        let parsed_gm_cert = parse_gm_certificate(&der)
-            .expect("parse_gm_certificate should succeed");
-        assert_eq!(gm_cert.serial_number, parsed_gm_cert.serial_number);
-        assert_eq!(gm_cert.issuer, parsed_gm_cert.issuer);
-        assert_eq!(gm_cert.subject, parsed_gm_cert.subject);
+        // 多次编码应该产生相同结果
+        let der1 = generate_gm_certificate(&cert);
+        let der2 = generate_gm_certificate(&cert);
+        assert_eq!(der1, der2, "DER encoding should be deterministic");
 
-        // 尝试转换到 x509_cert::Certificate
-        // 注意：由于 GM/T 证书使用国密 OID（如 SM2 签名算法：1.2.156.10197.1.501），
-        // 而标准 X.509 证书通常使用 RSA/ECDSA OID，因此转换可能失败。
-        // 这是预期行为，不是错误。
-        let x509_result = gm_to_x509_certificate(&gm_cert);
-        
-        // 如果转换成功，验证往返转换
-        if let Ok(x509_cert) = x509_result {
-            // 验证转换后的证书字段
-            assert_eq!(gm_cert.serial_number, x509_cert.tbs_certificate().serial_number().to_der().unwrap());
-            assert_eq!(gm_cert.issuer, x509_cert.tbs_certificate().issuer().to_der().unwrap());
-            assert_eq!(gm_cert.subject, x509_cert.tbs_certificate().subject().to_der().unwrap());
+        // 解析后的证书应该与原证书相同
+        let parsed = parse_gm_certificate(&der1).expect("Parsing should succeed");
+        assert_eq!(parsed.version, cert.version);
+        assert_eq!(parsed.serial_number, cert.serial_number);
+        assert_eq!(parsed.issuer, cert.issuer);
+        assert_eq!(parsed.subject, cert.subject);
+        assert_eq!(parsed.validity, cert.validity);
+        assert_eq!(parsed.signature, cert.signature);
+    }
 
-            // 尝试转换回 GmCertificate
-            let back_to_gm = x509_to_gm_certificate(&x509_cert);
-            assert!(back_to_gm.is_ok(), "Conversion back to GM/T certificate should succeed");
+    #[test]
+    fn test_certificate_name_der_methods() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
 
-            let back_to_gm_cert = back_to_gm.unwrap();
-            assert_eq!(gm_cert.serial_number, back_to_gm_cert.serial_number);
-            assert_eq!(gm_cert.issuer, back_to_gm_cert.issuer);
-            assert_eq!(gm_cert.subject, back_to_gm_cert.subject);
-        } else {
-            // 转换失败是预期行为，因为 GM/T 和 X.509 使用不同的 OID
-            // 这里只记录但不失败
-        }
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _) = generate_keypair(&mut rng);
+
+        let issuer = build_test_issuer("Test CA");
+        let validity = test_validity();
+        let serial = build_test_serial(1);
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        // 测试 issuer_der() 方法
+        let issuer_der = cert.issuer_der();
+        let parsed_issuer = Name::from_der(&issuer_der).expect("Should parse issuer DER");
+        assert_eq!(parsed_issuer, cert.issuer);
+
+        // 测试 subject_der() 方法
+        let subject_der = cert.subject_der();
+        let parsed_subject = Name::from_der(&subject_der).expect("Should parse subject DER");
+        assert_eq!(parsed_subject, cert.subject);
+
+        // 测试 validity_der() 方法
+        let validity_der = cert.validity_der();
+        let parsed_validity = Validity::from_der(&validity_der).expect("Should parse validity DER");
+        assert_eq!(parsed_validity, cert.validity);
     }
 }

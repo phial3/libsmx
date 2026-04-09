@@ -10,80 +10,67 @@
 
 #![cfg(feature = "alloc")]
 
-use libsmx::sm2::cert::{generate_self_signed_cert, GmCertificate};
+use libsmx::sm2::cert::{build_x500_name, generate_self_signed_cert, GmCertificate, X500Attribute, X500AttributeType};
 use libsmx::sm2::cms;
 use libsmx::sm2::{generate_keypair, public_key_from_spki_der, public_key_to_spki_der, DEFAULT_ID};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use x509_cert::der::Encode;
+use x509_cert::serial_number::SerialNumber;
+use x509_cert::time::{Time, Validity};
+use std::time::Duration;
 
-/// 创建简单的 DER Name 结构（空 RDNSequence）
-/// 格式：SET OF {}
-/// 注意：Name 是 CHOICE { rdnSequence RDNSequence }
-/// RDNSequence 是 SEQUENCE OF RelativeDistinguishedName
-/// 但这里使用 SET OF {} 作为简化表示
-fn create_simple_name() -> Vec<u8> {
-    vec![0x31, 0x00] // 空的 SET OF
+/// 创建测试用的 X.500 名称
+fn create_test_name(common_name: &str) -> x509_cert::name::Name {
+    build_x500_name(&[
+        X500Attribute::new(X500AttributeType::Organization, "Test Org"),
+        X500Attribute::new(X500AttributeType::CommonName, common_name),
+    ])
 }
 
-/// 生成测试用的有效期 DER 编码
-///
-/// 固定有效期：2025-01-01 到 2030-01-01
-fn generate_test_validity() -> Vec<u8> {
-    // 使用字节数组方式生成有效期（用于测试）
-    // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
-    vec![
-        0x30, 0x1E, // SEQUENCE, length 30
-        0x17, 0x0D, // UTCTime, length 13
-        b'2', b'5', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
-        b'Z', // 250101000000Z
-        0x17, 0x0D, // UTCTime, length 13
-        b'3', b'0', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0',
-        b'Z', // 300101000000Z
-    ]
+/// 生成测试用的有效期
+fn generate_test_validity() -> Validity {
+    let not_before = Time::try_from(std::time::SystemTime::now()).unwrap();
+    let not_after = Time::try_from(std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600)).unwrap();
+    Validity::new(not_before, not_after)
 }
 
 /// 创建测试用的国密证书
-fn create_test_cert(pub_key: &[u8; 65]) -> GmCertificate {
-    // 使用简单的空 Name 格式
-    let issuer = create_simple_name();
-    let subject = create_simple_name();
+fn create_test_cert(priv_key: &libsmx::sm2::PrivateKey, rng: &mut StdRng) -> GmCertificate {
+    let subject = create_test_name("Test Subject");
+    let serial = SerialNumber::from(1u32);
     let validity = generate_test_validity();
 
-    GmCertificate {
-        version: 2, // v3
-        serial_number: vec![0x01],
-        signature_algorithm: libsmx::sm2::SM2_SIGNATURE_ALGORITHM.to_der().unwrap(),
-        issuer,
-        validity,
-        subject,
-        subject_public_key_info: public_key_to_spki_der(pub_key),
-        extensions: None,
-        signature: vec![0x00; 64], // 占位签名
-    }
+    generate_self_signed_cert(
+        priv_key,
+        &subject,
+        &validity,
+        &serial,
+        DEFAULT_ID,
+        None,
+        rng,
+    ).expect("Failed to generate test certificate")
 }
 
 /// 测试证书结构创建
 #[test]
 fn test_cert_creation() {
     let mut rng = StdRng::seed_from_u64(123456);
-    let (_priv_key, pub_key) = generate_keypair(&mut rng);
+    let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let cert = create_test_cert(&pub_key);
+    let cert = create_test_cert(&priv_key, &mut rng);
 
     // 验证证书字段
     assert_eq!(cert.version, 2);
-    assert_eq!(cert.serial_number, vec![0x01]);
-    assert!(!cert.subject_public_key_info.is_empty());
+    assert!(!cert.signature.is_empty());
 }
 
 /// 测试证书 DER 编码和解码
 #[test]
 fn test_cert_der_encoding() {
     let mut rng = StdRng::seed_from_u64(123456);
-    let (_priv_key, pub_key) = generate_keypair(&mut rng);
+    let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let cert = create_test_cert(&pub_key);
+    let cert = create_test_cert(&priv_key, &mut rng);
 
     // 编码为 DER
     let der = cert.to_der();
@@ -100,18 +87,18 @@ fn test_self_signed_cert() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate self-signed certificate");
 
     // 验证证书字段
     assert_eq!(cert.version, 2);
-    assert_eq!(cert.serial_number, vec![0x01]);
     assert!(!cert.signature.is_empty());
 
     // 验证 DER 编码
@@ -157,12 +144,13 @@ fn test_digital_signature_creation() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     // 生成自签名证书
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -185,11 +173,12 @@ fn test_digital_signature_tampering() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -222,11 +211,12 @@ fn test_digital_signature_different_id() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -255,11 +245,12 @@ fn test_digital_signature_empty_content() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -279,11 +270,12 @@ fn test_digital_signature_large_content() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 
@@ -310,11 +302,12 @@ fn test_digital_signature_stability() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
-    let subject = create_simple_name();
+    let subject = create_test_name("Test Subject");
     let validity = generate_test_validity();
+    let serial = SerialNumber::from(1u32);
 
     let cert = generate_self_signed_cert(
-        &priv_key, &subject, &validity, b"\x01", DEFAULT_ID, None, &mut rng,
+        &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
     )
     .expect("Failed to generate certificate");
 

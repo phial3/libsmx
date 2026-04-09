@@ -179,6 +179,13 @@ fn parse_length(data: &[u8]) -> Option<(usize, &[u8])> {
         }
         let len = (rest[0] as usize) << 8 | rest[1] as usize;
         Some((len, &rest[2..]))
+    } else if *first == 0x83 {
+        // 支持 3 字节长度编码
+        if rest.len() < 3 {
+            return None;
+        }
+        let len = ((rest[0] as usize) << 16) | ((rest[1] as usize) << 8) | rest[2] as usize;
+        Some((len, &rest[3..]))
     } else {
         // 不支持更长或不定长编码
         None
@@ -208,6 +215,8 @@ pub fn parse_tlv_any_full(data: &[u8]) -> Option<(&[u8], &[u8])> {
         2
     } else if *first == 0x82 {
         3
+    } else if *first == 0x83 {
+        4  // 3 字节长度编码
     } else {
         return None;
     };
@@ -377,24 +386,45 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 /// ```
     #[cfg(feature = "alloc")]
     pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
-        use alloc::vec;
+        use x509_cert::der::Encode;
 
-        // 构建 BIT STRING（添加 0x00 前缀表示 unused bits = 0）
-        let mut bit_string_bytes = vec![0x00];
-        bit_string_bytes.extend_from_slice(pub_key);
+        // 手动编码 BIT STRING，避免 BitString::new 添加额外的 00 字节
+        // BIT STRING 格式：03 <length> <unused_bits> <data>
+        // 对于 SM2 公钥（65 字节），unused_bits = 0
+        // 总长度 = 1 (unused_bits) + 65 (公钥) = 66 字节
+        let mut bit_string_content = Vec::with_capacity(1 + 65);
+        bit_string_content.push(0x00); // unused_bits = 0
+        bit_string_content.extend_from_slice(pub_key.as_slice());
+        
+        // 编码 BIT STRING: tag + length + content
+        let mut bit_string_bytes = Vec::with_capacity(1 + 1 + bit_string_content.len());
+        bit_string_bytes.push(0x03); // BIT STRING tag
+        bit_string_bytes.push(bit_string_content.len() as u8); // length
+        bit_string_bytes.extend(bit_string_content);
 
-        // 使用 BitString 包装公钥数据（直接传递 Vec）
-        let bit_string = BitString::new(0, bit_string_bytes)
-            .expect("Failed to create BitString");
+        // 编码 AlgorithmIdentifier
+        let alg_id_bytes: Vec<u8> = crate::sm2::SM2_SPKI_ALGORITHM.to_der().unwrap();
 
-        // 使用 x509-cert 的 SubjectPublicKeyInfo 结构
-        let spki = SubjectPublicKeyInfo {
-            algorithm: crate::sm2::SM2_SPKI_ALGORITHM,
-            subject_public_key: bit_string,
-        };
+        // 编码 SubjectPublicKeyInfo: SEQUENCE { algorithm, subjectPublicKey }
+        let mut spki_content: Vec<u8> = Vec::new();
+        spki_content.extend(&alg_id_bytes);
+        spki_content.extend(&bit_string_bytes);
 
-        // 编码为 DER
-        spki.to_der().expect("Failed to encode SubjectPublicKeyInfo")
+        let mut spki_bytes = Vec::new();
+        spki_bytes.push(0x30); // SEQUENCE tag
+        if spki_content.len() < 128 {
+            spki_bytes.push(spki_content.len() as u8);
+        } else if spki_content.len() < 256 {
+            spki_bytes.push(0x81);
+            spki_bytes.push(spki_content.len() as u8);
+        } else {
+            spki_bytes.push(0x82);
+            spki_bytes.push((spki_content.len() >> 8) as u8);
+            spki_bytes.push(spki_content.len() as u8);
+        }
+        spki_bytes.extend(spki_content);
+
+        spki_bytes
     }
 
 /// 从 SubjectPublicKeyInfo DER 解析 SM2 公钥
@@ -426,23 +456,17 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
         _ => return Err(Error::InvalidPublicKey),
     }
 
-    // 提取公钥数据（跳过 BIT STRING 的 0x00 前缀）
+    // 提取公钥数据
     let pub_key_bytes: &[u8] = spki.subject_public_key.as_bytes()
         .ok_or(Error::InvalidPublicKey)?;
     
-    // 验证 BIT STRING 格式（第一个字节应为 0x00，表示 unused bits = 0）
-    if pub_key_bytes.is_empty() || pub_key_bytes[0] != 0 {
-        return Err(Error::InvalidPublicKey);
-    }
-
-    // 提取 65 字节公钥
-    let pub_key_data = &pub_key_bytes[1..];
-    if pub_key_data.len() != 65 {
+    // 验证公钥长度（应为 65 字节：0x04 || X(32B) || Y(32B)）
+    if pub_key_bytes.len() != 65 {
         return Err(Error::InvalidPublicKey);
     }
 
     let mut result = [0u8; 65];
-    result.copy_from_slice(pub_key_data);
+    result.copy_from_slice(pub_key_bytes);
     Ok(result)
 }
 

@@ -174,7 +174,7 @@ pub const SM2_SPKI_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmI
 ///     parameters: None
 /// }
 /// 注意：国密标准中 SM2withSM3 算法标识符不包含 parameters
-pub const SM2_SIGNATURE_ALGORITHM: AlgorithmIdentifier<()> = AlgorithmIdentifier {
+pub const SM2_SIGNATURE_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmIdentifier {
     oid: SM2_SIGNATURE_OID,
     parameters: None,
 };

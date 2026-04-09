@@ -12,62 +12,75 @@ use libsmx::sm2::cert::{
     parse_gm_certificate_pem,
     public_key_to_spki_pem,
 };
+use x509_cert::name::Name;
+use x509_cert::time::Validity;
+use x509_cert::serial_number::SerialNumber;
+use x509_cert::time::Time;
+use x509_cert::der::Decode;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::fs;
 use std::path::Path;
 
 /// 构建 CA 主体名称
-fn build_ca_subject() -> Vec<u8> {
+fn build_ca_subject() -> Name {
     build_x500_name(&[
-        X500Attribute::new(X500AttributeType::Country, "CN"),
-        X500Attribute::new(X500AttributeType::State, "Beijing"),
-        X500Attribute::new(X500AttributeType::Locality, "Beijing"),
-        X500Attribute::new(X500AttributeType::Organization, "Test Org"),
-        X500Attribute::new(X500AttributeType::OrganizationalUnit, "IT Department"),
+        X500Attribute::new(X500AttributeType::Organization, "Test CA"),
         X500Attribute::new(X500AttributeType::CommonName, "Test CA"),
     ])
 }
 
 /// 构建终端实体主体名称
-fn build_ee_subject(common_name: &str) -> Vec<u8> {
+fn build_ee_subject(common_name: &str) -> Name {
     build_x500_name(&[
-        X500Attribute::new(X500AttributeType::Country, "CN"),
-        X500Attribute::new(X500AttributeType::State, "Beijing"),
-        X500Attribute::new(X500AttributeType::Locality, "Beijing"),
         X500Attribute::new(X500AttributeType::Organization, "Test Org"),
         X500Attribute::new(X500AttributeType::CommonName, common_name),
     ])
 }
 
-/// 构建有效期（2025-01-01 到 2030-01-01）
-fn build_validity(not_before: &str, not_after: &str) -> Vec<u8> {
-    // 构建 UTCTime DER 编码 (tag 0x17)
-    // 格式：YYYYMMDDHHMMSSZ
-    let encode_utctime = |time_str: &str| -> Vec<u8> {
-        let mut encoded = vec![0x17, time_str.len() as u8];
-        encoded.extend_from_slice(time_str.as_bytes());
-        encoded
-    };
-
-    let not_before_der = encode_utctime(not_before);
-    let not_after_der = encode_utctime(not_after);
-
-    // 构建 Validity SEQUENCE
-    let mut validity = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
-    validity.push(0x30); // SEQUENCE tag
-    validity.push((not_before_der.len() + not_after_der.len()) as u8);
-    validity.extend(not_before_der);
-    validity.extend(not_after_der);
-    validity
+/// 构建有效期
+fn build_validity(not_before: &str, not_after: &str) -> Validity {
+    // 解析时间字符串为 Time 对象
+    let not_before_time = parse_utc_time(not_before);
+    let not_after_time = parse_utc_time(not_after);
+    
+    Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time)
 }
 
 /// 构建序列号
-fn build_serial(serial: u64) -> Vec<u8> {
-    let bytes = serial.to_be_bytes();
-    let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
-    bytes[start..].to_vec()
+fn build_serial(serial: u64) -> SerialNumber {
+    SerialNumber::from(serial)
 }
+
+/// 解析 UTC 时间字符串为 Time 对象
+fn parse_utc_time(time_str: &str) -> Time {
+    // 简单解析 YYMMDDhhmmssZ 格式
+    let year = time_str[0..2].parse::<u32>().unwrap();
+    let month = time_str[2..4].parse::<u8>().unwrap();
+    let day = time_str[4..6].parse::<u8>().unwrap();
+    let hour = time_str[6..8].parse::<u8>().unwrap();
+    let minute = time_str[8..10].parse::<u8>().unwrap();
+    let second = time_str[10..12].parse::<u8>().unwrap();
+    
+    // 转换为完整年份（YY -> 20YY，假设都是 21 世纪）
+    let full_year = if year >= 50 { 1900 + year } else { 2000 + year };
+    
+    // 使用 SystemTime 创建 Time
+    use std::time::{Duration, SystemTime};
+    // 计算 Unix 时间戳
+    let days_in_month = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    let mut days = (full_year - 1970) * 365 + ((full_year - 1969) / 4) as u32;
+    days += days_in_month[(month - 1) as usize] as u32;
+    if month > 2 && full_year % 4 == 0 {
+        days += 1;
+    }
+    days += (day - 1) as u32;
+    
+    let timestamp = days as u64 * 86400 + hour as u64 * 3600 + minute as u64 * 60 + second as u64;
+    let system_time = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
+    Time::try_from(system_time).unwrap()
+}
+
 
 fn main() {
     let output_dir = Path::new("data/www_test4_com");

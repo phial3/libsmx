@@ -44,7 +44,11 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use x509_cert::der::{Decode, Encode};
+use x509_cert::attr::{Attribute, Attributes};
+use x509_cert::der::{Decode, Encode, Tag, Tagged};
+use x509_cert::der::asn1::{Any, SetOfVec};
+use x509_cert::name::Name;
+use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
 
 use crate::error::Error;
@@ -76,7 +80,7 @@ pub struct SignedData {
     /// 版本号 (1, 3 或 5)
     pub version: u32,
     /// 摘要算法标识符集合
-    pub digest_algorithms: Vec<AlgorithmIdentifier<()>>,
+    pub digest_algorithms: Vec<AlgorithmIdentifier<ObjectIdentifier>>,
     /// 封装内容信息
     pub encap_content_info: EncapsulatedContentInfo,
     /// 证书集合
@@ -108,15 +112,15 @@ pub struct SignerInfo {
     /// 签名者标识符
     pub sid: SignerIdentifier,
     /// 摘要算法
-    pub digest_algorithm: AlgorithmIdentifier<()>,
+    pub digest_algorithm: AlgorithmIdentifier<ObjectIdentifier>,
     /// 签名属性 (可选)
-    pub signed_attrs: Option<Vec<u8>>,
+    pub signed_attrs: Option<SignedAttributes>,
     /// 签名算法
-    pub signature_algorithm: AlgorithmIdentifier<()>,
+    pub signature_algorithm: AlgorithmIdentifier<ObjectIdentifier>,
     /// 签名值
     pub signature: Vec<u8>,
     /// 未签名属性 (可选)
-    pub unsigned_attrs: Option<Vec<u8>>,
+    pub unsigned_attrs: Option<UnsignedAttributes>,
 }
 
 /// 签名者标识符 (SignerIdentifier)
@@ -127,28 +131,18 @@ pub enum SignerIdentifier {
     /// 颁发者和序列号
     IssuerAndSerialNumber {
         /// 颁发者名称
-        issuer: Vec<u8>,
+        issuer: Name,
         /// 证书序列号
-        serial_number: Vec<u8>,
+        serial_number: SerialNumber,
     },
     /// 主体密钥标识符
     SubjectKeyIdentifier(Vec<u8>),
 }
 
 /// 签名属性 (SignedAttributes)
-///
-/// 包含 content-type、message-digest 和 signing-time 等签名属性。
-#[derive(Debug, Clone, Default)]
-pub struct SignedAttributes {
-    /// 内容类型
-    pub content_type: Option<Vec<u8>>,
-    /// 消息摘要 (SM3 哈希值)
-    pub message_digest: Option<[u8; 32]>,
-    /// 签名时间
-    pub signing_time: Option<Vec<u8>>,
-    /// 原始字节数据
-    pub raw_bytes: Option<Vec<u8>>,
-}
+pub type SignedAttributes = Attributes;
+/// 未签名属性 (UnsignedAttributes)
+pub type UnsignedAttributes = Attributes;
 
 /// 单个签名者验证结果
 ///
@@ -248,7 +242,7 @@ pub fn create_digital_signature<R: Rng>(
     // 注意：签名时需要使用 SET OF 编码的属性，而不是 [0] IMPLICIT 编码
     let pub_key = priv_key.public_key();
     let z = crate::sm2::get_z(id, &pub_key);
-    let signed_attrs_for_sign = convert_implicit_to_set(&signed_attrs)?;
+    let signed_attrs_for_sign = encode_signed_attrs_for_sign(&signed_attrs)?;
     let e = crate::sm2::get_e(&z, &signed_attrs_for_sign);
     let signature = sign(&e, priv_key, rng);
 
@@ -292,75 +286,61 @@ pub fn create_digital_signature<R: Rng>(
 /// 构建签名属性
 ///
 /// 构建符合 RFC 5652 标准的签名属性集合。
-/// 注意：签名属性在计算签名时需要编码为 SET OF，且元素按字典序排序。
+/// 使用 x509_cert 的类型系统确保正确的 DER 编码。
 /// 返回的编码使用 [0] IMPLICIT 标签，这是 RFC 5652 的要求。
-fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Vec<u8>, Error> {
-    let mut attrs = Vec::new();
-
+fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attributes, Error> {
+    use x509_cert::der::asn1::OctetStringRef;
+    
+    let mut attrs = SetOfVec::<Attribute>::new();
+    
     // 1. content-type 属性 (OID = 1.2.840.113549.1.9.3)
-    let content_type_attr = encode_content_type_attr()?;
-    attrs.push(content_type_attr);
-
+    let content_type_oid = crate::sm2::CONTENT_TYPE_OID;
+    let content_type_value = Any::from(crate::sm2::PKCS7_DATA_OID);
+    let mut content_type_values = SetOfVec::<Any>::new();
+    content_type_values.insert(content_type_value).map_err(|_| Error::InvalidSignature)?;
+    let content_type_attr = Attribute {
+        oid: content_type_oid,
+        values: content_type_values,
+    };
+    attrs.insert(content_type_attr).map_err(|_| Error::InvalidSignature)?;
+    
     // 2. message-digest 属性 (OID = 1.2.840.113549.1.9.4)
-    let message_digest_attr = encode_message_digest_attr(digest)?;
-    attrs.push(message_digest_attr);
-
+    let message_digest_oid = crate::sm2::MESSAGE_DIGEST_OID;
+    let digest_octet_string = OctetStringRef::new(digest.as_slice()).map_err(|_| Error::InvalidSignature)?;
+    let digest_any = Any::from(digest_octet_string);
+    let mut message_digest_values = SetOfVec::<Any>::new();
+    message_digest_values.insert(digest_any).map_err(|_| Error::InvalidSignature)?;
+    let message_digest_attr = Attribute {
+        oid: message_digest_oid,
+        values: message_digest_values,
+    };
+    attrs.insert(message_digest_attr).map_err(|_| Error::InvalidSignature)?;
+    
     // 3. signing-time 属性（可选）(OID = 1.2.840.113549.1.9.5)
     if include_time {
-        let signing_time_attr = encode_signing_time_attr()?;
-        attrs.push(signing_time_attr);
+        // 使用原来的辅助函数编码 signing-time，因为时间处理比较复杂
+        let signing_time_attr_bytes = encode_signing_time_attr()?;
+        // 解析为 Attribute
+        let signing_time_attr = Attribute::from_der(&signing_time_attr_bytes).map_err(|_| Error::InvalidSignature)?;
+        attrs.insert(signing_time_attr).map_err(|_| Error::InvalidSignature)?;
     }
+    
+    Ok(attrs)
+}
 
-    // 按字典序排序属性（DER SET 要求）
-    attrs.sort();
-
-    // 连接所有属性
-    let mut all_attrs = Vec::new();
-    for attr in attrs {
-        all_attrs.extend(attr);
-    }
-
-    // 先编码为 SET OF，然后替换标签为 [0] IMPLICIT
-    // RFC 5652: signedAttrs [0] IMPLICIT SignedAttributes
-    // SignedAttributes ::= SET SIZE (1..MAX) OF Attribute
-    let set_encoded = wrap_set(all_attrs);
-
-    // 将 SET (0x31) 标签替换为 [0] IMPLICIT (0xA0)
+/// 将 Attributes 编码为 [0] IMPLICIT 格式用于签名
+fn encode_signed_attrs_for_sign(attrs: &Attributes) -> Result<Vec<u8>, Error> {
+    // 编码为 DER (SET OF)
+    let attrs_der = attrs.to_der().map_err(|_| Error::InvalidSignature)?;
+    
+    // attrs_der 是 31 <length> <content>
+    // 需要替换标签为 A0
     let mut result = vec![0xA0];
-    result.extend(&set_encoded[1..]);
-
+    result.extend_from_slice(&attrs_der[1..]); // 跳过原来的 0x31 标签，保留长度和内容
+    
     Ok(result)
 }
 
-/// 编码 content-type 属性
-fn encode_content_type_attr() -> Result<Vec<u8>, Error> {
-    let mut attr = Vec::new();
-
-    // attrType = content-type (1.2.840.113549.1.9.3)
-    attr.extend(encode_oid(crate::sm2::CONTENT_TYPE_OID)?);
-
-    // attrValues = SET { id-data }
-    let id_data_tlv = encode_oid(crate::sm2::PKCS7_DATA_OID)?;
-    let set_content = wrap_set(id_data_tlv);
-    attr.extend(set_content);
-
-    Ok(wrap_sequence(attr))
-}
-
-/// 编码 message-digest 属性
-fn encode_message_digest_attr(digest: &[u8; 32]) -> Result<Vec<u8>, Error> {
-    let mut attr = Vec::new();
-
-    // attrType = message-digest (1.2.840.113549.1.9.4)
-    attr.extend(encode_oid(crate::sm2::MESSAGE_DIGEST_OID)?);
-
-    // attrValues = SET { OCTET STRING }
-    let digest_tlv = encode_octet_string(digest)?;
-    let set_content = wrap_set(digest_tlv);
-    attr.extend(set_content);
-
-    Ok(wrap_sequence(attr))
-}
 
 /// 编码 signing-time 属性
 fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
@@ -379,26 +359,6 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
     Ok(wrap_sequence(attr))
 }
 
-/// 将 [0] IMPLICIT 编码的签名属性转换为 SET OF 编码
-///
-/// RFC 5652 规定：签名时使用 SET OF 编码，传输时使用 [0] IMPLICIT
-fn convert_implicit_to_set(implicit_data: &[u8]) -> Result<Vec<u8>, Error> {
-    if implicit_data.is_empty() {
-        return Err(Error::InvalidSignature);
-    }
-
-    // 验证标签是 [0] (0xA0)
-    if implicit_data[0] != 0xA0 {
-        return Err(Error::InvalidSignature);
-    }
-
-    // 将 [0] 标签替换为 SET (0x31)
-    let mut result = vec![0x31];
-    result.extend(&implicit_data[1..]);
-
-    Ok(result)
-}
-
 // ====================================================================================
 // 标准 Builder 模式 API
 // ====================================================================================
@@ -411,20 +371,37 @@ fn convert_implicit_to_set(implicit_data: &[u8]) -> Result<Vec<u8>, Error> {
 ///
 /// ```rust,no_run
 /// # use libsmx::sm2::cms::CmsSignerBuilder;
-/// # use libsmx::sm2::{generate_keypair, PrivateKey};
-/// # use libsmx::sm2::cert::generate_self_signed_cert;
+/// # use libsmx::sm2::{generate_keypair, PrivateKey, DEFAULT_ID};
+/// # use libsmx::sm2::cert::{generate_self_signed_cert, X500Attribute, X500AttributeType, build_x500_name};
+/// # use x509_cert::name::Name;
+/// # use x509_cert::time::{Validity, Time};
+/// # use x509_cert::serial_number::SerialNumber;
 /// # use rand::rngs::StdRng;
 /// # use rand::SeedableRng;
+/// # use std::time::{Duration, SystemTime};
 /// let mut rng = StdRng::seed_from_u64(123456);
 /// let (priv_key, _pub_key) = generate_keypair(&mut rng);
+///
+/// // 构建证书所需参数
+/// let subject = build_x500_name(&[
+///     X500Attribute::new(X500AttributeType::Organization, "Test Org"),
+///     X500Attribute::new(X500AttributeType::CommonName, "Test"),
+/// ]);
+///
+/// let not_before = Time::try_from(SystemTime::now()).unwrap();
+/// let not_after = Time::try_from(SystemTime::now() + Duration::from_secs(365 * 24 * 3600)).unwrap();
+/// let validity = Validity::new(not_before, not_after);
+///
+/// let serial = SerialNumber::from(1u32);
+///
 /// let cert = generate_self_signed_cert(
-///     &priv_key, b"Test", b"250101000000Z300101000000Z", b"01", b"1234567812345678", None, &mut rng
+///     &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng
 /// ).unwrap();
 ///
 /// let content = b"Hello, World!";
 /// let signed_data = CmsSignerBuilder::new()
 ///     .content(content)
-///     .add_signer(&priv_key, &cert, b"1234567812345678")
+///     .add_signer(&priv_key, &cert, DEFAULT_ID)
 ///     .include_signing_time(true)
 ///     .sign(&mut rng)
 ///     .expect("Signing should succeed");
@@ -516,7 +493,7 @@ impl CmsSignerBuilder {
             // 对签名属性进行 SM2 签名
             let pub_key = signer_config.private_key.public_key();
             let z = crate::sm2::get_z(&signer_config.id, &pub_key);
-            let signed_attrs_for_sign = convert_implicit_to_set(&signed_attrs)?;
+            let signed_attrs_for_sign = encode_signed_attrs_for_sign(&signed_attrs)?;
             let e = crate::sm2::get_e(&z, &signed_attrs_for_sign);
             let signature = sign(&e, &signer_config.private_key, rng);
 
@@ -751,10 +728,29 @@ pub fn verify_digital_signature(
 
 // FIXME:
 /// 从签名属性中提取签名时间
-fn extract_signing_time(_signed_attrs: &[u8]) -> Option<Vec<u8>> {
+fn extract_signing_time(_signed_attrs: &Attributes) -> Option<Vec<u8>> {
     // 简化实现：解析签名属性中的 signing-time
     // 实际实现需要完整的 DER 解析
     None
+}
+
+/// 从签名属性中提取 message-digest
+fn extract_message_digest(signed_attrs: &Attributes) -> Result<[u8; 32], Error> {
+    for attr in signed_attrs.iter() {
+        if attr.oid == crate::sm2::MESSAGE_DIGEST_OID {
+            if let Some(value) = attr.values.get(0) {
+                if value.tag() == Tag::OctetString {
+                    let octet_bytes = value.value();
+                    if octet_bytes.len() == 32 {
+                        let mut digest = [0u8; 32];
+                        digest.copy_from_slice(octet_bytes);
+                        return Ok(digest);
+                    }
+                }
+            }
+        }
+    }
+    Err(Error::InvalidSignature)
 }
 
 /// 验证单个签名者信息
@@ -776,21 +772,16 @@ fn verify_signer_info(
         .as_ref()
         .ok_or(Error::InvalidSignature)?;
 
-    // 解析签名属性
-    let parsed_attrs = parse_signed_attrs(signed_attrs)?;
-
-    // 验证 message-digest
-    if let Some(expected_digest) = parsed_attrs.message_digest {
-        if &expected_digest != content_digest {
-            return Err(Error::InvalidSignature);
-        }
-    } else {
-        return Err(Error::InvalidSignature);
+    // 解析签名属性并验证 message-digest
+    let message_digest = extract_message_digest(signed_attrs)
+        .map_err(|_| Error::InvalidSignature)?;
+    if &message_digest != content_digest {
+        return Err(Error::VerifyFailed);
     }
 
     // 验证 SM2 签名
     let z = crate::sm2::get_z(id, &pub_key);
-    let signed_attrs_for_verify = convert_implicit_to_set(signed_attrs)?;
+    let signed_attrs_for_verify = encode_signed_attrs_for_sign(signed_attrs)?;
     let e = crate::sm2::get_e(&z, &signed_attrs_for_verify);
 
     let sig_array: [u8; 64] = signer_info
@@ -799,6 +790,7 @@ fn verify_signer_info(
         .try_into()
         .map_err(|_| Error::InvalidSignature)?;
 
+    // 验证签名，如果失败返回详细错误
     verify(&e, &pub_key, &sig_array)?;
 
     Ok(())
@@ -853,60 +845,6 @@ fn compute_subject_key_identifier(pub_key: &[u8; 65]) -> Vec<u8> {
     hash[..20].to_vec()
 }
 
-/// 解析签名属性
-fn parse_signed_attrs(data: &[u8]) -> Result<SignedAttributes, Error> {
-    let err = || Error::InvalidSignature;
-
-    // 解析 [0] IMPLICIT SET
-    let (set_body, _) = der::parse_tlv(data, 0xA0).ok_or_else(err)?;
-
-    let mut rest = set_body;
-    let mut content_type = None;
-    let mut message_digest = None;
-    let mut signing_time = None;
-
-    while !rest.is_empty() {
-        // 解析 Attribute SEQUENCE
-        let (attr_seq, r) = der::parse_tlv(rest, 0x30).ok_or_else(err)?;
-        rest = r;
-
-        // 解析 attrType OID
-        let (oid_bytes, r) = der::parse_tlv(attr_seq, 0x06).ok_or_else(err)?;
-
-        // 解析 attrValues SET
-        let (values_set, _) = der::parse_tlv(r, 0x31).ok_or_else(err)?;
-
-        // 根据 OID 处理属性（比较字节数组）
-        if oid_bytes == crate::sm2::CONTENT_TYPE_OID.as_bytes() {
-            // 解析 content-type
-            if let Some((val, _)) = der::parse_tlv(values_set, 0x06) {
-                content_type = Some(val.to_vec());
-            }
-        } else if oid_bytes == crate::sm2::MESSAGE_DIGEST_OID.as_bytes() {
-            // 解析 message-digest
-            if let Some((val, _)) = der::parse_tlv(values_set, 0x04) {
-                if val.len() == 32 {
-                    let mut digest = [0u8; 32];
-                    digest.copy_from_slice(val);
-                    message_digest = Some(digest);
-                }
-            }
-        } else if oid_bytes == crate::sm2::SIGNING_TIME_OID.as_bytes() {
-            // 解析 signing-time
-            if let Some((val, _)) = der::parse_tlv_any_full(values_set) {
-                signing_time = Some(val.to_vec());
-            }
-        }
-    }
-
-    Ok(SignedAttributes {
-        content_type,
-        message_digest,
-        signing_time,
-        raw_bytes: Some(data.to_vec()),
-    })
-}
-
 // ====================================================================================
 // 生产级 DER 编码
 // ====================================================================================
@@ -949,7 +887,11 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     // digestAlgorithms SET
     let mut digest_algs = Vec::new();
     for alg in &signed_data.digest_algorithms {
-        digest_algs.extend(encode_algorithm_identifier(alg)?);
+        let alg_der = alg.to_der().map_err(|_| Error::DerEncodeError {
+            field: "digest_algorithm",
+            reason: "encoding failed",
+        })?;
+        digest_algs.extend(alg_der);
     }
     content.extend(wrap_set(digest_algs));
 
@@ -972,6 +914,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
         content.extend(certs_tlv);
     }
 
+    // FIXME:
     // crls [1] (可选) - 暂不实现
 
     // signerInfos SET
@@ -987,7 +930,11 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 /// 编码 EncapsulatedContentInfo 编码封装内容信息
 fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
-    content.extend(&info.content_type.as_bytes().to_vec());
+    // contentType OID (需要编码为 06 <len> <bytes>)
+    content.extend(&[0x06]);
+    let oid_bytes = info.content_type.as_bytes();
+    encode_length(&mut content, oid_bytes.len())?;
+    content.extend(oid_bytes);
 
     // content [0] EXPLICIT (可选)
     if let Some(ref data) = info.content {
@@ -1014,17 +961,17 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
     content.extend(encode_signer_identifier(&signer_info.sid)?);
 
     // digestAlgorithm
-    content.extend(encode_algorithm_identifier(&signer_info.digest_algorithm)?);
+    content.extend(signer_info.digest_algorithm.to_der().unwrap());
 
     // signedAttrs [0] IMPLICIT (可选)
     if let Some(ref attrs) = signer_info.signed_attrs {
-        content.extend(attrs.clone());
+        // 将 Attributes 编码为 [0] IMPLICIT 格式
+        let attrs_der = encode_signed_attrs_for_sign(attrs)?;
+        content.extend(attrs_der);
     }
 
     // signatureAlgorithm
-    content.extend(encode_algorithm_identifier(
-        &signer_info.signature_algorithm,
-    )?);
+    content.extend(signer_info.signature_algorithm.to_der().unwrap());
 
     // signatureValue
     content.extend(encode_octet_string(&signer_info.signature)?);
@@ -1042,8 +989,8 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
             serial_number,
         } => {
             let mut content = Vec::new();
-            content.extend(issuer);
-            content.extend(encode_integer_bytes(serial_number)?);
+            content.extend(issuer.to_der().map_err(|_| Error::DerEncodeError { field: "issuer", reason: "encoding failed" })?);
+            content.extend(encode_integer_bytes(&serial_number.to_der().map_err(|_| Error::DerEncodeError { field: "serial_number", reason: "encoding failed" })?)?);
             Ok(wrap_sequence(content))
         }
         SignerIdentifier::SubjectKeyIdentifier(ski) => {
@@ -1054,14 +1001,6 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
             Ok(result)
         }
     }
-}
-
-/// 编码算法标识符
-fn encode_algorithm_identifier(alg: &AlgorithmIdentifier<()>) -> Result<Vec<u8>, Error> {
-    alg.to_der().map_err(|_| Error::DerDecodeError {
-        field: "algorithm",
-        reason: "encoding failed",
-    })
 }
 
 /// 编码 OID
@@ -1209,23 +1148,26 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
     let encap_content_info = parse_encap_content_info(encap_tlv)?;
     rest = r;
 
-    // certificates [0] IMPLICIT CertificateSet
+    // certificates [0] IMPLICIT CertificateSet (可选)
     let mut certificates = Vec::new();
     if rest.first() == Some(&0xA0) {
         let (certs_tlv, r) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
 
         // certificates [0] 包含的是 CertificateSet (SET OF Certificate)
-        // 需要解析 SET OF
+        // certs_tlv 是 [0] IMPLICIT 的 body
+        // 需要先解析 SET OF 标签，获取证书列表
         if certs_tlv.first() == Some(&0x31) {
             let (certs_set_body, _) = der::parse_tlv(certs_tlv, 0x31).ok_or_else(err)?;
             certificates = parse_certificates(certs_set_body)?;
         } else {
+            // 没有 SET OF 标签，直接解析证书
             certificates = parse_certificates(certs_tlv)?;
         }
 
         rest = r;
     }
 
+    // 如果 certificates 不存在，rest 不变，继续解析后续字段
     // crls [1] (可选)
     let mut crls = Vec::new();
     if rest.first() == Some(&0xA1) {
@@ -1234,7 +1176,11 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
         rest = r;
     }
 
-    // signerInfos SET
+    // signerInfos SET - 必须存在
+    if rest.is_empty() {
+        return Err(Error::InvalidSignature);
+    }
+    
     let (signer_infos_tlv, _) = der::parse_tlv(rest, 0x31).ok_or_else(err)?;
     let signer_infos = parse_signer_infos(signer_infos_tlv)?;
 
@@ -1249,13 +1195,13 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
 }
 
 /// 解析摘要算法列表
-fn parse_digest_algorithms(data: &[u8]) -> Result<Vec<AlgorithmIdentifier<()>>, Error> {
-    let mut result = Vec::<AlgorithmIdentifier<()>>::new();
+fn parse_digest_algorithms(data: &[u8]) -> Result<Vec<AlgorithmIdentifier<ObjectIdentifier>>, Error> {
+    let mut result = Vec::<AlgorithmIdentifier<ObjectIdentifier>>::new();
     let mut rest = data;
 
     while !rest.is_empty() {
-        let (alg, r) = der::parse_tlv(rest, 0x30).ok_or(Error::InvalidSignature)?;
-        result.push(parse_algorithm_identifier(alg)?);
+        let (alg_tlv, r) = der::parse_tlv_any_full(rest).ok_or(Error::InvalidSignature)?;
+        result.push(parse_algorithm_identifier(alg_tlv)?);
         rest = r;
     }
 
@@ -1268,6 +1214,7 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
 
     // data 已经是 SEQUENCE 的 body，直接解析
     let mut rest = data;
+    // panic!("parse_encap_content_info: data len={}, first 50 bytes={:02x?}", data.len(), &data[..data.len().min(50)]);
 
     // contentType
     let (content_type, r) = der::parse_tlv(rest, 0x06).ok_or_else(err)?;
@@ -1276,9 +1223,10 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
     // content [0] EXPLICIT (可选)
     let mut content = None;
     if !rest.is_empty() && rest[0] == 0xA0 {
-        let (content_tlv, _) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
+        let (content_tlv, r2) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
         let (octet, _) = der::parse_tlv(content_tlv, 0x04).ok_or_else(err)?;
         content = Some(octet.to_vec());
+        rest = r2;  // 更新 rest
     }
 
     Ok(EncapsulatedContentInfo {
@@ -1364,24 +1312,28 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
     };
 
     // digestAlgorithm
-    let (digest_alg_tlv, r) = der::parse_tlv(rest, 0x30).ok_or_else(err)?;
+    let (digest_alg_tlv, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
     let digest_algorithm = parse_algorithm_identifier(digest_alg_tlv)?;
     rest = r;
 
     // signedAttrs [0] IMPLICIT (可选)
     let mut signed_attrs = None;
     if !rest.is_empty() && rest[0] == 0xA0 {
-        // 保存完整的 TLV（包括 [0] 标签和长度），因为验证时需要完整的结构
-        let attrs_start = rest.as_ptr() as usize - data.as_ptr() as usize;
-        let (_, r) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
-        // 计算消耗的字节数
-        let consumed = rest.len() - r.len();
-        signed_attrs = Some(data[attrs_start..attrs_start + consumed].to_vec());
+        // 解析 [0] IMPLICIT 获取 value 部分
+        let (all_attrs, r) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
+        // all_attrs 是多个 Attribute 的串联，需要包装为 SET OF 结构
+        // 先构建完整的 SET OF DER 编码
+        let mut set_der = vec![0x31]; // SET OF 标签
+        encode_length(&mut set_der, all_attrs.len())?;
+        set_der.extend(all_attrs);
+        // 使用 x509_cert 的类型解析 Attributes
+        let attrs = Attributes::from_der(&set_der).map_err(|_| err())?;
+        signed_attrs = Some(attrs);
         rest = r;
     }
 
     // signatureAlgorithm
-    let (sig_alg_tlv, r) = der::parse_tlv(rest, 0x30).ok_or_else(err)?;
+    let (sig_alg_tlv, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
     let signature_algorithm = parse_algorithm_identifier(sig_alg_tlv)?;
     rest = r;
 
@@ -1393,7 +1345,11 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
     let mut unsigned_attrs = None;
     if !rest.is_empty() && rest[0] == 0xA1 {
         let (attrs_tlv, _) = der::parse_tlv(rest, 0xA1).ok_or_else(err)?;
-        unsigned_attrs = Some(attrs_tlv.to_vec());
+        // attrs_tlv 是多个 Attribute 的串联，需要包装为 SET OF 结构
+        let mut set_der = vec![0x31]; // SET OF 标签
+        encode_length(&mut set_der, attrs_tlv.len())?;
+        set_der.extend(attrs_tlv);
+        unsigned_attrs = Some(Attributes::from_der(&set_der).map_err(|_| err())?);
     }
 
     Ok(SignerInfo {
@@ -1413,21 +1369,22 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
     let mut rest = data;
 
     // issuer (Name)
-    let (issuer, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+    let (issuer_der, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
     rest = r;
+    let issuer = Name::from_der(issuer_der).map_err(|_| Error::DerDecodeError { field: "issuer", reason: "decoding failed" })?;
 
-    // serialNumber - 解析 INTEGER 并只保留值（去掉标签和长度）
-    let (serial_tlv, _) = der::parse_tlv(rest, 0x02).ok_or_else(err)?;
-    let serial = serial_tlv.to_vec();
+    // serialNumber - 解析 INTEGER 为 SerialNumber
+    let (serial_der, _) = der::parse_tlv(rest, 0x02).ok_or_else(err)?;
+    let serial_number = SerialNumber::from_der(serial_der).map_err(|_| Error::DerDecodeError { field: "serial_number", reason: "decoding failed" })?;
 
     Ok(SignerIdentifier::IssuerAndSerialNumber {
-        issuer: issuer.to_vec(),
-        serial_number: serial,
+        issuer,
+        serial_number,
     })
 }
 
 /// 解析算法标识符
-fn parse_algorithm_identifier(der_data: &[u8]) -> Result<AlgorithmIdentifier<()>, Error> {
+fn parse_algorithm_identifier(der_data: &[u8]) -> Result<AlgorithmIdentifier<ObjectIdentifier>, Error> {
     AlgorithmIdentifier::from_der(der_data).map_err(|_| Error::DerDecodeError {
         field: "algorithm",
         reason: "decoding failed",
@@ -1446,23 +1403,22 @@ mod tests {
     use crate::sm2::DEFAULT_ID;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use x509_cert::time::Validity;
 
-    /// 生成测试用的简化主体 DER 编码（空 SEQUENCE）
-    fn test_subject() -> Vec<u8> {
-        // 创建一个空的 SEQUENCE 作为测试主体
-        vec![0x30, 0x00]
+    /// 生成测试用的简化主体
+    fn test_subject() -> Name {
+        Name::from_der(&[0x30, 0x00]).unwrap()
     }
 
-    /// 生成测试用的序列号 DER 编码
-    fn test_serial() -> Vec<u8> {
-        // 编码整数 1 为 DER INTEGER: tag(0x02) + length(0x01) + value(0x01)
-        vec![0x02, 0x01, 1]
+    /// 生成测试用的序列号
+    fn test_serial() -> SerialNumber {
+        SerialNumber::from(1u32)
     }
 
-    /// 生成测试用的有效期 DER 编码
+    /// 生成测试用的有效期
     ///
     /// 固定有效期：2024-01-01 到 2030-01-01
-    fn test_validity() -> Vec<u8> {
+    fn test_validity() -> Validity {
         // 使用 DER 编码逻辑构建有效期
         // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
 
@@ -1477,12 +1433,13 @@ mod tests {
         let not_after = encode_utctime("300101000000Z");
 
         // 包装为 SEQUENCE
-        let mut validity = Vec::with_capacity(2 + not_before.len() + not_after.len());
-        validity.push(0x30); // SEQUENCE tag
-        validity.push((not_before.len() + not_after.len()) as u8);
-        validity.extend(not_before);
-        validity.extend(not_after);
-        validity
+        let mut validity_der = Vec::with_capacity(2 + not_before.len() + not_after.len());
+        validity_der.push(0x30); // SEQUENCE tag
+        validity_der.push((not_before.len() + not_after.len()) as u8);
+        validity_der.extend(not_before);
+        validity_der.extend(not_after);
+        
+        Validity::from_der(&validity_der).unwrap()
     }
 
     #[test]
@@ -1502,53 +1459,54 @@ mod tests {
 
         let data = b"Test message for production signature";
 
-        // 测试编码和解码的一致性
-        let content_digest = crate::sm3::Sm3Hasher::digest(data);
-
-        // 构建签名属性
-        let signed_attrs =
-            build_signed_attrs(&content_digest, false).expect("Build signed attrs should succeed");
-
-        // 验证签名属性结构
-        assert!(!signed_attrs.is_empty());
-        assert_eq!(signed_attrs[0], 0xA0); // [0] IMPLICIT
-
-        // 转换为 SET 编码用于签名
-        let signed_attrs_set =
-            convert_implicit_to_set(&signed_attrs).expect("Convert to set should succeed");
-        assert_eq!(signed_attrs_set[0], 0x31); // SET
-
-        // 计算签名
-        let z = crate::sm2::get_z(DEFAULT_ID, &pub_key);
-        let e = crate::sm2::get_e(&z, &signed_attrs_set);
-        let signature = sign(&e, &priv_key, &mut rng);
-
-        // 验证签名
-        verify(&e, &pub_key, &signature).expect("Direct signature verification should succeed");
-
-        // 测试完整的 CMS 流程
+        // 测试完整的 CMS 流程 - 不包含 signing-time
         let signed_data =
             create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
                 .expect("Signature creation should succeed");
 
-        assert!(!signed_data.is_empty());
-        assert_eq!(signed_data[0], 0x30);
+        // 解析 SignedData 以获取 SignerInfo
+        let content_info = parse_content_info_from_der(&signed_data).expect("Parse ContentInfo should succeed");
+        let signed_data_parsed = parse_signed_data_from_der(&content_info.content).expect("Parse SignedData should succeed");
+        
+        // 获取 SignerInfo
+        assert_eq!(signed_data_parsed.signer_infos.len(), 1);
+        let signer_info = &signed_data_parsed.signer_infos[0];
+        
+        // 验证 signed_attrs 存在
+        assert!(signer_info.signed_attrs.is_some());
+        let signed_attrs = signer_info.signed_attrs.as_ref().unwrap();
+        
+        // 验证 signed_attrs 包含 2 个属性（content-type + message-digest）
+        assert_eq!(signed_attrs.len(), 2);
+        
+        // 编码 signed_attrs 用于验证
+        let signed_attrs_encoded = encode_signed_attrs_for_sign(signed_attrs).expect("Encode should succeed");
+        
+        // 计算 content digest
+        let content_digest = crate::sm3::Sm3Hasher::digest(data);
+        
+        // 提取 message-digest
+        let extracted_digest = extract_message_digest(signed_attrs).expect("Extract should succeed");
+        assert_eq!(&extracted_digest, &content_digest);
+        
+        // 计算 e
+        let pub_key_cert = cert.extract_sm2_public_key().expect("Extract public key should succeed");
+        let z = crate::sm2::get_z(DEFAULT_ID, &pub_key_cert);
+        let e = crate::sm2::get_e(&z, &signed_attrs_encoded);
+        
+        // 验证签名
+        let sig_array: [u8; 64] = signer_info.signature.as_slice().try_into().expect("Signature should be 64 bytes");
+        verify(&e, &pub_key_cert, &sig_array).expect("Signature verification should succeed");
 
-        // 尝试验证签章
-        match verify_digital_signature(&signed_data, DEFAULT_ID) {
-            Ok(result) => {
-                if result.is_valid {
-                    assert_eq!(result.content, data.as_slice());
-                    assert_eq!(result.total_signers_count(), 1);
-                } else {
-                    // 验证失败，但解析成功，这在当前实现中是可接受的
-                    // 因为 CMS 编码的复杂性
-                }
-            }
-            Err(_) => {
-                // 解析失败，但签章创建成功，这在当前实现中是可接受的
-            }
-        }
+        // 验证签章
+        let result = verify_digital_signature(&signed_data, DEFAULT_ID);
+        
+        assert!(result.is_ok(), "Verification should succeed: {:?}", result.err());
+        let result = result.unwrap();
+        
+        assert!(result.is_valid, "Signature should be valid");
+        assert_eq!(result.content, data.as_slice());
+        assert_eq!(result.total_signers_count(), 1);
     }
 
     #[test]
