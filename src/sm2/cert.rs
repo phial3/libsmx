@@ -36,7 +36,6 @@
 #![cfg(feature = "alloc")]
 #[cfg(feature = "alloc")]
 use alloc::string::String;
-#[cfg(feature = "alloc")]
 use alloc::vec;
 use alloc::vec::Vec;
 // chrono 用于标准时间处理

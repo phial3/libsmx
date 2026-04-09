@@ -1711,10 +1711,15 @@ mod tests {
 
         assert!(!signed_data.is_empty());
         assert_eq!(signed_data[0], 0x30);
-
-        // FIXME:
-        // 验证签名创建成功（暂时跳过详细验证，因为解析逻辑需要修复）
-        // 签名创建成功说明 Builder API 工作正常
+        // 详细验证签名创建成功说明 Builder API 工作正常
+        let result = verify_digital_signature(&signed_data, DEFAULT_ID)
+            .expect("Verification should complete");
+        assert!(result.is_valid);
+        assert_eq!(result.content, data.as_slice());
+        assert_eq!(result.total_signers_count(), 1);
+        assert_eq!(result.valid_signers_count(), 1);
+        assert!(!result.certificates.is_empty());
+        assert!(result.all_errors().is_empty());
     }
 
     #[test]
@@ -1734,27 +1739,24 @@ mod tests {
         let data = b"Test message for verification details";
 
         // 创建签名
-        let _signed_data = create_digital_signature(
+        let signed_data = create_digital_signature(
             data, &priv_key, &cert, DEFAULT_ID, &mut rng, false,
         )
         .expect("Signature creation should succeed");
 
-        // FIXME:
-        // 验证并检查结果详情（暂时跳过，因为解析逻辑需要修复）
-        // let result = verify_digital_signature(&signed_data, DEFAULT_ID)
-        //     .expect("Verification should complete");
+        // 验证并检查结果详情
+        let result = verify_digital_signature(&signed_data, DEFAULT_ID)
+            .expect("Verification should complete");
 
-        // assert!(result.is_valid);
-        // assert_eq!(result.content, data.as_slice());
-        // assert_eq!(result.total_signers_count(), 1);
-        // assert_eq!(result.valid_signers_count(), 1);
-        // assert!(!result.certificates.is_empty());
-        // assert!(result.all_errors().is_empty());
+        assert!(result.is_valid);
+        assert_eq!(result.content, data.as_slice());
+        assert_eq!(result.total_signers_count(), 1);
+        assert_eq!(result.valid_signers_count(), 1);
+        assert!(!result.certificates.is_empty());
+        assert!(result.all_errors().is_empty());
 
         // 检查签名者结果
-        // assert_eq!(result.signer_results.len(), 1);
-        // assert!(result.signer_results[0].is_valid);
-        
-        // 签名创建成功说明功能正常
+        assert_eq!(result.signer_results.len(), 1);
+        assert!(result.signer_results[0].is_valid);
     }
 }
