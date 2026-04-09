@@ -322,8 +322,8 @@ fn test_all_certificates() {
     // 测试证书套件 4: www.test4.com（PKCS#8 私钥，SM2 曲线，证书链文件）
     let result4 = test_certificate(
         "www.test4.com",
-        "data/www_test4_com/server_cert.pem",
-        "data/www_test4_com/server_key.pem",
+        "data/www_test4_com/www.test4.com_server_cert.pem",
+        "data/www_test4_com/www.test4.com_server_key.pem",
         "pkcs8",
     );
     results.push(("www.test4.com", result4));

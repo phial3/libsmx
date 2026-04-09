@@ -206,6 +206,78 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
     }
 }
 
+/// 创建 Subject Key Identifier 扩展
+///
+/// # 参数
+/// - `pub_key`: 公钥（65 字节的未压缩格式）
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_subject_key_identifier_extension(pub_key: &[u8; 65]) -> Extension {
+    // 使用公钥指纹作为 SKI
+    let ski = public_key_fingerprint(pub_key);
+    
+    Extension {
+        extn_id: crate::sm2::ID_CE_SUBJECT_KEY_IDENTIFIER,
+        critical: false,
+        extn_value: OctetString::new(ski).expect("Failed to create OctetString"),
+    }
+}
+
+/// 创建 Authority Key Identifier 扩展
+///
+/// # 参数
+/// - `ca_cert`: CA 证书
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Extension {
+    // 使用 CA 证书的公钥指纹作为 AKI
+    let ca_pub_key = ca_cert.subject_public_key_info
+        .subject_public_key
+        .as_bytes()
+        .unwrap();
+    let aki = public_key_fingerprint(ca_pub_key.try_into().unwrap());
+    
+    // AKI 是一个 SEQUENCE，包含 keyIdentifier [0] IMPLICIT OCTET STRING
+    // 编码为：30 <len> 80 <len> <20 bytes>
+    let mut aki_content = Vec::new();
+    aki_content.push(0x80); // [0] IMPLICIT tag
+    aki_content.push(aki.len() as u8);
+    aki_content.extend(&aki);
+    
+    // 包装为 SEQUENCE
+    let mut aki_seq = Vec::new();
+    aki_seq.push(0x30);
+    aki_seq.push(aki_content.len() as u8);
+    aki_seq.extend(aki_content);
+    
+    Extension {
+        extn_id: crate::sm2::ID_CE_AUTHORITY_KEY_IDENTIFIER,
+        critical: false,
+        extn_value: OctetString::new(aki_seq).expect("Failed to create OctetString"),
+    }
+}
+
+/// 创建 Netscape Comment 扩展
+///
+/// # 参数
+/// - `comment`: 注释文本
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_netscape_comment_extension(comment: &str) -> Extension {
+    // Netscape Comment OID: 2.16.840.1.113730.1.13
+    // 值是一个 IA5String 或 UTF8String
+    let comment_bytes = comment.as_bytes();
+    
+    Extension {
+        extn_id: ObjectIdentifier::new_unwrap("2.16.840.1.113730.1.13"),
+        critical: false,
+        extn_value: OctetString::new(comment_bytes.to_vec()).expect("Failed to create OctetString"),
+    }
+}
+
 /// 从 DER 数据解析扩展
 pub fn parse_extension_from_der(der: &[u8]) -> Result<Extension, Error> {
     Extension::from_der(der).map_err(|_| Error::CertificateParseError {
@@ -646,8 +718,7 @@ impl GmCertificate {
             if !extensions.is_empty() {
                 let mut ext_content = Vec::new();
                 for ext in extensions {
-                    let mut ext_bytes = Vec::new();
-                    ext.encode(&mut ext_bytes).unwrap();
+                    let ext_bytes = encode_extension(ext);
                     ext_content.extend(ext_bytes);
                 }
                 // 包装为 [3] 标签
@@ -905,6 +976,47 @@ pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
         .encode(&mut spki_bytes)
         .unwrap();
     tbs_bytes.extend(spki_bytes);
+
+    // 扩展（如果存在）
+    if let Some(extensions) = &cert.extensions {
+        if !extensions.is_empty() {
+            let mut ext_content = Vec::new();
+            for ext in extensions {
+                let ext_bytes = encode_extension(ext);
+                ext_content.extend(ext_bytes);
+            }
+            // 先将所有扩展包装在一个 SEQUENCE 中
+            let mut ext_seq = Vec::new();
+            ext_seq.push(0x30); // SEQUENCE tag
+            if ext_content.len() < 128 {
+                ext_seq.push(ext_content.len() as u8);
+            } else if ext_content.len() < 256 {
+                ext_seq.push(0x81);
+                ext_seq.push(ext_content.len() as u8);
+            } else {
+                ext_seq.push(0x82);
+                ext_seq.push((ext_content.len() >> 8) as u8);
+                ext_seq.push((ext_content.len() & 0xFF) as u8);
+            }
+            ext_seq.extend(ext_content);
+            
+            // 再将 SEQUENCE 包装为 [3] 标签
+            let mut ext_wrapper = Vec::new();
+            ext_wrapper.push(0xA3);
+            if ext_seq.len() < 128 {
+                ext_wrapper.push(ext_seq.len() as u8);
+            } else if ext_seq.len() < 256 {
+                ext_wrapper.push(0x81);
+                ext_wrapper.push(ext_seq.len() as u8);
+            } else {
+                ext_wrapper.push(0x82);
+                ext_wrapper.push((ext_seq.len() >> 8) as u8);
+                ext_wrapper.push((ext_seq.len() & 0xFF) as u8);
+            }
+            ext_wrapper.extend(ext_seq);
+            tbs_bytes.extend(ext_wrapper);
+        }
+    }
 
     // 现在构建外层 Certificate
     let mut cert_bytes = Vec::new();
@@ -2073,7 +2185,7 @@ pub fn generate_self_signed_cert<R: Rng>(
 ///
 /// # 返回
 /// DER 编码的字节数组
-fn encode_extension(ext: &Extension) -> Vec<u8> {
+pub fn encode_extension(ext: &Extension) -> Vec<u8> {
     let mut result = Vec::new();
     result.push(0x30); // SEQUENCE tag
 
@@ -3299,3 +3411,4 @@ mod tests {
         assert_eq!(parsed_validity, cert.validity);
     }
 }
+

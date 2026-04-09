@@ -33,7 +33,6 @@ use alloc::vec::Vec;
 use crate::error::Error;
 use crate::sm2::PrivateKey;
 use x509_cert::der::{Decode, Encode};
-use x509_cert::der::asn1::BitString;
 use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
@@ -442,6 +441,7 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 /// DER 格式不合法或公钥格式不合法时返回 `Error::InvalidPublicKey`
 pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
     // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
+    use x509_cert::der::asn1::BitString;
     let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> = SubjectPublicKeyInfo::from_der(der)
         .map_err(|_| Error::InvalidPublicKey)?;
 
