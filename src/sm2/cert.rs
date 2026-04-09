@@ -238,7 +238,7 @@ pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Ext
         .as_bytes()
         .unwrap();
     let aki = public_key_fingerprint(ca_pub_key.try_into().unwrap());
-    
+
     // AKI 是一个 SEQUENCE，包含 keyIdentifier [0] IMPLICIT OCTET STRING
     // 编码为：30 <len> 80 <len> <20 bytes>
     let mut aki_content = Vec::new();
@@ -259,31 +259,76 @@ pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Ext
     }
 }
 
-/// 创建 Netscape Comment 扩展
+/// 创建 Subject Alternative Name 扩展
 ///
 /// # 参数
-/// - `comment`: 注释文本
+/// - `names`: GeneralName 列表
 ///
 /// # 返回
 /// x509-cert 的 Extension 类型
-pub fn create_netscape_comment_extension(comment: &str) -> Extension {
-    // Netscape Comment OID: 2.16.840.1.113730.1.13
-    // 值是一个 IA5String 或 UTF8String
-    let comment_bytes = comment.as_bytes();
+pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::name::GeneralName]) -> Extension {
+    use x509_cert::ext::pkix::name::GeneralName;
+    
+    // SAN 是一个 SEQUENCE OF GeneralName
+    // 使用 x509_cert 的 GeneralName 类型直接编码
+    let mut san_content = Vec::new();
+    for name in names {
+        match name {
+            GeneralName::Rfc822Name(ia5_string) => {
+                // [1] IMPLICIT IA5String
+                let bytes = ia5_string.as_bytes();
+                san_content.push(0x81); // Context tag [1]
+                san_content.push(bytes.len() as u8);
+                san_content.extend_from_slice(bytes);
+            }
+            GeneralName::DnsName(ia5_string) => {
+                // [2] IMPLICIT IA5String
+                let bytes = ia5_string.as_bytes();
+                san_content.push(0x82); // Context tag [2]
+                san_content.push(bytes.len() as u8);
+                san_content.extend_from_slice(bytes);
+            }
+            GeneralName::UniformResourceIdentifier(ia5_string) => {
+                // [6] IMPLICIT IA5String
+                let bytes = ia5_string.as_bytes();
+                san_content.push(0x86); // Context tag [6]
+                san_content.push(bytes.len() as u8);
+                san_content.extend_from_slice(bytes);
+            }
+            GeneralName::IpAddress(octet_string) => {
+                // [7] IMPLICIT OCTET STRING
+                let bytes = octet_string.as_bytes();
+                san_content.push(0x87); // Context tag [7]
+                san_content.push(bytes.len() as u8);
+                san_content.extend_from_slice(bytes);
+            }
+            _ => {
+                // 其他类型暂不支持
+                continue;
+            }
+        }
+    }
+    
+    // 包装为 SEQUENCE
+    let mut san_seq = Vec::new();
+    san_seq.push(0x30); // SEQUENCE tag
+    if san_content.len() < 128 {
+        san_seq.push(san_content.len() as u8);
+    } else if san_content.len() < 256 {
+        san_seq.push(0x81);
+        san_seq.push(san_content.len() as u8);
+    } else {
+        san_seq.push(0x82);
+        san_seq.push((san_content.len() >> 8) as u8);
+        san_seq.push((san_content.len() & 0xFF) as u8);
+    }
+    san_seq.extend(san_content);
     
     Extension {
-        extn_id: ObjectIdentifier::new_unwrap("2.16.840.1.113730.1.13"),
+        extn_id: crate::sm2::ID_CE_SUBJECT_ALT_NAME,
         critical: false,
-        extn_value: OctetString::new(comment_bytes.to_vec()).expect("Failed to create OctetString"),
+        extn_value: OctetString::new(san_seq).expect("Failed to create OctetString"),
     }
-}
-
-/// 从 DER 数据解析扩展
-pub fn parse_extension_from_der(der: &[u8]) -> Result<Extension, Error> {
-    Extension::from_der(der).map_err(|_| Error::CertificateParseError {
-        field: "extensions",
-        reason: "Failed to parse extension DER",
-    })
 }
 
 impl GmCertificate {
