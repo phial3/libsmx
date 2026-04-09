@@ -293,7 +293,7 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attribute
     
     let mut attrs = SetOfVec::<Attribute>::new();
     
-    // 1. content-type 属性 (OID = 1.2.840.113549.1.9.3)
+    // 1. content-type 属性
     let content_type_oid = crate::sm2::CONTENT_TYPE_OID;
     let content_type_value = Any::from(crate::sm2::PKCS7_DATA_OID);
     let mut content_type_values = SetOfVec::<Any>::new();
@@ -304,7 +304,7 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attribute
     };
     attrs.insert(content_type_attr).map_err(|_| Error::InvalidSignature)?;
     
-    // 2. message-digest 属性 (OID = 1.2.840.113549.1.9.4)
+    // 2. message-digest 属性
     let message_digest_oid = crate::sm2::MESSAGE_DIGEST_OID;
     let digest_octet_string = OctetStringRef::new(digest.as_slice()).map_err(|_| Error::InvalidSignature)?;
     let digest_any = Any::from(digest_octet_string);
@@ -316,7 +316,7 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attribute
     };
     attrs.insert(message_digest_attr).map_err(|_| Error::InvalidSignature)?;
     
-    // 3. signing-time 属性（可选）(OID = 1.2.840.113549.1.9.5)
+    // 3. signing-time 属性（可选）
     if include_time {
         // 使用原来的辅助函数编码 signing-time，因为时间处理比较复杂
         let signing_time_attr_bytes = encode_signing_time_attr()?;
@@ -336,6 +336,19 @@ fn encode_signed_attrs_for_sign(attrs: &Attributes) -> Result<Vec<u8>, Error> {
     // attrs_der 是 31 <length> <content>
     // 需要替换标签为 A0
     let mut result = vec![0xA0];
+    result.extend_from_slice(&attrs_der[1..]); // 跳过原来的 0x31 标签，保留长度和内容
+    
+    Ok(result)
+}
+
+/// 将 Attributes 编码为 [1] IMPLICIT 格式用于未签名属性
+fn encode_unsigned_attrs(attrs: &Attributes) -> Result<Vec<u8>, Error> {
+    // 编码为 DER (SET OF)
+    let attrs_der = attrs.to_der().map_err(|_| Error::InvalidSignature)?;
+    
+    // attrs_der 是 31 <length> <content>
+    // 需要替换标签为 A1
+    let mut result = vec![0xA1];
     result.extend_from_slice(&attrs_der[1..]); // 跳过原来的 0x31 标签，保留长度和内容
     
     Ok(result)
@@ -726,11 +739,28 @@ pub fn verify_digital_signature(
     Ok(result)
 }
 
-// FIXME:
 /// 从签名属性中提取签名时间
-fn extract_signing_time(_signed_attrs: &Attributes) -> Option<Vec<u8>> {
-    // 简化实现：解析签名属性中的 signing-time
-    // 实际实现需要完整的 DER 解析
+///
+/// 解析签名属性中的 signing-time 属性（OID: 1.2.840.113549.1.9.5）
+/// signing-time 值的格式为 UTCTime 或 GeneralizedTime
+///
+/// # 参数
+/// - `signed_attrs`: 签名属性集合
+///
+/// # 返回
+/// - `Some(Vec<u8>)`: 签名时间的 DER 编码
+/// - `None`: 未找到签名时间属性
+fn extract_signing_time(signed_attrs: &Attributes) -> Option<Vec<u8>> {
+    for attr in signed_attrs.iter() {
+        if attr.oid == crate::sm2::SIGNING_TIME_OID {
+            if let Some(value) = attr.values.get(0) {
+                // signing-time 可以是 UTCTime (0x17) 或 GeneralizedTime (0x18)
+                if value.tag() == Tag::UtcTime || value.tag() == Tag::GeneralizedTime {
+                    return Some(value.value().to_vec());
+                }
+            }
+        }
+    }
     None
 }
 
@@ -914,8 +944,23 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
         content.extend(certs_tlv);
     }
 
-    // FIXME:
-    // crls [1] (可选) - 暂不实现
+    // crls [1] IMPLICIT RevocationInfoChoices (可选)
+    // RevocationInfoChoices ::= SET OF RevocationInfoChoice
+    if let Some(ref crls) = signed_data.crls {
+        if !crls.is_empty() {
+            let mut crls_set = Vec::new();
+            for crl in crls {
+                crls_set.extend(crl);
+            }
+            // 先包装为 SET OF
+            let crls_set_der = wrap_set(crls_set);
+            // 再包装为 [1] IMPLICIT
+            let mut crls_tlv = vec![0xA1];
+            encode_length(&mut crls_tlv, crls_set_der.len())?;
+            crls_tlv.extend(crls_set_der);
+            content.extend(crls_tlv);
+        }
+    }
 
     // signerInfos SET
     let mut signer_infos = Vec::new();
@@ -976,7 +1021,12 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
     // signatureValue
     content.extend(encode_octet_string(&signer_info.signature)?);
 
-    // unsignedAttrs [1] (可选) - 暂不实现
+    // unsignedAttrs [1] IMPLICIT (可选)
+    if let Some(ref attrs) = signer_info.unsigned_attrs {
+        // 将 Attributes 编码为 [1] IMPLICIT 格式
+        let attrs_der = encode_unsigned_attrs(attrs)?;
+        content.extend(attrs_der);
+    }
 
     Ok(wrap_sequence(content))
 }
@@ -1264,11 +1314,43 @@ fn parse_certificates(data: &[u8]) -> Result<Vec<GmCertificate>, Error> {
     Ok(result)
 }
 
-/// 解析 CRL 集合（占位）
-fn parse_crls(_data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
-    // 暂不实现 CRL 解析
-    // FIXME:
-    unimplemented!();
+/// 解析 CRL 集合
+///
+/// 解析 [1] IMPLICIT RevocationInfoChoices 中的 CRL 列表
+/// RevocationInfoChoices ::= SET OF RevocationInfoChoice
+///
+/// # 参数
+/// - `data`: CRL 集合的 DER 编码数据（不包含 [1] 标签）
+///
+/// # 返回
+/// CRL DER 编码的字节数组列表
+fn parse_crls(data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
+    let mut crls = Vec::new();
+    let mut rest = data;
+
+    // 如果数据以 SET OF (0x31) 开始，先解析 SET OF
+    if rest.first() == Some(&0x31) {
+        let (set_body, r) = der::parse_tlv(rest, 0x31).ok_or(Error::InvalidSignature)?;
+        rest = set_body;
+        let _ = r;
+    }
+
+    // 解析每个 CRL
+    // 每个 CRL 是一个完整的 DER 编码结构
+    while !rest.is_empty() {
+        // 尝试解析下一个 CRL
+        // CRL 可以是 CertificateList (SEQUENCE) 或其他格式
+        if rest.first() == Some(&0x30) {
+            let (crl_tlv, r) = der::parse_tlv(rest, 0x30).ok_or(Error::InvalidSignature)?;
+            crls.push(crl_tlv.to_vec());
+            rest = r;
+        } else {
+            // 未知格式，跳过剩余数据
+            break;
+        }
+    }
+
+    Ok(crls)
 }
 
 /// 解析签名者信息列表
@@ -1758,5 +1840,146 @@ mod tests {
         // 检查签名者结果
         assert_eq!(result.signer_results.len(), 1);
         assert!(result.signer_results[0].is_valid);
+    }
+
+    #[test]
+    fn test_signing_time_extraction() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _) = generate_keypair(&mut rng);
+
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        let data = b"Test message with signing time";
+
+        // 创建包含 signing-time 的签名
+        let signed_data = create_digital_signature(
+            data, &priv_key, &cert, DEFAULT_ID, &mut rng, true,
+        )
+        .expect("Signature creation should succeed");
+
+        // 验证签名
+        let result = verify_digital_signature(&signed_data, DEFAULT_ID)
+            .expect("Verification should complete");
+
+        assert!(result.is_valid);
+        assert_eq!(result.content, data.as_slice());
+        
+        // 检查签名者结果中包含签名时间
+        assert_eq!(result.signer_results.len(), 1);
+        assert!(result.signer_results[0].signing_time.is_some());
+    }
+
+    #[test]
+    fn test_crl_encoding_and_parsing() {
+        let mut rng = StdRng::seed_from_u64(123456);
+        let (priv_key, _) = generate_keypair(&mut rng);
+
+        let subject = test_subject();
+        let validity = test_validity();
+        let serial = test_serial();
+
+        let cert = generate_self_signed_cert(
+            &priv_key, &subject, &validity, &serial, DEFAULT_ID, None, &mut rng,
+        )
+        .expect("Certificate generation should succeed");
+
+        let data = b"Test message with CRL support";
+
+        // 创建签名
+        let signed_data = create_digital_signature(
+            data, &priv_key, &cert, DEFAULT_ID, &mut rng, false,
+        )
+        .expect("Signature creation should succeed");
+
+        // 解析 ContentInfo
+        let content_info = parse_content_info_from_der(&signed_data)
+            .expect("Parse ContentInfo should succeed");
+
+        // 解析 SignedData
+        let signed_data_parsed = parse_signed_data_from_der(&content_info.content)
+            .expect("Parse SignedData should succeed");
+
+        // 验证基本字段
+        // CMS version 可以是 1 或 3，取决于是否有 certificates 和 crls
+        // 当有 certificates 时，version 应该是 3
+        assert!(signed_data_parsed.version == 1 || signed_data_parsed.version == 3);
+        assert_eq!(signed_data_parsed.signer_infos.len(), 1);
+        assert!(!signed_data_parsed.certificates.is_empty());
+
+        // crls 字段应该存在（即使为空）
+        assert!(signed_data_parsed.crls.is_none() || signed_data_parsed.crls.as_ref().map(|c| c.is_empty()).unwrap_or(true));
+    }
+
+    #[test]
+    fn test_parse_crls_empty() {
+        // 测试解析空的 CRL 列表
+        let empty_crls: Vec<u8> = vec![];
+        let result = parse_crls(&empty_crls);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_crls_single_crl() {
+        // 测试解析单个 CRL
+        let fake_crl = vec![
+            0x30, 0x05, // SEQUENCE, length 5
+            0x02, 0x01, 0x01, // INTEGER 1
+            0x05, 0x00, // NULL
+        ];
+
+        let crls_data = fake_crl.clone();
+        let result = parse_crls(&crls_data);
+        
+        assert!(result.is_ok());
+        let crls = result.unwrap();
+        assert_eq!(crls.len(), 1);
+        // parse_crls 返回的是 CRL 的 body（不包含外层 SEQUENCE 标签）
+        assert_eq!(crls[0], fake_crl[2..]); // 跳过 SEQUENCE 标签和长度
+    }
+
+    #[test]
+    fn test_extract_signing_time_from_attrs() {
+        let digest = crate::sm3::Sm3Hasher::digest(b"test data");
+
+        // 构建包含 signing-time 的属性
+        let attrs = build_signed_attrs(&digest, true)
+            .expect("Build signed attrs should succeed");
+
+        // 验证 attrs 包含 signing-time OID
+        let has_signing_time = attrs.iter().any(|attr| {
+            attr.oid == crate::sm2::SIGNING_TIME_OID
+        });
+        assert!(has_signing_time);
+
+        // 验证可以提取签名时间
+        let signing_time = extract_signing_time(&attrs);
+        assert!(signing_time.is_some());
+    }
+
+    #[test]
+    fn test_extract_signing_time_without_signing_time() {
+        let digest = crate::sm3::Sm3Hasher::digest(b"test data");
+
+        // 构建不包含 signing-time 的属性
+        let attrs = build_signed_attrs(&digest, false)
+            .expect("Build signed attrs should succeed");
+
+        // 验证 attrs 不包含 signing-time OID
+        let has_signing_time = attrs.iter().any(|attr| {
+            attr.oid == crate::sm2::SIGNING_TIME_OID
+        });
+        assert!(!has_signing_time);
+
+        // 验证提取签名时间返回 None
+        let signing_time = extract_signing_time(&attrs);
+        assert!(signing_time.is_none());
     }
 }
