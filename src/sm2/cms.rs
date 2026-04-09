@@ -1276,8 +1276,12 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
         let (content_tlv, r2) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
         let (octet, _) = der::parse_tlv(content_tlv, 0x04).ok_or_else(err)?;
         content = Some(octet.to_vec());
-        rest = r2;  // 更新 rest
+        #[allow(unused_assignments)]
+        {
+            rest = r2;  // 更新 rest，即使后面不使用也保持代码一致性
+        }
     }
+    // 注意：如果 content 不存在，rest 保持不变，这是正确的
 
     Ok(EncapsulatedContentInfo {
         content_type: ObjectIdentifier::from_bytes(content_type).map_err(|_| {

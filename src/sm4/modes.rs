@@ -1639,9 +1639,7 @@ fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
     } else {
         // 不完整块：padding 并 XOR K2
         let mut last_block = [0u8; 16];
-        for i in 0..remaining {
-            last_block[i] = data[last_start + i];
-        }
+        last_block[..remaining].copy_from_slice(&data[last_start..(last_start + remaining)]);
         last_block[remaining] = 0x80; // padding
         
         for i in 0..16 {

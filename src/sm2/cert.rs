@@ -2196,7 +2196,7 @@ pub fn generate_self_signed_cert<R: Rng>(
         serial_number: serial_number.clone(),
         signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
         issuer: issuer_name.clone(),
-        validity: validity.clone(),
+        validity: *validity,
         subject: subject.clone(),
         subject_public_key_info: spki,
         extensions: extensions.clone(),
@@ -2214,7 +2214,7 @@ pub fn generate_self_signed_cert<R: Rng>(
         serial_number: serial_number.clone(),
         signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
         issuer: issuer_name.clone(),
-        validity: validity.clone(),
+        validity: *validity,
         subject: subject.clone(),
         subject_public_key_info: cert_without_sig.subject_public_key_info,
         extensions,
@@ -2289,6 +2289,7 @@ pub fn encode_extension(ext: &Extension) -> Vec<u8> {
 ///
 /// # 返回
 /// SEQUENCE 编码的字节数组
+#[warn(dead_code)]
 fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
     let mut result = Vec::with_capacity(2 + content.len());
     result.push(0x30);
@@ -2351,7 +2352,7 @@ pub fn issue_certificate<R: Rng>(
         serial_number: serial_number.clone(),
         signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
         issuer: issuer_name.clone(),
-        validity: validity.clone(),
+        validity: *validity,
         subject: subject.clone(),
         subject_public_key_info: spki.clone(),
         extensions: extensions.clone(),
@@ -2369,7 +2370,7 @@ pub fn issue_certificate<R: Rng>(
         serial_number: serial_number.clone(),
         signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
         issuer: issuer_name.clone(),
-        validity: validity.clone(),
+        validity: *validity,
         subject: subject.clone(),
         subject_public_key_info: spki,
         extensions,
