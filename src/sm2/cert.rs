@@ -2123,10 +2123,11 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 ///
 /// # 参数
 /// - `priv_key`: 私钥（用于签名和提取公钥）
-/// - `subject`: 主体名称 DER 编码
-/// - `validity`: 有效期 DER 编码
-/// - `serial_number`: 证书序列号
+/// - `subject`: 证书主体名称（`Name` 类型）
+/// - `validity`: 证书有效期（`Validity` 类型）
+/// - `serial_number`: 证书序列号（`SerialNumber` 类型）
 /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
+/// - `extensions`: 证书扩展列表（可选）
 /// - `rng`: 随机数生成器
 ///
 /// # 返回
@@ -2136,23 +2137,38 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 /// # 示例
 ///
 /// ```ignore
-/// use libsmx::sm2::{generate_keypair, cert};
+/// use libsmx::sm2::{generate_keypair, cert, build_x500_name, X500Attribute, X500AttributeType};
+/// use libsmx::sm2::cert::Validity;
+/// use x509_cert::time::Time;
 /// use rand::rngs::StdRng;
 /// use rand::SeedableRng;
+/// use std::time::{SystemTime, Duration};
 ///
 /// let mut rng = StdRng::seed_from_u64(123456);
 /// let (priv_key, _) = generate_keypair(&mut rng);
 ///
-/// let subject = vec![0x31, 0x00]; // 简单的 X.500 Name
-/// let validity = b"\x30\x1e\x17\x0d3235303130313030303030305a\x17\x0d3435303130313030303030305a".to_vec();
-/// let serial = vec![0x01];
+/// // 构建主体名称
+/// let subject = build_x500_name(&[
+///     X500Attribute::new(X500AttributeType::Organization, "Test Org"),
+///     X500Attribute::new(X500AttributeType::CommonName, "Test Server"),
+/// ]);
 ///
-/// let cert = cert::generate_self_signed_cert(
+/// // 构建有效期
+/// let not_before = Time::try_from(SystemTime::now()).unwrap();
+/// let not_after = Time::try_from(SystemTime::now() + Duration::from_secs(365 * 24 * 3600)).unwrap();
+/// let validity = Validity::new(not_before, not_after);
+///
+/// // 序列号
+/// let serial = SerialNumber::from(1u32);
+///
+/// // 生成自签名证书
+/// let cert = generate_self_signed_cert(
 ///     &priv_key,
 ///     &subject,
 ///     &validity,
 ///     &serial,
 ///     b"1234567812345678",
+///     None, // 无扩展
 ///     &mut rng,
 /// ).expect("Failed to generate certificate");
 /// ```
@@ -2296,16 +2312,16 @@ fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
     result
 }
 
-/// 使用 CA 证书签发新证书
+/// 使用 CA 证书和私钥为终端实体签发新证书。
 ///
 /// # 参数
 /// - `ca_cert`: CA 证书（包含 CA 公钥和主体信息）
 /// - `ca_priv_key`: CA 私钥（用于签名）
-/// - `subject`: 新证书的主体名称
+/// - `subject`: 新证书的主体名称（`Name` 类型）
 /// - `subject_pub_key`: 新证书的公钥（65 字节未压缩格式）
-/// - `validity`: 新证书的有效期
-/// - `serial_number`: 新证书的序列号
-/// - `ca_id`: CA 的 SM2 签名 ID
+/// - `validity`: 新证书的有效期（`Validity` 类型）
+/// - `serial_number`: 新证书的序列号（`SerialNumber` 类型）
+/// - `ca_id`: CA 的 SM2 签名 ID（通常为 "1234567812345678"）
 /// - `extensions`: 新证书的扩展列表（可选）
 /// - `rng`: 随机数生成器
 ///

@@ -216,11 +216,16 @@ impl VerificationResult {
 /// - `cert`: 签名者证书
 /// - `id`: SM2 签名 ID
 /// - `rng`: 随机数生成器
-/// - `include_time`: 是否包含签名时间
+/// - `include_time`: 是否包含签名时间（UTC 时间，符合 X.509/CMS 标准）
 ///
 /// # 返回
 /// - `Ok(Vec<u8>)`: DER 编码的 ContentInfo
 /// - `Err(Error)`: 签名失败
+///
+/// # 注意
+///
+/// 签名时间使用 UTC 时间（UTCTime 格式），符合 X.509 和 CMS 标准。
+/// 显示时可根据本地时区进行转换。
 pub fn create_digital_signature<R: Rng>(
     data: &[u8],
     priv_key: &PrivateKey,
@@ -353,6 +358,17 @@ fn encode_unsigned_attrs(attrs: &Attributes) -> Result<Vec<u8>, Error> {
 
 
 /// 编码 signing-time 属性
+///
+/// 生成包含当前 UTC 时间的 signing-time 属性（OID: 1.2.840.113549.1.9.5）。
+///
+/// # 返回
+/// - `Ok(Vec<u8>)`: DER 编码的 signing-time 属性
+/// - `Err(Error)`: 编码失败
+///
+/// # 注意
+///
+/// 使用 `SystemTime::now()` 获取 UTC 时间，符合 X.509 和 CMS 标准。
+/// 时间格式为 UTCTime（YYMMDDHHMMSSZ）。
 fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
     use std::time::SystemTime;
 
@@ -399,6 +415,8 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
 /// # use rand::rngs::StdRng;
 /// # use rand::SeedableRng;
 /// # use std::time::{Duration, SystemTime};
+/// # use libsmx::sm2::cert::Validity;
+/// # use x509_cert::time::Time;
 /// let mut rng = StdRng::seed_from_u64(123456);
 /// let (priv_key, _pub_key) = generate_keypair(&mut rng);
 ///
@@ -664,14 +682,19 @@ impl Default for CmsVerifier {
 /// 2. 验证每个签名者的签名
 /// 3. 验证签名属性中的摘要
 /// 4. 验证内容摘要
+/// 5. 提取签名时间（如果存在）
 ///
 /// # 参数
 /// - `signed_data_der`: DER 编码的 ContentInfo
-/// - `id`: SM2 签名 ID
+/// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
 ///
 /// # 返回
-/// - `Ok(VerificationResult)`: 验证结果
-/// - `Err(Error)`: 解析失败
+/// - `Ok(VerificationResult)`: 验证结果（包含签名者信息、证书列表、签名时间等）
+/// - `Err(Error)`: 解析失败或验证失败
+///
+/// # 注意
+///
+/// 返回的签名时间为 UTC 时间，显示时可根据本地时区转换。
 pub fn verify_digital_signature(
     signed_data_der: &[u8],
     id: &[u8],
