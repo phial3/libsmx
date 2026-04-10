@@ -187,7 +187,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             println!("\n❌ 国密证书转换为 X509 证书失败：{}", e);
             println!("   错误类型：{:?}", e);
             println!("\n   诊断信息:");
-            let cert_der = libsmx::sm2::cert::generate_gm_certificate(&cert);
+            let cert_der = libsmx::sm2::cert::generate_gm_certificate_der(&cert);
             println!("   - 国密证书 DER 长度：{} 字节", cert_der.len());
             println!(
                 "   - 国密证书 DER (前 50 字节): {:02x?}",
@@ -227,11 +227,11 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
     println!("验证往返转换后证书信息一致性...");
     
     // 生成国密证书的 DER 编码
-    let gm_cert_der = libsmx::sm2::cert::generate_gm_certificate(&cert);
+    let gm_cert_der = libsmx::sm2::cert::generate_gm_certificate_der(&cert);
     // 生成 X509 证书的 DER 编码（从转换后的 X509 证书生成）
     let x509_cert_der = x509_cert.to_der().unwrap();
     // 生成往返转换后的国密证书的 DER 编码
-    let gm_cert_back_der = libsmx::sm2::cert::generate_gm_certificate(&gm_cert_back);
+    let gm_cert_back_der = libsmx::sm2::cert::generate_gm_certificate_der(&gm_cert_back);
     
     if cert.serial_number == gm_cert_back.serial_number
         && cert.issuer == gm_cert_back.issuer

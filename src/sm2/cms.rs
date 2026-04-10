@@ -1301,7 +1301,7 @@ fn parse_certificates(data: &[u8]) -> Result<Vec<GmCertificate>, Error> {
 
     while !rest.is_empty() {
         if let Some((cert_der, r)) = der::parse_tlv_any_full(rest) {
-            match crate::sm2::cert::parse_gm_certificate(cert_der) {
+            match crate::sm2::cert::parse_gm_certificate_der(cert_der) {
                 Ok(cert) => {
                     result.push(cert);
                 }

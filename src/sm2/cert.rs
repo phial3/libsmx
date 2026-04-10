@@ -34,10 +34,10 @@
 //! ```
 
 #![cfg(feature = "alloc")]
-#[cfg(feature = "alloc")]
+
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
+
 // chrono 用于标准时间处理
 #[cfg(feature = "std")]
 use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
@@ -352,7 +352,7 @@ impl GmCertificate {
     /// let cert = GmCertificate::from_der(&der_bytes).expect("Valid certificate");
     /// ```
     pub fn from_der(der: &[u8]) -> Result<Self, Error> {
-        parse_gm_certificate(der)
+        parse_gm_certificate_der(der)
     }
 
     /// 将证书编码为 DER 格式
@@ -362,7 +362,7 @@ impl GmCertificate {
     /// # 返回
     /// DER 编码的证书字节数组
     pub fn to_der(&self) -> Vec<u8> {
-        generate_gm_certificate(self)
+        generate_gm_certificate_der(self)
     }
 
     /// 从 PEM 格式解析证书
@@ -435,66 +435,6 @@ impl GmCertificate {
     /// - `Err(Error::InvalidCertificate)`: 提取失败（格式错误或不是 SM2 公钥）
     pub fn extract_sm2_public_key(&self) -> Result<[u8; 65], Error> {
         extract_sm2_public_key(self)
-    }
-
-    /// 获取主体公钥信息的 DER 编码
-    ///
-    /// 将 subject_public_key_info 字段编码为 DER 格式。
-    ///
-    /// # 返回
-    /// DER 编码的主体公钥信息
-    pub fn subject_public_key_info_der(&self) -> Vec<u8> {
-        self.subject_public_key_info.to_der().unwrap()
-    }
-
-    /// 获取签发者的 DER 编码
-    ///
-    /// 将 issuer 字段编码为 DER 格式。
-    ///
-    /// # 返回
-    /// DER 编码的签发者
-    pub fn issuer_der(&self) -> Vec<u8> {
-        self.issuer.to_der().unwrap()
-    }
-
-    /// 获取主体的 DER 编码
-    ///
-    /// 将 subject 字段编码为 DER 格式。
-    ///
-    /// # 返回
-    /// DER 编码的主体
-    pub fn subject_der(&self) -> Vec<u8> {
-        self.subject.to_der().unwrap()
-    }
-
-    /// 获取序列号的 DER 编码
-    ///
-    /// 将 serial_number 字段编码为 DER 格式。
-    ///
-    /// # 返回
-    /// DER 编码的序列号
-    pub fn serial_number_der(&self) -> Vec<u8> {
-        self.serial_number.to_der().unwrap()
-    }
-
-    /// 获取签名算法的 DER 编码
-    ///
-    /// 将 signature_algorithm 字段编码为 DER 格式。
-    ///
-    /// # 返回
-    /// DER 编码的签名算法
-    pub fn signature_algorithm_der(&self) -> Vec<u8> {
-        self.signature_algorithm.to_der().unwrap()
-    }
-
-    /// 获取有效期的 DER 编码
-    ///
-    /// 将 validity 字段编码为 DER 格式。
-    ///
-    /// # 返回
-    /// DER 编码的有效期
-    pub fn validity_der(&self) -> Vec<u8> {
-        self.validity.to_der().unwrap()
     }
 
     /// 验证证书有效期
@@ -833,7 +773,7 @@ impl GmCertificate {
 ///
 /// 此函数执行基本的 DER 解析，不验证签名的有效性。
 /// 如需验证签名，请使用 `verify_self_signed_cert` 或 `verify_tbs_certificate_signature`。
-pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
+pub fn parse_gm_certificate_der(der: &[u8]) -> Result<GmCertificate, Error> {
     let err = || Error::InvalidCertificate;
 
     // 解析外层 SEQUENCE
@@ -967,7 +907,7 @@ pub fn parse_gm_certificate(der: &[u8]) -> Result<GmCertificate, Error> {
 ///
 /// 此函数仅执行 DER 编码，不生成签名。
 /// 签名值必须预先计算并存储在 `cert.signature` 中。
-pub fn generate_gm_certificate(cert: &GmCertificate) -> Vec<u8> {
+pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     // 构建 TBSCertificate 的内容
     let mut tbs_bytes = Vec::new();
 
@@ -1175,7 +1115,6 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
 /// 用于构建证书的 issuer 和 subject 字段。
 ///
 /// 包含 RFC 5280 和 X.500 标准中定义的常用属性。
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq)]
 pub enum X500AttributeType {
     /// CN (Common Name) (2.5.4.3) - 常用名称
@@ -1265,7 +1204,6 @@ pub enum X500AttributeType {
     BusinessCategory,
 }
 
-#[cfg(feature = "alloc")]
 impl X500AttributeType {
     /// 获取属性类型的 OID
     pub fn oid(&self) -> ObjectIdentifier {
@@ -1301,7 +1239,6 @@ impl X500AttributeType {
 /// X.500 名称属性
 ///
 /// 表示一个 X.500 可分辨名称的属性项。
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct X500Attribute {
     /// 属性类型
@@ -1310,7 +1247,6 @@ pub struct X500Attribute {
     pub value: String,
 }
 
-#[cfg(feature = "alloc")]
 impl X500Attribute {
     /// 创建一个新的 X.500 属性
     pub fn new(attr_type: X500AttributeType, value: impl Into<String>) -> Self {
@@ -1392,7 +1328,6 @@ impl X500Attribute {
 ///    X500Attribute::new(X500AttributeType::EmailAddress, "admin@test.com"),
 /// ]);
 /// ```
-#[cfg(feature = "alloc")]
 pub fn build_x500_name(attributes: &[X500Attribute]) -> Name {
     let mut name_der = Vec::with_capacity(64);
 
@@ -1714,6 +1649,7 @@ impl CertificateBuilder {
 
             // 包装为 [3] EXPLICIT SEQUENCE OF Extension
             let ext_seq = wrap_sequence(ext_content);
+            use alloc::vec;
             let mut tagged_ext = vec![0xA3];
             let len = ext_seq.len();
             if len < 128 {
@@ -1786,7 +1722,7 @@ impl Default for CertificateBuilder {
 /// - `Err(Error::InvalidCertificate)`: 解析失败
 pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
     let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
-    parse_gm_certificate(&der)
+    parse_gm_certificate_der(&der)
 }
 
 /// 生成 PEM 格式的国密证书
@@ -1800,7 +1736,7 @@ pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
 /// - `Ok(Vec<u8>)`: PEM 编码的证书数据
 /// - `Err(Error::InvalidCertificate)`: 编码失败
 pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Error> {
-    let der = generate_gm_certificate(cert);
+    let der = generate_gm_certificate_der(cert);
     let pem = encode_string("CERTIFICATE", Default::default(), &der)
         .map_err(|_| Error::InvalidCertificate)?;
     Ok(pem.as_bytes().to_vec())
@@ -1826,12 +1762,11 @@ pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Erro
 /// 此转换通过 DER 编码作为中间格式实现。
 /// 注意：标准 X.509 证书和 GM/T 证书可能使用不同的 OID（如签名算法 OID），
 /// 转换后的证书可能在某些场景下不兼容。
-#[cfg(feature = "alloc")]
 pub fn x509_to_gm_certificate(cert: &Certificate) -> Result<GmCertificate, Error> {
     // 将 Certificate 编码为 DER
     let der = cert.to_der().map_err(|_| Error::InvalidCertificate)?;
     // 使用国密证书解析器解析
-    parse_gm_certificate(&der)
+    parse_gm_certificate_der(&der)
 }
 
 /// 将 GmCertificate 转换为 x509_cert::Certificate
@@ -1850,10 +1785,9 @@ pub fn x509_to_gm_certificate(cert: &Certificate) -> Result<GmCertificate, Error
 /// 此转换通过 DER 编码作为中间格式实现。
 /// 注意：GM/T 证书和标准 X.509 证书可能使用不同的 OID（如签名算法 OID），
 /// 转换可能失败或转换后的证书可能不兼容某些标准 X.509 工具。
-#[cfg(feature = "alloc")]
 pub fn gm_to_x509_certificate(cert: &GmCertificate) -> Result<Certificate, Error> {
     // 先将 GmCertificate 编码为 DER
-    let der = generate_gm_certificate(cert);
+    let der = generate_gm_certificate_der(cert);
     // 注意：这可能失败，因为 GM/T 证书可能包含标准 X.509 不支持的 OID
     Certificate::from_der(&der).map_err(|_| Error::InvalidCertificate)
 }
@@ -2387,6 +2321,7 @@ mod tests {
     use super::*;
     use crate::sm2::generate_keypair;
     use crate::sm2::DEFAULT_ID;
+    use alloc::vec;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -3098,7 +3033,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gm_x509_certificate_compatibility() {
+    fn test_gm_x509_certificate_conversion() {
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
@@ -3126,7 +3061,7 @@ mod tests {
         .expect("Certificate generation should succeed");
 
         // 测试 DER 编码
-        let der = generate_gm_certificate(&gm_cert);
+        let der = generate_gm_certificate_der(&gm_cert);
 
         // 首先尝试使用 x509_cert::Certificate::from_der 解析
         let x509_direct_result = Certificate::from_der(&der);
@@ -3140,7 +3075,7 @@ mod tests {
         }
 
         // 测试 parse_gm_certificate 能否解析
-        let parsed_gm_cert = match parse_gm_certificate(&der) {
+        let parsed_gm_cert = match parse_gm_certificate_der(&der) {
             Ok(c) => c,
             Err(e) => {
                 panic!(
@@ -3187,68 +3122,7 @@ mod tests {
     }
 
     #[test]
-    fn test_eq_x509_certificate_method() {
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
-        let mut rng = StdRng::seed_from_u64(123456);
-        let (priv_key, _) = generate_keypair(&mut rng);
-
-        let issuer = build_test_issuer("Test CA");
-        let _subject = build_test_subject("Test User");
-        let serial = build_test_serial(12345);
-        let validity = test_validity();
-
-        // 生成自签名证书
-        let gm_cert = generate_self_signed_cert(
-            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
-        )
-        .expect("Certificate generation should succeed");
-
-        // 转换为 x509_cert::Certificate
-        let x509_cert = gm_to_x509_certificate(&gm_cert)
-            .expect("Conversion to x509_cert::Certificate should succeed");
-
-        // 测试 eq_x509_certificate 方法
-        assert!(
-            gm_cert.eq_x509_certificate(&x509_cert),
-            "GmCertificate should be equal to x509_cert::Certificate"
-        );
-
-        // 测试字段访问方法
-        // serial_number 是 SerialNumber 类型，验证 DER 编码正确
-        let serial_der = gm_cert.serial_number_der();
-        assert!(!serial_der.is_empty());
-
-        // issuer 是 Name 类型，验证 DER 编码正确
-        let issuer_der = gm_cert.issuer_der();
-        assert!(!issuer_der.is_empty());
-
-        // subject 是 Name 类型，验证 DER 编码正确
-        let subject_der = gm_cert.subject_der();
-        assert!(!subject_der.is_empty());
-
-        // validity 是 Validity 类型，验证 DER 编码正确
-        let validity_der = gm_cert.validity_der();
-        assert!(!validity_der.is_empty());
-
-        // signature_algorithm 是 AlgorithmIdentifier 类型，验证 DER 编码正确
-        let sig_alg_der = gm_cert.signature_algorithm_der();
-        assert!(!sig_alg_der.is_empty());
-
-        // subject_public_key_info 是 SubjectPublicKeyInfo 类型，验证 DER 编码正确
-        let spki_der = gm_cert.subject_public_key_info_der();
-        assert!(!spki_der.is_empty());
-
-        // signature 是 Vec<u8>，直接验证非空
-        assert!(!gm_cert.signature.is_empty());
-    }
-
-    #[test]
     fn test_certificate_with_large_serial_number() {
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
@@ -3265,17 +3139,13 @@ mod tests {
         assert_eq!(cert.serial_number, serial);
 
         // 验证 DER 编码/解码 roundtrip
-        let cert_der = generate_gm_certificate(&cert);
-        let parsed = parse_gm_certificate(&cert_der).expect("Parsing should succeed");
+        let cert_der = generate_gm_certificate_der(&cert);
+        let parsed = parse_gm_certificate_der(&cert_der).expect("Parsing should succeed");
         assert_eq!(parsed.serial_number, serial);
     }
 
     #[test]
     fn test_certificate_with_long_name() {
-        use alloc::vec;
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
@@ -3300,20 +3170,31 @@ mod tests {
         .expect("Certificate with long name should succeed");
 
         // 验证名称可以正确 DER 编码
-        let issuer_der = cert.issuer_der();
-        assert!(!issuer_der.is_empty());
+        let issuer_der = cert.issuer.to_der().unwrap();
+        let parsed_issuer = Name::from_der(&issuer_der).expect("Should parse issuer DER");
+        assert_eq!(parsed_issuer, cert.issuer);
+
+        let subject_der = cert.subject.to_der().unwrap();
+        let parsed_subject = Name::from_der(&subject_der).expect("Should parse subject DER");
+        assert_eq!(parsed_subject, cert.subject);
+
+        let validity_der = cert.validity.to_der().unwrap();
+        let parsed_validity = Validity::from_der(&validity_der).expect("Should parse validity DER");
+        assert_eq!(parsed_validity, cert.validity);
 
         // 验证 roundtrip
-        let cert_der = generate_gm_certificate(&cert);
-        let parsed = parse_gm_certificate(&cert_der).expect("Parsing should succeed");
+        let cert_der = generate_gm_certificate_der(&cert);
+        let parsed = parse_gm_certificate_der(&cert_der).expect("Parsing should succeed");
         assert_eq!(parsed.issuer, cert.issuer);
+        assert_eq!(parsed.subject, cert.subject);
+        assert_eq!(parsed.validity, validity);
+        assert_eq!(parsed.serial_number, cert.serial_number);
+        assert_eq!(parsed.signature, cert.signature);
     }
 
     #[test]
     #[cfg(all(feature = "alloc", feature = "std"))]
     fn test_certificate_builder_with_name_type() {
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
         use std::time::Duration;
 
         let mut rng = StdRng::seed_from_u64(123456);
@@ -3353,9 +3234,6 @@ mod tests {
 
     #[test]
     fn test_certificate_serial_number_edge_cases() {
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
@@ -3393,9 +3271,6 @@ mod tests {
 
     #[test]
     fn test_certificate_der_encoding_consistency() {
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
         let mut rng = StdRng::seed_from_u64(123456);
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
@@ -3409,51 +3284,18 @@ mod tests {
         .expect("Certificate generation should succeed");
 
         // 多次编码应该产生相同结果
-        let der1 = generate_gm_certificate(&cert);
-        let der2 = generate_gm_certificate(&cert);
+        let der1 = generate_gm_certificate_der(&cert);
+        let der2 = generate_gm_certificate_der(&cert);
         assert_eq!(der1, der2, "DER encoding should be deterministic");
 
         // 解析后的证书应该与原证书相同
-        let parsed = parse_gm_certificate(&der1).expect("Parsing should succeed");
+        let parsed = parse_gm_certificate_der(&der1).expect("Parsing should succeed");
         assert_eq!(parsed.version, cert.version);
         assert_eq!(parsed.serial_number, cert.serial_number);
         assert_eq!(parsed.issuer, cert.issuer);
         assert_eq!(parsed.subject, cert.subject);
         assert_eq!(parsed.validity, cert.validity);
         assert_eq!(parsed.signature, cert.signature);
-    }
-
-    #[test]
-    fn test_certificate_name_der_methods() {
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
-
-        let mut rng = StdRng::seed_from_u64(123456);
-        let (priv_key, _) = generate_keypair(&mut rng);
-
-        let issuer = build_test_issuer("Test CA");
-        let validity = test_validity();
-        let serial = build_test_serial(1);
-
-        let cert = generate_self_signed_cert(
-            &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
-        )
-        .expect("Certificate generation should succeed");
-
-        // 测试 issuer_der() 方法
-        let issuer_der = cert.issuer_der();
-        let parsed_issuer = Name::from_der(&issuer_der).expect("Should parse issuer DER");
-        assert_eq!(parsed_issuer, cert.issuer);
-
-        // 测试 subject_der() 方法
-        let subject_der = cert.subject_der();
-        let parsed_subject = Name::from_der(&subject_der).expect("Should parse subject DER");
-        assert_eq!(parsed_subject, cert.subject);
-
-        // 测试 validity_der() 方法
-        let validity_der = cert.validity_der();
-        let parsed_validity = Validity::from_der(&validity_der).expect("Should parse validity DER");
-        assert_eq!(parsed_validity, cert.validity);
     }
 }
 

@@ -155,7 +155,7 @@ fn test_certificate_files() {
     let (subject_priv, _subject_pub) = generate_keypair(&mut rng);
 
     let cert = create_test_cert(&subject_priv, &mut rng);
-    let cert_der = cert::generate_gm_certificate(&cert);
+    let cert_der = cert::generate_gm_certificate_der(&cert);
     fs::write(cert_der_file, &cert_der).expect("写入 DER 文件应成功");
     assert!(Path::new(cert_der_file).exists());
 
@@ -164,7 +164,7 @@ fn test_certificate_files() {
     assert!(Path::new(cert_pem_file).exists());
 
     // 解析验证
-    let parsed_cert = cert::parse_gm_certificate(&cert_der).expect("解析 DER 证书应成功");
+    let parsed_cert = cert::parse_gm_certificate_der(&cert_der).expect("解析 DER 证书应成功");
     assert_eq!(parsed_cert.version, cert.version);
 
     let parsed_from_pem = cert::parse_gm_certificate_pem(&cert_pem).expect("解析 PEM 证书应成功");
