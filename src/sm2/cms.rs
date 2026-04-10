@@ -334,12 +334,12 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attribute
 fn encode_signed_attrs_for_sign(attrs: &Attributes) -> Result<Vec<u8>, Error> {
     // 编码为 DER (SET OF)
     let attrs_der = attrs.to_der().map_err(|_| Error::InvalidSignature)?;
-    
+
     // attrs_der 是 31 <length> <content>
     // 需要替换标签为 A0
     let mut result = vec![0xA0];
     result.extend_from_slice(&attrs_der[1..]); // 跳过原来的 0x31 标签，保留长度和内容
-    
+
     Ok(result)
 }
 
@@ -347,12 +347,12 @@ fn encode_signed_attrs_for_sign(attrs: &Attributes) -> Result<Vec<u8>, Error> {
 fn encode_unsigned_attrs(attrs: &Attributes) -> Result<Vec<u8>, Error> {
     // 编码为 DER (SET OF)
     let attrs_der = attrs.to_der().map_err(|_| Error::InvalidSignature)?;
-    
+
     // attrs_der 是 31 <length> <content>
     // 需要替换标签为 A1
     let mut result = vec![0xA1];
     result.extend_from_slice(&attrs_der[1..]); // 跳过原来的 0x31 标签，保留长度和内容
-    
+
     Ok(result)
 }
 
@@ -381,13 +381,7 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
     // attrValues = SET { Time }
     let signing_time = Time::try_from(SystemTime::now())
         .map_err(|_| Error::InvalidSignature)?;
-    
-    // 编码 Time 为 DER
-    let time_der = signing_time.to_der()
-        .map_err(|_| Error::DerEncodeError {
-            field: "signing_time",
-            reason: "failed to encode time",
-        })?;
+    let time_der = signing_time.to_der().unwrap();
     
     // 包装为 SET OF
     let set_content = der::wrap_set(time_der);
@@ -917,27 +911,18 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     // 编码 SignedData
     let signed_data_der = encode_signed_data(signed_data)?;
 
-    // 编码 ContentInfo
-    let mut content_info = Vec::new();
-
     // contentType
     let oid_tlv = crate::sm2::PKCS7_SIGNED_DATA_OID.to_der().unwrap();
 
     // content [0] EXPLICIT
-    let mut content_tlv = vec![0xA0];
-    der::encode_length(&mut content_tlv, signed_data_der.len())?;
-    content_tlv.extend(&signed_data_der);
+    let content_tlv = der::wrap_explicit_tag(0, &signed_data_der);
 
-    // 计算总长度
-    let total_len = oid_tlv.len() + content_tlv.len();
-
-    // SEQUENCE
-    content_info.push(0x30);
-    der::encode_length(&mut content_info, total_len)?;
+    // 构建 ContentInfo SEQUENCE
+    let mut content_info = Vec::with_capacity(oid_tlv.len() + content_tlv.len());
     content_info.extend(&oid_tlv);
     content_info.extend(&content_tlv);
 
-    Ok(content_info)
+    Ok(der::wrap_sequence(content_info))
 }
 
 /// 编码签名数据
@@ -964,13 +949,9 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
         for cert in &signed_data.certificates {
             certs_set.extend(cert.to_der());
         }
-        // 先包装为 SET OF
+        // 先包装为 SET OF，再包装为 [0] IMPLICIT
         let certs_set_der = der::wrap_set(certs_set);
-        // 再包装为 [0] IMPLICIT
-        let mut certs_tlv = vec![0xA0];
-        der::encode_length(&mut certs_tlv, certs_set_der.len())?;
-        certs_tlv.extend(certs_set_der);
-        content.extend(certs_tlv);
+        content.extend(der::wrap_explicit_tag(0, &certs_set_der));
     }
 
     // crls [1] IMPLICIT RevocationInfoChoices (可选)
@@ -981,13 +962,9 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
             for crl in crls {
                 crls_set.extend(crl);
             }
-            // 先包装为 SET OF
+            // 先包装为 SET OF，再包装为 [1] IMPLICIT
             let crls_set_der = der::wrap_set(crls_set);
-            // 再包装为 [1] IMPLICIT
-            let mut crls_tlv = vec![0xA1];
-            der::encode_length(&mut crls_tlv, crls_set_der.len())?;
-            crls_tlv.extend(crls_set_der);
-            content.extend(crls_tlv);
+            content.extend(der::wrap_explicit_tag(1, &crls_set_der));
         }
     }
 
@@ -1004,24 +981,18 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 /// 编码 EncapsulatedContentInfo 编码封装内容信息
 fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
-    // contentType OID (需要编码为 06 <len> <bytes>)
-    content.extend(&[0x06]);
-    let oid_bytes = info.content_type.as_bytes();
-    der::encode_length(&mut content, oid_bytes.len())?;
-    content.extend(oid_bytes);
+
+    // contentType OID
+    let oid_tlv = info.content_type.to_der().unwrap();
+    content.extend(oid_tlv);
 
     // content [0] EXPLICIT (可选)
     if let Some(ref data) = info.content {
         let octet_tlv = der::encode_octet_string(data)?;
-        let mut content_tlv = vec![0xA0];
-        der::encode_length(&mut content_tlv, octet_tlv.len())?;
-        content_tlv.extend(octet_tlv);
-        content.extend(content_tlv);
+        content.extend(der::wrap_explicit_tag(0, &octet_tlv));
     }
 
-    let result = der::wrap_sequence(content);
-
-    Ok(result)
+    Ok(der::wrap_sequence(content))
 }
 
 /// 编码 SignerInfo
@@ -1332,12 +1303,8 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
     if !rest.is_empty() && rest[0] == 0xA0 {
         // 解析 [0] IMPLICIT 获取 value 部分
         let (all_attrs, r) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
-        // all_attrs 是多个 Attribute 的串联，需要包装为 SET OF 结构
-        // 先构建完整的 SET OF DER 编码
-        let mut set_der = vec![0x31]; // SET OF 标签
-        der::encode_length(&mut set_der, all_attrs.len())?;
-        set_der.extend(all_attrs);
-        // 使用 x509_cert 的类型解析 Attributes
+        // all_attrs 是多个 Attribute 的串联，包装为 SET OF 结构后解析
+        let set_der = der::wrap_set(all_attrs.to_vec());
         let attrs = Attributes::from_der(&set_der).map_err(|_| err())?;
         signed_attrs = Some(attrs);
         rest = r;
@@ -1356,10 +1323,8 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
     let mut unsigned_attrs = None;
     if !rest.is_empty() && rest[0] == 0xA1 {
         let (attrs_tlv, _) = der::parse_tlv(rest, 0xA1).ok_or_else(err)?;
-        // attrs_tlv 是多个 Attribute 的串联，需要包装为 SET OF 结构
-        let mut set_der = vec![0x31]; // SET OF 标签
-        der::encode_length(&mut set_der, attrs_tlv.len())?;
-        set_der.extend(attrs_tlv);
+        // attrs_tlv 是多个 Attribute 的串联，包装为 SET OF 结构后解析
+        let set_der = der::wrap_set(attrs_tlv.to_vec());
         unsigned_attrs = Some(Attributes::from_der(&set_der).map_err(|_| err())?);
     }
 
@@ -1386,7 +1351,10 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
 
     // serialNumber - 解析 INTEGER 为 SerialNumber
     let (serial_der, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
-    rest = r;
+    #[allow(unused_assignments)]
+    {
+        rest = r;
+    }
     let serial_number = SerialNumber::from_der(serial_der).map_err(|_| Error::DerDecodeError { field: "serial_number", reason: "decoding failed" })?;
 
     Ok(SignerIdentifier::IssuerAndSerialNumber {

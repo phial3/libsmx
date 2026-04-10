@@ -292,17 +292,9 @@ pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Ext
 
     // AKI 是一个 SEQUENCE，包含 keyIdentifier [0] IMPLICIT OCTET STRING
     // 编码为：30 <len> 80 <len> <20 bytes>
-    let mut aki_content = Vec::new();
-    aki_content.push(0x80); // [0] IMPLICIT tag
-    aki_content.push(aki.len() as u8);
-    aki_content.extend(&aki);
-    
-    // 包装为 SEQUENCE
-    let mut aki_seq = Vec::new();
-    aki_seq.push(0x30);
-    aki_seq.push(aki_content.len() as u8);
-    aki_seq.extend(aki_content);
-    
+    let aki_content = der::wrap_implicit_tag(0, &aki);
+    let aki_seq = der::wrap_sequence(aki_content);
+
     Extension {
         extn_id: crate::sm2::ID_CE_AUTHORITY_KEY_IDENTIFIER,
         critical: false,
@@ -678,18 +670,8 @@ impl GmCertificate {
         // 版本（v3 及以上需要显式编码）
         if self.version > 0 {
             // 编码为 [0] EXPLICIT INTEGER
-            let mut version_wrapper = Vec::new();
-            version_wrapper.push(0xA0); // Context tag [0]
-                                        // INTEGER TLV: tag(1) + len(1) + value(1) = 3 bytes for v3
-            let int_tlv_len = 3; // 0x02 + 0x01 + version
-            if int_tlv_len < 128 {
-                version_wrapper.push(int_tlv_len as u8);
-            } else {
-                panic!("Version TLV too long");
-            }
-            version_wrapper.push(0x02); // INTEGER tag
-            version_wrapper.push(0x01); // INTEGER length
-            version_wrapper.push(self.version as u8); // version value
+            let version_int = der::encode_integer(self.version as u8).expect("version encoding failed");
+            let version_wrapper = der::wrap_explicit_tag(0, &version_int);
             tbs_bytes.extend(version_wrapper);
         }
 
@@ -917,18 +899,8 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     // 版本（v3 及以上需要显式编码）
     if cert.version > 0 {
         // 编码为 [0] EXPLICIT INTEGER
-        let mut version_wrapper = Vec::new();
-        version_wrapper.push(0xA0); // Context tag [0]
-                                    // INTEGER TLV: tag(1) + len(1) + value(1) = 3 bytes for v3
-        let int_tlv_len = 3; // 0x02 + 0x01 + version
-        if int_tlv_len < 128 {
-            version_wrapper.push(int_tlv_len as u8);
-        } else {
-            panic!("Version TLV too long");
-        }
-        version_wrapper.push(0x02); // INTEGER tag
-        version_wrapper.push(0x01); // INTEGER length
-        version_wrapper.push(cert.version as u8); // version value
+        let version_int = der::encode_integer(cert.version as u8).expect("version encoding failed");
+        let version_wrapper = der::wrap_explicit_tag(0, &version_int);
         tbs_bytes.extend(version_wrapper);
     }
 
@@ -1287,11 +1259,7 @@ pub fn build_x500_name(attributes: &[X500Attribute]) -> Name {
         let attr_der = attr.to_der();
 
         // 包装为 SET { SEQUENCE { ... } }
-        let mut rdn = Vec::with_capacity(2 + attr_der.len());
-        rdn.push(0x31); // SET tag
-        rdn.push(attr_der.len() as u8);
-        rdn.extend(attr_der);
-
+        let rdn = der::wrap_set(attr_der);
         name_der.extend(rdn);
     }
 
