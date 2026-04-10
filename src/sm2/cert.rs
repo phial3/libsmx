@@ -2186,7 +2186,7 @@ pub fn generate_self_signed_cert<R: Rng>(
         subject: subject.clone(),
         subject_public_key_info: spki,
         extensions: extensions.clone(),
-        signature: Vec::new(), // 临时空签名
+        signature: Vec::new(), // 空签名作为占位符
     };
 
     // 使用 generate_gm_certificate 的逻辑编码 TBS
@@ -2332,7 +2332,7 @@ pub fn issue_certificate<R: Rng>(
     // 签发者（使用 CA 的主体）
     let issuer_name = ca_cert.subject.clone();
 
-    // 构建临时证书结构用于 TBS 编码
+    // 构建证书结构用于 TBS 编码
     let cert_for_tbs = GmCertificate {
         version: 2,
         serial_number: serial_number.clone(),

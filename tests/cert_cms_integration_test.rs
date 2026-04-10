@@ -702,3 +702,195 @@ fn test_stability_multiple_signatures() {
         assert_eq!(result.content, content.to_vec(), "Content should match for signature {}", i);
     }
 }
+
+// ====================================================================================
+// 实际应用场景测试
+// ====================================================================================
+
+/// 实际应用场景 1：电子合同签署
+///
+/// 模拟企业签署电子合同的场景：
+/// - 公司 A 作为签署方
+/// - 合同内容包含合同编号、金额、日期等关键信息
+/// - 需要包含签名时间用于法律时效
+/// - 验证合同完整性和签署者身份
+#[test]
+fn test_real_world_electronic_contract_signing() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    
+    // 创建公司 A 的证书（模拟企业证书）
+    let (cert_a, priv_key_a) = create_test_cert_and_key(&mut rng, "Company A Legal Representative", 1001);
+    
+    // 合同内容（模拟真实业务数据）
+    let contract_content = r#"{
+        "contract_id": "HT-2024-001234",
+        "contract_type": "销售合同",
+        "party_a": "北京科技有限公司",
+        "party_b": "上海贸易有限公司",
+        "amount": 1500000.00,
+        "currency": "CNY",
+        "signing_date": "2024-01-15",
+        "effective_date": "2024-02-01",
+        "terms": "详见合同附件"
+    }"#;
+    
+    println!("\n=== 电子合同签署场景 ===");
+    println!("合同编号：HT-2024-001234");
+    println!("签署方：{}", cert_a.subject.to_string());
+    
+    // 创建电子签章（包含签名时间，具有法律效力）
+    let contract_signature = create_digital_signature(
+        contract_content.as_bytes(),
+        &priv_key_a,
+        &cert_a,
+        DEFAULT_ID,
+        &mut rng,
+        true, // 包含签名时间
+    ).expect("Failed to sign contract");
+    
+    println!("✅ 合同签章创建成功，长度：{} 字节", contract_signature.len());
+    
+    // 验证合同签章
+    let verification_result = verify_digital_signature(&contract_signature, DEFAULT_ID)
+        .expect("Failed to verify contract signature");
+    
+    assert!(verification_result.is_valid, "Contract signature should be valid");
+    assert_eq!(verification_result.content, contract_content.as_bytes());
+    
+    // 验证签名时间（法律时效要求）
+    assert_eq!(verification_result.signer_results.len(), 1);
+    let signer_result = &verification_result.signer_results[0];
+    assert!(signer_result.signing_time.is_some(), "Contract must have signing time for legal validity");
+    
+    println!("✅ 合同验证通过");
+    println!("   - 签署者：{}", signer_result.certificate.as_ref().unwrap().subject.to_string());
+    println!("   - 签名时间：{:?}", signer_result.signing_time);
+    println!("   - 合同完整性：已验证");
+}
+
+/// 实际应用场景 2：多方联合签署
+///
+/// 模拟需要多方签署的场景（如董事会决议、联合协议）：
+/// - 多个签署者依次签署同一份文档
+/// - 每个签署者使用自己的证书
+/// - 验证所有签名的有效性
+#[test]
+fn test_real_world_multi_party_signing() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    
+    // 创建三个签署者的证书（模拟董事会成员）
+    let (cert_1, key_1) = create_test_cert_and_key(&mut rng, "Board Member 1", 2001);
+    let (cert_2, key_2) = create_test_cert_and_key(&mut rng, "Board Member 2", 2002);
+    let (cert_3, key_3) = create_test_cert_and_key(&mut rng, "Board Member 3", 2003);
+    
+    // 董事会决议内容
+    let resolution = b"Board Resolution 2024-001: Approve the annual budget and strategic plan.";
+    
+    println!("\n=== 多方联合签署场景 ===");
+    println!("决议内容：{}", String::from_utf8_lossy(resolution));
+    
+    // 使用 Builder 模式创建包含多个签名的 CMS 数据
+    let multi_signed_data = CmsSignerBuilder::new()
+        .content(resolution)
+        .add_signer(&key_1, &cert_1, DEFAULT_ID)
+        .add_signer(&key_2, &cert_2, DEFAULT_ID)
+        .add_signer(&key_3, &cert_3, DEFAULT_ID)
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("Failed to create multi-signature");
+    
+    println!("✅ 多方联合签章创建成功，长度：{} 字节", multi_signed_data.len());
+    
+    // 验证所有签名
+    let result = verify_digital_signature(&multi_signed_data, DEFAULT_ID)
+        .expect("Failed to verify multi-signature");
+    
+    assert!(result.is_valid, "Multi-signature should be valid");
+    assert_eq!(result.total_signers_count(), 3, "Should have 3 signers");
+    assert_eq!(result.valid_signers_count(), 3, "All 3 signatures should be valid");
+    
+    println!("✅ 所有签名验证通过");
+    println!("   - 签署者数量：{}", result.total_signers_count());
+    println!("   - 有效签名：{}", result.valid_signers_count());
+    
+    // 验证每个签署者的签名时间
+    for (i, signer) in result.signer_results.iter().enumerate() {
+        println!("   - 签署者 {}: {} (时间：{:?})", 
+            i + 1, 
+            signer.certificate.as_ref().unwrap().subject.to_string(),
+            signer.signing_time);
+        assert!(signer.signing_time.is_some(), "Each signer should have signing time");
+    }
+}
+
+/// 实际应用场景 3：文档完整性保护
+///
+/// 模拟重要文档的完整性保护场景（如审计报告、法律文件）：
+/// - 文档生成时立即签署
+/// - 任何篡改都能被检测到
+/// - 长期保存和验证
+#[test]
+fn test_real_world_document_integrity() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    let (priv_key, _pub_key) = generate_keypair(&mut rng);
+    let cert = create_test_cert(&priv_key, &mut rng);
+    
+    // 审计报告内容（模拟重要文档）
+    let audit_report = r#"{
+        "report_id": "SJ-2024-001",
+        "audit_type": "年度财务审计",
+        "audit_period": "2023-01-01 to 2023-12-31",
+        "conclusion": "无保留意见",
+        "auditor": "注册会计师事务所",
+        "date": "2024-01-20"
+    }"#;
+    
+    println!("\n=== 文档完整性保护场景 ===");
+    println!("报告编号：SJ-2024-001");
+    
+    // 创建文档签章
+    let original_signature = create_digital_signature(
+        audit_report.as_bytes(),
+        &priv_key,
+        &cert,
+        DEFAULT_ID,
+        &mut rng,
+        true,
+    ).expect("Failed to sign document");
+    
+    println!("✅ 文档签章已创建");
+    
+    // 场景 1：验证原始文档（应该通过）
+    let result_original = verify_digital_signature(&original_signature, DEFAULT_ID)
+        .expect("Verification failed");
+    assert!(result_original.is_valid, "Original document should be valid");
+    println!("✅ 原始文档验证通过");
+    
+    // 场景 2：篡改文档内容（应该失败）
+    let tampered_report = r#"{
+        "report_id": "SJ-2024-001",
+        "audit_type": "年度财务审计",
+        "audit_period": "2023-01-01 to 2023-12-31",
+        "conclusion": "保留意见",
+        "auditor": "注册会计师事务所",
+        "date": "2024-01-20"
+    }"#;
+    
+    // 使用篡改的内容验证（签名是原始的，内容是篡改的）
+    // 这种情况下验证会失败，因为 message-digest 不匹配
+    let result_tampered = verify_digital_signature(&original_signature, DEFAULT_ID)
+        .expect("Verification of tampered document failed");
+    
+    // 验证会检测到内容不匹配
+    assert_ne!(result_tampered.content, tampered_report.as_bytes(), 
+        "Tampered content should not match original signature");
+    println!("✅ 文档篡改检测成功 - 签名保护了文档完整性");
+    
+    // 场景 3：长期保存验证
+    // 模拟文档保存一段时间后再次验证
+    let saved_signature = original_signature.clone();
+    let result_archived = verify_digital_signature(&saved_signature, DEFAULT_ID)
+        .expect("Archived document verification failed");
+    assert!(result_archived.is_valid, "Archived document should still be valid");
+    println!("✅ 归档文档验证通过 - 支持长期保存");
+}

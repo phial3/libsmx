@@ -1484,6 +1484,7 @@ fn parse_algorithm_identifier(der_data: &[u8]) -> Result<AlgorithmIdentifier<Obj
 // ====================================================================================
 
 #[cfg(test)]
+#[cfg(all(feature = "alloc", feature = "std"))]
 mod tests {
     use super::*;
     use crate::sm2::cert::generate_self_signed_cert;
