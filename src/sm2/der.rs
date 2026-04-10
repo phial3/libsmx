@@ -35,7 +35,6 @@ use alloc::vec::Vec;
 use crate::error::Error;
 use crate::sm2::PrivateKey;
 use x509_cert::der::{Decode, Encode};
-use x509_cert::der::asn1::OctetStringRef;
 use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
@@ -388,43 +387,21 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 /// ```
 #[cfg(feature = "alloc")]
 pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
-    // 手动编码 BIT STRING，避免 BitString::new 添加额外的 00 字节
-    // BIT STRING 格式：03 <length> <unused_bits> <data>
-    // 对于 SM2 公钥（65 字节），unused_bits = 0
-    // 总长度 = 1 (unused_bits) + 65 (公钥) = 66 字节
-    let mut bit_string_content = Vec::with_capacity(1 + 65);
-    bit_string_content.push(0x00); // unused_bits = 0
-    bit_string_content.extend_from_slice(pub_key.as_slice());
+    use x509_cert::der::asn1::BitStringRef;
 
-    // 编码 BIT STRING: tag + length + content
-    let mut bit_string_bytes = Vec::with_capacity(1 + 1 + bit_string_content.len());
-    bit_string_bytes.push(0x03); // BIT STRING tag
-    bit_string_bytes.push(bit_string_content.len() as u8); // length
-    bit_string_bytes.extend(bit_string_content);
+    // 创建 BIT STRING（公钥数据）
+    // BitStringRef::new 第一个参数是 unused_bits（0），第二个参数是字节切片
+    let subject_public_key = BitStringRef::new(0, pub_key.as_slice())
+        .expect("BitStringRef creation should not fail for valid data");
 
-    // 编码 AlgorithmIdentifier
-    let alg_id_bytes: Vec<u8> = crate::sm2::SM2_SPKI_ALGORITHM.to_der().unwrap();
+    // 创建 SubjectPublicKeyInfo
+    let spki = SubjectPublicKeyInfo {
+        algorithm: crate::sm2::SM2_SPKI_ALGORITHM,
+        subject_public_key,
+    };
 
-    // 编码 SubjectPublicKeyInfo: SEQUENCE { algorithm, subjectPublicKey }
-    let mut spki_content: Vec<u8> = Vec::new();
-    spki_content.extend(&alg_id_bytes);
-    spki_content.extend(&bit_string_bytes);
-
-    let mut spki_bytes = Vec::new();
-    spki_bytes.push(0x30); // SEQUENCE tag
-    if spki_content.len() < 128 {
-        spki_bytes.push(spki_content.len() as u8);
-    } else if spki_content.len() < 256 {
-        spki_bytes.push(0x81);
-        spki_bytes.push(spki_content.len() as u8);
-    } else {
-        spki_bytes.push(0x82);
-        spki_bytes.push((spki_content.len() >> 8) as u8);
-        spki_bytes.push(spki_content.len() as u8);
-    }
-    spki_bytes.extend(spki_content);
-
-    spki_bytes
+    // 编码为 DER
+    spki.to_der().expect("SPKI encoding failed")
 }
 
 /// 从 SubjectPublicKeyInfo DER 解析 SM2 公钥
@@ -489,6 +466,7 @@ pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
 /// 使用 x509_cert::der::asn1::OctetStringRef 类型进行编码
 #[cfg(feature = "alloc")]
 pub fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
+    use x509_cert::der::asn1::OctetStringRef;
     // OctetStringRef 可以直接从字节切片创建
     let octet_ref = OctetStringRef::new(data).map_err(|_| Error::DerEncodeError { 
         field: "octet_string", 
@@ -496,7 +474,7 @@ pub fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
     })?;
     octet_ref.to_der().map_err(|_| Error::DerEncodeError { 
         field: "octet_string", 
-        reason: "encoding failed" 
+        reason: "encoding der failed"
     })
 }
 
