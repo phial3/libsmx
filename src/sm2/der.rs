@@ -541,6 +541,25 @@ pub fn wrap_explicit_tag(tag: u8, content: &[u8]) -> Vec<u8> {
     result
 }
 
+/// 包装为隐式标签（Context-specific primitive）
+///
+/// 用于包装 [n] IMPLICIT 类型的字段，如 GeneralName 中的 [1] IMPLICIT IA5String
+///
+/// # 参数
+/// - `tag`: 标签号（0-30）
+/// - `content`: 标签内的原始内容字节
+///
+/// # 返回
+/// DER 编码的隐式标签（tag 0x80+n + length + content）
+#[cfg(feature = "alloc")]
+pub fn wrap_implicit_tag(tag: u8, content: &[u8]) -> Vec<u8> {
+    // 直接构造 DER 编码：tag (0x80 | tag) + length + content
+    let mut result = vec![0x80 | tag];
+    encode_length(&mut result, content.len()).expect("DER length encoding failed");
+    result.extend_from_slice(content);
+    result
+}
+
 /// DER 长度编码（支持短形式和长形式）
 /// 
 /// 这是内部辅助函数，用于 `wrap_explicit_tag` 和 cms 模块

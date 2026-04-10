@@ -319,7 +319,7 @@ pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Ext
 /// x509-cert 的 Extension 类型
 pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::name::GeneralName]) -> Extension {
     use x509_cert::ext::pkix::name::GeneralName;
-    
+
     // SAN 是一个 SEQUENCE OF GeneralName
     // 使用 x509_cert 的 GeneralName 类型直接编码
     let mut san_content = Vec::new();
@@ -327,31 +327,19 @@ pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::
         match name {
             GeneralName::Rfc822Name(ia5_string) => {
                 // [1] IMPLICIT IA5String
-                let bytes = ia5_string.as_bytes();
-                san_content.push(0x81); // Context tag [1]
-                san_content.push(bytes.len() as u8);
-                san_content.extend_from_slice(bytes);
+                san_content.extend(der::wrap_implicit_tag(1, ia5_string.as_bytes()));
             }
             GeneralName::DnsName(ia5_string) => {
                 // [2] IMPLICIT IA5String
-                let bytes = ia5_string.as_bytes();
-                san_content.push(0x82); // Context tag [2]
-                san_content.push(bytes.len() as u8);
-                san_content.extend_from_slice(bytes);
+                san_content.extend(der::wrap_implicit_tag(2, ia5_string.as_bytes()));
             }
             GeneralName::UniformResourceIdentifier(ia5_string) => {
                 // [6] IMPLICIT IA5String
-                let bytes = ia5_string.as_bytes();
-                san_content.push(0x86); // Context tag [6]
-                san_content.push(bytes.len() as u8);
-                san_content.extend_from_slice(bytes);
+                san_content.extend(der::wrap_implicit_tag(6, ia5_string.as_bytes()));
             }
             GeneralName::IpAddress(octet_string) => {
                 // [7] IMPLICIT OCTET STRING
-                let bytes = octet_string.as_bytes();
-                san_content.push(0x87); // Context tag [7]
-                san_content.push(bytes.len() as u8);
-                san_content.extend_from_slice(bytes);
+                san_content.extend(der::wrap_implicit_tag(7, octet_string.as_bytes()));
             }
             _ => {
                 // 其他类型暂不支持
@@ -359,7 +347,7 @@ pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::
             }
         }
     }
-    
+
     // 包装为 SEQUENCE
     let san_seq = der::wrap_sequence(san_content);
     
@@ -1308,22 +1296,7 @@ pub fn build_x500_name(attributes: &[X500Attribute]) -> Name {
     }
 
     // 包装为 SEQUENCE OF RDN
-    let mut seq = Vec::with_capacity(2 + name_der.len());
-    seq.push(0x30);
-
-    // 编码长度（支持多字节长度）
-    let len = name_der.len();
-    if len < 128 {
-        seq.push(len as u8);
-    } else if len < 256 {
-        seq.push(0x81);
-        seq.push(len as u8);
-    } else {
-        seq.push(0x82);
-        seq.push((len >> 8) as u8);
-        seq.push((len & 0xFF) as u8);
-    }
-    seq.extend(name_der);
+    let seq = der::wrap_sequence(name_der);
 
     // 解析为 Name 类型
     Name::from_der(&seq).unwrap()
@@ -1618,7 +1591,7 @@ impl CertificateBuilder {
         }
 
         // 包装为 SEQUENCE
-        let tbs_cert = wrap_sequence(tbs);
+        let tbs_cert = der::wrap_sequence(tbs);
 
         // 签名
         let signature = sign_tbs_certificate(&tbs_cert, priv_key, id, rng)?;
@@ -2128,10 +2101,6 @@ pub fn generate_self_signed_cert<R: Rng>(
 /// # 返回
 /// DER 编码的字节数组
 pub fn encode_extension(ext: &Extension) -> Vec<u8> {
-    let mut result = Vec::new();
-    result.push(0x30); // SEQUENCE tag
-
-    // 计算内容长度
     let mut content = Vec::new();
 
     // OID
@@ -2147,67 +2116,15 @@ pub fn encode_extension(ext: &Extension) -> Vec<u8> {
 
     // Extension value (OCTET STRING)
     let value_bytes = ext.extn_value.as_bytes();
-    let value_len = value_bytes.len();
     content.push(0x04); // OCTET STRING tag
-    if value_len < 128 {
-        content.push(value_len as u8);
-    } else if value_len < 256 {
-        content.push(0x81);
-        content.push(value_len as u8);
-    } else {
-        content.push(0x82);
-        content.push((value_len >> 8) as u8);
-        content.push((value_len & 0xFF) as u8);
-    }
+    der::encode_length(&mut content, value_bytes.len()).expect("DER length encoding failed");
     content.extend_from_slice(value_bytes);
 
-    // 写入内容长度
-    let content_len = content.len();
-    if content_len < 128 {
-        result.push(content_len as u8);
-    } else if content_len < 256 {
-        result.push(0x81);
-        result.push(content_len as u8);
-    } else {
-        result.push(0x82);
-        result.push((content_len >> 8) as u8);
-        result.push((content_len & 0xFF) as u8);
-    }
-
-    result.extend(content);
-    result
+    // 包装为 SEQUENCE
+    der::wrap_sequence(content)
 }
 
 /// 将数据包装为 SEQUENCE（单个 Vec）
-///
-/// 将单个字节数组包装为 ASN.1 SEQUENCE 结构。
-///
-/// # 参数
-/// - `content`: 要包装的内容
-///
-/// # 返回
-/// SEQUENCE 编码的字节数组
-#[warn(dead_code)]
-fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
-    let mut result = Vec::with_capacity(2 + content.len());
-    result.push(0x30);
-
-    let len = content.len();
-    if len < 128 {
-        result.push(len as u8);
-    } else if len < 256 {
-        result.push(0x81);
-        result.push(len as u8);
-    } else {
-        result.push(0x82);
-        result.push((len >> 8) as u8);
-        result.push((len & 0xFF) as u8);
-    }
-
-    result.extend(content);
-    result
-}
-
 /// 使用 CA 证书和私钥为终端实体签发新证书。
 ///
 /// # 参数
