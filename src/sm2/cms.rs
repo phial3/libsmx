@@ -374,8 +374,9 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
 
     let mut attr = Vec::new();
 
-    // attrType = signing-time (1.2.840.113549.1.9.5)
-    attr.extend(der::encode_oid(crate::sm2::SIGNING_TIME_OID)?);
+    // attrType = signing-time
+    let oid_der = crate::sm2::SIGNING_TIME_OID.to_der().unwrap();
+    attr.extend(&oid_der);
 
     // attrValues = SET { Time }
     let signing_time = Time::try_from(SystemTime::now())
@@ -920,7 +921,7 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     let mut content_info = Vec::new();
 
     // contentType
-    let oid_tlv = der::encode_oid(crate::sm2::PKCS7_SIGNED_DATA_OID)?;
+    let oid_tlv = crate::sm2::PKCS7_SIGNED_DATA_OID.to_der().unwrap();
 
     // content [0] EXPLICIT
     let mut content_tlv = vec![0xA0];
@@ -949,11 +950,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     // digestAlgorithms SET
     let mut digest_algs = Vec::new();
     for alg in &signed_data.digest_algorithms {
-        let alg_der = alg.to_der().map_err(|_| Error::DerEncodeError {
-            field: "digest_algorithm",
-            reason: "encoding failed",
-        })?;
-        digest_algs.extend(alg_der);
+        digest_algs.extend(alg.to_der().unwrap());
     }
     content.extend(der::wrap_set(digest_algs));
 
@@ -1072,7 +1069,7 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
         } => {
             let mut content = Vec::new();
             content.extend(issuer.to_der().unwrap());
-            content.extend(der::encode_integer_bytes(&serial_number.to_der().unwrap())?);
+            content.extend(serial_number.to_der().unwrap());
             Ok(der::wrap_sequence(content))
         }
         SignerIdentifier::SubjectKeyIdentifier(ski) => {
@@ -1388,7 +1385,8 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
     let issuer = Name::from_der(issuer_der).map_err(|_| Error::DerDecodeError { field: "issuer", reason: "decoding failed" })?;
 
     // serialNumber - 解析 INTEGER 为 SerialNumber
-    let (serial_der, _) = der::parse_tlv(rest, 0x02).ok_or_else(err)?;
+    let (serial_der, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+    rest = r;
     let serial_number = SerialNumber::from_der(serial_der).map_err(|_| Error::DerDecodeError { field: "serial_number", reason: "decoding failed" })?;
 
     Ok(SignerIdentifier::IssuerAndSerialNumber {

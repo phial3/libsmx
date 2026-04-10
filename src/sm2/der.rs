@@ -35,7 +35,7 @@ use alloc::vec::Vec;
 use crate::error::Error;
 use crate::sm2::PrivateKey;
 use x509_cert::der::{Decode, Encode};
-use x509_cert::der::asn1::{OctetStringRef, UintRef};
+use x509_cert::der::asn1::OctetStringRef;
 use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
@@ -475,18 +475,6 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
 
 // ── DER 编码辅助函数 ─────────────────────────────────────────────────────
 
-/// 编码 OID
-/// 
-/// 使用 x509_cert::der::Encode trait 进行编码
-#[cfg(feature = "alloc")]
-pub fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
-    // 直接使用 ObjectIdentifier 的 to_der() 方法
-    oid.to_der().map_err(|_| Error::DerEncodeError { 
-        field: "oid", 
-        reason: "encoding failed" 
-    })
-}
-
 /// 编码 INTEGER（单字节）
 /// 
 /// 直接使用手写的 DER 编码，避免临时值问题
@@ -494,22 +482,6 @@ pub fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
 pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
     // 直接构造 DER 编码：tag 0x02 + length 0x01 + value
     Ok(vec![0x02, 0x01, val])
-}
-
-/// 编码 INTEGER（字节数组）
-/// 
-/// 使用 x509_cert::der::asn1::UintRef 类型进行编码
-#[cfg(feature = "alloc")]
-pub fn encode_integer_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
-    // UintRef 可以直接从字节切片创建
-    let uint_ref = UintRef::new(bytes).map_err(|_| Error::DerEncodeError { 
-        field: "integer_bytes", 
-        reason: "encoding failed" 
-    })?;
-    uint_ref.to_der().map_err(|_| Error::DerEncodeError { 
-        field: "integer_bytes", 
-        reason: "encoding failed" 
-    })
 }
 
 /// 编码 OCTET STRING
