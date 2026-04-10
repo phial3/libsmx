@@ -375,7 +375,7 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
     let mut attr = Vec::new();
 
     // attrType = signing-time (1.2.840.113549.1.9.5)
-    attr.extend(encode_oid(crate::sm2::SIGNING_TIME_OID)?);
+    attr.extend(der::encode_oid(crate::sm2::SIGNING_TIME_OID)?);
 
     // attrValues = SET { Time }
     let signing_time = Time::try_from(SystemTime::now())
@@ -389,10 +389,10 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
         })?;
     
     // 包装为 SET OF
-    let set_content = wrap_set(time_der);
+    let set_content = der::wrap_set(time_der);
     attr.extend(set_content);
 
-    Ok(wrap_sequence(attr))
+    Ok(der::wrap_sequence(attr))
 }
 
 // ====================================================================================
@@ -920,11 +920,11 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     let mut content_info = Vec::new();
 
     // contentType
-    let oid_tlv = encode_oid(crate::sm2::PKCS7_SIGNED_DATA_OID)?;
+    let oid_tlv = der::encode_oid(crate::sm2::PKCS7_SIGNED_DATA_OID)?;
 
     // content [0] EXPLICIT
     let mut content_tlv = vec![0xA0];
-    encode_length(&mut content_tlv, signed_data_der.len())?;
+    der::encode_length(&mut content_tlv, signed_data_der.len())?;
     content_tlv.extend(&signed_data_der);
 
     // 计算总长度
@@ -932,7 +932,7 @@ fn encode_content_info(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
 
     // SEQUENCE
     content_info.push(0x30);
-    encode_length(&mut content_info, total_len)?;
+    der::encode_length(&mut content_info, total_len)?;
     content_info.extend(&oid_tlv);
     content_info.extend(&content_tlv);
 
@@ -944,7 +944,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
 
     // version
-    content.extend(encode_integer(signed_data.version as u8)?);
+    content.extend(&der::encode_integer(signed_data.version as u8)?);
 
     // digestAlgorithms SET
     let mut digest_algs = Vec::new();
@@ -955,7 +955,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
         })?;
         digest_algs.extend(alg_der);
     }
-    content.extend(wrap_set(digest_algs));
+    content.extend(der::wrap_set(digest_algs));
 
     // encapContentInfo
     content.extend(encode_encap_content_info(&signed_data.encap_content_info)?);
@@ -968,10 +968,10 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
             certs_set.extend(cert.to_der());
         }
         // 先包装为 SET OF
-        let certs_set_der = wrap_set(certs_set);
+        let certs_set_der = der::wrap_set(certs_set);
         // 再包装为 [0] IMPLICIT
         let mut certs_tlv = vec![0xA0];
-        encode_length(&mut certs_tlv, certs_set_der.len())?;
+        der::encode_length(&mut certs_tlv, certs_set_der.len())?;
         certs_tlv.extend(certs_set_der);
         content.extend(certs_tlv);
     }
@@ -985,10 +985,10 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
                 crls_set.extend(crl);
             }
             // 先包装为 SET OF
-            let crls_set_der = wrap_set(crls_set);
+            let crls_set_der = der::wrap_set(crls_set);
             // 再包装为 [1] IMPLICIT
             let mut crls_tlv = vec![0xA1];
-            encode_length(&mut crls_tlv, crls_set_der.len())?;
+            der::encode_length(&mut crls_tlv, crls_set_der.len())?;
             crls_tlv.extend(crls_set_der);
             content.extend(crls_tlv);
         }
@@ -999,9 +999,9 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
     for signer_info in &signed_data.signer_infos {
         signer_infos.extend(encode_signer_info(signer_info)?);
     }
-    content.extend(wrap_set(signer_infos));
+    content.extend(der::wrap_set(signer_infos));
 
-    Ok(wrap_sequence(content))
+    Ok(der::wrap_sequence(content))
 }
 
 /// 编码 EncapsulatedContentInfo 编码封装内容信息
@@ -1010,19 +1010,19 @@ fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, 
     // contentType OID (需要编码为 06 <len> <bytes>)
     content.extend(&[0x06]);
     let oid_bytes = info.content_type.as_bytes();
-    encode_length(&mut content, oid_bytes.len())?;
+    der::encode_length(&mut content, oid_bytes.len())?;
     content.extend(oid_bytes);
 
     // content [0] EXPLICIT (可选)
     if let Some(ref data) = info.content {
-        let octet_tlv = encode_octet_string(data)?;
+        let octet_tlv = der::encode_octet_string(data)?;
         let mut content_tlv = vec![0xA0];
-        encode_length(&mut content_tlv, octet_tlv.len())?;
+        der::encode_length(&mut content_tlv, octet_tlv.len())?;
         content_tlv.extend(octet_tlv);
         content.extend(content_tlv);
     }
 
-    let result = wrap_sequence(content);
+    let result = der::wrap_sequence(content);
 
     Ok(result)
 }
@@ -1032,7 +1032,7 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
     let mut content = Vec::new();
 
     // version
-    content.extend(encode_integer(signer_info.version as u8)?);
+    content.extend(&der::encode_integer(signer_info.version as u8)?);
 
     // sid
     content.extend(encode_signer_identifier(&signer_info.sid)?);
@@ -1051,7 +1051,7 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
     content.extend(signer_info.signature_algorithm.to_der().unwrap());
 
     // signatureValue
-    content.extend(encode_octet_string(&signer_info.signature)?);
+    content.extend(der::encode_octet_string(&signer_info.signature)?);
 
     // unsignedAttrs [1] IMPLICIT (可选)
     if let Some(ref attrs) = signer_info.unsigned_attrs {
@@ -1060,7 +1060,7 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
         content.extend(attrs_der);
     }
 
-    Ok(wrap_sequence(content))
+    Ok(der::wrap_sequence(content))
 }
 
 /// 编码签名者标识符
@@ -1071,111 +1071,15 @@ fn encode_signer_identifier(sid: &SignerIdentifier) -> Result<Vec<u8>, Error> {
             serial_number,
         } => {
             let mut content = Vec::new();
-            content.extend(issuer.to_der().map_err(|_| Error::DerEncodeError { field: "issuer", reason: "encoding failed" })?);
-            content.extend(encode_integer_bytes(&serial_number.to_der().map_err(|_| Error::DerEncodeError { field: "serial_number", reason: "encoding failed" })?)?);
-            Ok(wrap_sequence(content))
+            content.extend(issuer.to_der().unwrap());
+            content.extend(der::encode_integer_bytes(&serial_number.to_der().unwrap())?);
+            Ok(der::wrap_sequence(content))
         }
         SignerIdentifier::SubjectKeyIdentifier(ski) => {
             // [0] IMPLICIT OCTET STRING
-            let mut result = vec![0x80];
-            encode_length(&mut result, ski.len())?;
-            result.extend(ski);
-            Ok(result)
+            Ok(der::wrap_explicit_tag(0, ski))
         }
     }
-}
-
-/// 编码 OID
-fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
-    let bytes = oid.as_bytes();
-    let mut result = vec![0x06];
-    encode_length(&mut result, bytes.len())?;
-    result.extend(bytes);
-    Ok(result)
-}
-
-/// 编码 INTEGER
-fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
-    Ok(vec![0x02, 0x01, val])
-}
-
-/// 编码 INTEGER（字节数组）
-fn encode_integer_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut result = vec![0x02];
-    encode_length(&mut result, bytes.len())?;
-    result.extend(bytes);
-    Ok(result)
-}
-
-/// 编码 OCTET STRING
-fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut result = vec![0x04];
-    encode_length(&mut result, data.len())?;
-    result.extend(data);
-    Ok(result)
-}
-
-
-/// DER 长度编码（支持短形式和长形式）
-fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
-    if len < 128 {
-        // 短形式
-        out.push(len as u8);
-    } else {
-        // 长形式
-        let mut bytes = Vec::new();
-        let mut n = len;
-        while n > 0 {
-            bytes.push((n & 0xFF) as u8);
-            n >>= 8;
-        }
-        bytes.reverse();
-
-        let num_bytes = bytes.len();
-        if num_bytes > 126 {
-            return Err(Error::InvalidInput);
-        }
-
-        out.push(0x80 | num_bytes as u8);
-        out.extend(bytes);
-    }
-    Ok(())
-}
-
-/// 包装为 SEQUENCE
-fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
-    let mut result = vec![0x30];
-    // 简化处理，假设长度小于 65536
-    if content.len() < 128 {
-        result.push(content.len() as u8);
-    } else if content.len() < 256 {
-        result.push(0x81);
-        result.push(content.len() as u8);
-    } else {
-        result.push(0x82);
-        result.push((content.len() >> 8) as u8);
-        result.push((content.len() & 0xFF) as u8);
-    }
-    result.extend(content);
-    result
-}
-
-/// 包装为 SET
-fn wrap_set(content: Vec<u8>) -> Vec<u8> {
-    let mut result = vec![0x31];
-    // 简化处理，假设长度小于 65536
-    if content.len() < 128 {
-        result.push(content.len() as u8);
-    } else if content.len() < 256 {
-        result.push(0x81);
-        result.push(content.len() as u8);
-    } else {
-        result.push(0x82);
-        result.push((content.len() >> 8) as u8);
-        result.push((content.len() & 0xFF) as u8);
-    }
-    result.extend(content);
-    result
 }
 
 // ====================================================================================
@@ -1435,7 +1339,7 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
         // all_attrs 是多个 Attribute 的串联，需要包装为 SET OF 结构
         // 先构建完整的 SET OF DER 编码
         let mut set_der = vec![0x31]; // SET OF 标签
-        encode_length(&mut set_der, all_attrs.len())?;
+        der::encode_length(&mut set_der, all_attrs.len())?;
         set_der.extend(all_attrs);
         // 使用 x509_cert 的类型解析 Attributes
         let attrs = Attributes::from_der(&set_der).map_err(|_| err())?;
@@ -1458,7 +1362,7 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
         let (attrs_tlv, _) = der::parse_tlv(rest, 0xA1).ok_or_else(err)?;
         // attrs_tlv 是多个 Attribute 的串联，需要包装为 SET OF 结构
         let mut set_der = vec![0x31]; // SET OF 标签
-        encode_length(&mut set_der, attrs_tlv.len())?;
+        der::encode_length(&mut set_der, attrs_tlv.len())?;
         set_der.extend(attrs_tlv);
         unsigned_attrs = Some(Attributes::from_der(&set_der).map_err(|_| err())?);
     }

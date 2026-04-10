@@ -28,6 +28,8 @@
 //! ```
 
 #[cfg(feature = "alloc")]
+use alloc::vec;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 use crate::error::Error;
@@ -43,8 +45,8 @@ pub fn sig_to_der(raw: &[u8; 64]) -> Vec<u8> {
     let r = &raw[..32];
     let s = &raw[32..];
 
-    let r_enc = encode_integer(r);
-    let s_enc = encode_integer(s);
+    let r_enc = encode_integer32(r);
+    let s_enc = encode_integer32(s);
 
     let inner_len = r_enc.len() + s_enc.len();
     let mut der = Vec::with_capacity(2 + inner_len);
@@ -77,10 +79,10 @@ pub fn sig_from_der(der: &[u8]) -> Result<[u8; 64], Error> {
     let body = &rest[..seq_len];
 
     // 解析 r
-    let (r_bytes, body) = decode_integer(body).ok_or_else(err)?;
+    let (r_bytes, body) = decode_integer32(body).ok_or_else(err)?;
 
     // 解析 s
-    let (s_bytes, body) = decode_integer(body).ok_or_else(err)?;
+    let (s_bytes, body) = decode_integer32(body).ok_or_else(err)?;
 
     // 不应有多余数据
     if !body.is_empty() {
@@ -111,7 +113,7 @@ pub fn sig_from_der(der: &[u8]) -> Result<[u8; 64], Error> {
 
 /// 将 32 字节大端整数编码为 DER INTEGER（带 tag 0x02 和 length）
 #[cfg(feature = "alloc")]
-fn encode_integer(bytes: &[u8]) -> Vec<u8> {
+fn encode_integer32(bytes: &[u8]) -> Vec<u8> {
     // 去除前导零（至少保留 1 字节）
     let start = bytes
         .iter()
@@ -134,7 +136,7 @@ fn encode_integer(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// 从字节流中解析一个 DER INTEGER，返回 (value_bytes, 剩余字节)
-fn decode_integer(data: &[u8]) -> Option<(&[u8], &[u8])> {
+fn decode_integer32(data: &[u8]) -> Option<(&[u8], &[u8])> {
     let (tag, rest) = split_first(data)?;
     if *tag != 0x02 {
         return None;
@@ -215,7 +217,7 @@ pub fn parse_tlv_any_full(data: &[u8]) -> Option<(&[u8], &[u8])> {
     } else if *first == 0x82 {
         3
     } else if *first == 0x83 {
-        4  // 3 字节长度编码
+        4 // 3 字节长度编码
     } else {
         return None;
     };
@@ -383,48 +385,46 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 /// let (_, pub_key) = generate_keypair(&mut rng);
 /// let spki_der = public_key_to_spki_der(&pub_key);
 /// ```
-    #[cfg(feature = "alloc")]
-    pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
-        use x509_cert::der::Encode;
+#[cfg(feature = "alloc")]
+pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
+    // 手动编码 BIT STRING，避免 BitString::new 添加额外的 00 字节
+    // BIT STRING 格式：03 <length> <unused_bits> <data>
+    // 对于 SM2 公钥（65 字节），unused_bits = 0
+    // 总长度 = 1 (unused_bits) + 65 (公钥) = 66 字节
+    let mut bit_string_content = Vec::with_capacity(1 + 65);
+    bit_string_content.push(0x00); // unused_bits = 0
+    bit_string_content.extend_from_slice(pub_key.as_slice());
 
-        // 手动编码 BIT STRING，避免 BitString::new 添加额外的 00 字节
-        // BIT STRING 格式：03 <length> <unused_bits> <data>
-        // 对于 SM2 公钥（65 字节），unused_bits = 0
-        // 总长度 = 1 (unused_bits) + 65 (公钥) = 66 字节
-        let mut bit_string_content = Vec::with_capacity(1 + 65);
-        bit_string_content.push(0x00); // unused_bits = 0
-        bit_string_content.extend_from_slice(pub_key.as_slice());
-        
-        // 编码 BIT STRING: tag + length + content
-        let mut bit_string_bytes = Vec::with_capacity(1 + 1 + bit_string_content.len());
-        bit_string_bytes.push(0x03); // BIT STRING tag
-        bit_string_bytes.push(bit_string_content.len() as u8); // length
-        bit_string_bytes.extend(bit_string_content);
+    // 编码 BIT STRING: tag + length + content
+    let mut bit_string_bytes = Vec::with_capacity(1 + 1 + bit_string_content.len());
+    bit_string_bytes.push(0x03); // BIT STRING tag
+    bit_string_bytes.push(bit_string_content.len() as u8); // length
+    bit_string_bytes.extend(bit_string_content);
 
-        // 编码 AlgorithmIdentifier
-        let alg_id_bytes: Vec<u8> = crate::sm2::SM2_SPKI_ALGORITHM.to_der().unwrap();
+    // 编码 AlgorithmIdentifier
+    let alg_id_bytes: Vec<u8> = crate::sm2::SM2_SPKI_ALGORITHM.to_der().unwrap();
 
-        // 编码 SubjectPublicKeyInfo: SEQUENCE { algorithm, subjectPublicKey }
-        let mut spki_content: Vec<u8> = Vec::new();
-        spki_content.extend(&alg_id_bytes);
-        spki_content.extend(&bit_string_bytes);
+    // 编码 SubjectPublicKeyInfo: SEQUENCE { algorithm, subjectPublicKey }
+    let mut spki_content: Vec<u8> = Vec::new();
+    spki_content.extend(&alg_id_bytes);
+    spki_content.extend(&bit_string_bytes);
 
-        let mut spki_bytes = Vec::new();
-        spki_bytes.push(0x30); // SEQUENCE tag
-        if spki_content.len() < 128 {
-            spki_bytes.push(spki_content.len() as u8);
-        } else if spki_content.len() < 256 {
-            spki_bytes.push(0x81);
-            spki_bytes.push(spki_content.len() as u8);
-        } else {
-            spki_bytes.push(0x82);
-            spki_bytes.push((spki_content.len() >> 8) as u8);
-            spki_bytes.push(spki_content.len() as u8);
-        }
-        spki_bytes.extend(spki_content);
-
-        spki_bytes
+    let mut spki_bytes = Vec::new();
+    spki_bytes.push(0x30); // SEQUENCE tag
+    if spki_content.len() < 128 {
+        spki_bytes.push(spki_content.len() as u8);
+    } else if spki_content.len() < 256 {
+        spki_bytes.push(0x81);
+        spki_bytes.push(spki_content.len() as u8);
+    } else {
+        spki_bytes.push(0x82);
+        spki_bytes.push((spki_content.len() >> 8) as u8);
+        spki_bytes.push(spki_content.len() as u8);
     }
+    spki_bytes.extend(spki_content);
+
+    spki_bytes
+}
 
 /// 从 SubjectPublicKeyInfo DER 解析 SM2 公钥
 ///
@@ -442,8 +442,8 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
     // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
     use x509_cert::der::asn1::BitString;
-    let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> = SubjectPublicKeyInfo::from_der(der)
-        .map_err(|_| Error::InvalidPublicKey)?;
+    let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> =
+        SubjectPublicKeyInfo::from_der(der).map_err(|_| Error::InvalidPublicKey)?;
 
     // 验证算法 OID（id-ecPublicKey）
     if spki.algorithm.oid != crate::sm2::EC_PUBKEY_OID {
@@ -452,14 +452,16 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
 
     // 验证参数 OID（SM2 曲线）
     match spki.algorithm.parameters {
-        Some(oid) if oid == crate::sm2::SM2_CURVE_OID => {},
+        Some(oid) if oid == crate::sm2::SM2_CURVE_OID => {}
         _ => return Err(Error::InvalidPublicKey),
     }
 
     // 提取公钥数据
-    let pub_key_bytes: &[u8] = spki.subject_public_key.as_bytes()
+    let pub_key_bytes: &[u8] = spki
+        .subject_public_key
+        .as_bytes()
         .ok_or(Error::InvalidPublicKey)?;
-    
+
     // 验证公钥长度（应为 65 字节：0x04 || X(32B) || Y(32B)）
     if pub_key_bytes.len() != 65 {
         return Err(Error::InvalidPublicKey);
@@ -468,6 +470,125 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
     let mut result = [0u8; 65];
     result.copy_from_slice(pub_key_bytes);
     Ok(result)
+}
+
+// ── DER 编码辅助函数 ─────────────────────────────────────────────────────
+
+/// 编码 OID
+#[cfg(feature = "alloc")]
+pub fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
+    let bytes = oid.as_bytes();
+    let mut result = vec![0x06];
+    encode_length(&mut result, bytes.len())?;
+    result.extend(bytes);
+    Ok(result)
+}
+
+/// 编码 INTEGER（单字节）
+#[cfg(feature = "alloc")]
+pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
+    Ok(vec![0x02, 0x01, val])
+}
+
+/// 编码 INTEGER（字节数组）
+#[cfg(feature = "alloc")]
+pub fn encode_integer_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut result = vec![0x02];
+    encode_length(&mut result, bytes.len())?;
+    result.extend(bytes);
+    Ok(result)
+}
+
+/// 编码 OCTET STRING
+#[cfg(feature = "alloc")]
+pub fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut result = vec![0x04];
+    encode_length(&mut result, data.len())?;
+    result.extend(data);
+    Ok(result)
+}
+
+/// DER 长度编码（支持短形式和长形式）
+#[cfg(feature = "alloc")]
+pub fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
+    if len < 128 {
+        // 短形式
+        out.push(len as u8);
+    } else {
+        // 长形式
+        let mut bytes = Vec::new();
+        let mut n = len;
+        while n > 0 {
+            bytes.push((n & 0xFF) as u8);
+            n >>= 8;
+        }
+        bytes.reverse();
+
+        let num_bytes = bytes.len();
+        if num_bytes > 126 {
+            return Err(Error::InvalidInput);
+        }
+
+        out.push(0x80 | num_bytes as u8);
+        out.extend(bytes);
+    }
+    Ok(())
+}
+
+/// 包装为 SEQUENCE
+#[cfg(feature = "alloc")]
+pub fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
+    let mut result = vec![0x30];
+    // 简化处理，假设长度小于 65536
+    if content.len() < 128 {
+        result.push(content.len() as u8);
+    } else if content.len() < 256 {
+        result.push(0x81);
+        result.push(content.len() as u8);
+    } else {
+        result.push(0x82);
+        result.push((content.len() >> 8) as u8);
+        result.push((content.len() & 0xFF) as u8);
+    }
+    result.extend(content);
+    result
+}
+
+/// 包装为 SET
+#[cfg(feature = "alloc")]
+pub fn wrap_set(content: Vec<u8>) -> Vec<u8> {
+    let mut result = vec![0x31];
+    // 简化处理，假设长度小于 65536
+    if content.len() < 128 {
+        result.push(content.len() as u8);
+    } else if content.len() < 256 {
+        result.push(0x81);
+        result.push(content.len() as u8);
+    } else {
+        result.push(0x82);
+        result.push((content.len() >> 8) as u8);
+        result.push((content.len() & 0xFF) as u8);
+    }
+    result.extend(content);
+    result
+}
+
+/// 包装为显式标签（Context-specific constructed）
+///
+/// 用于包装 [n] EXPLICIT 类型的字段
+///
+/// # 参数
+/// - `tag`: 标签号（0-30）
+/// - `content`: 标签内的内容字节
+///
+/// # 返回
+/// DER 编码的显式标签（tag 0xA0+n + length + content）
+#[cfg(feature = "alloc")]
+pub fn wrap_explicit_tag(tag: u8, content: &[u8]) -> Vec<u8> {
+    let mut result = vec![0xA0 | tag];
+    encode_length(&mut result, content.len()).expect("DER length encoding failed");
+    result.extend_from_slice(content);
+    result
 }
 
 #[cfg(test)]

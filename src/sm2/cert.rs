@@ -1817,7 +1817,6 @@ pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Erro
 pub fn x509_to_gm_certificate(cert: &Certificate) -> Result<GmCertificate, Error> {
     // 将 Certificate 编码为 DER
     let der = cert.to_der().map_err(|_| Error::InvalidCertificate)?;
-    // 使用国密证书解析器解析
     parse_gm_certificate_der(&der)
 }
 
@@ -1840,7 +1839,6 @@ pub fn x509_to_gm_certificate(cert: &Certificate) -> Result<GmCertificate, Error
 pub fn gm_to_x509_certificate(cert: &GmCertificate) -> Result<Certificate, Error> {
     // 先将 GmCertificate 编码为 DER
     let der = generate_gm_certificate_der(cert);
-    // 注意：这可能失败，因为 GM/T 证书可能包含标准 X.509 不支持的 OID
     Certificate::from_der(&der).map_err(|_| Error::InvalidCertificate)
 }
 
