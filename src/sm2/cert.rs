@@ -1701,20 +1701,8 @@ impl CertificateBuilder {
             }
 
             // 包装为 [3] EXPLICIT SEQUENCE OF Extension
-            let ext_seq = wrap_sequence(ext_content);
-            let mut tagged_ext = vec![0xA3];
-            let len = ext_seq.len();
-            if len < 128 {
-                tagged_ext.push(len as u8);
-            } else if len < 256 {
-                tagged_ext.push(0x81);
-                tagged_ext.push(len as u8);
-            } else {
-                tagged_ext.push(0x82);
-                tagged_ext.push((len >> 8) as u8);
-                tagged_ext.push((len & 0xFF) as u8);
-            }
-            tagged_ext.extend(ext_seq);
+            let ext_seq = der::wrap_sequence(ext_content);
+            let tagged_ext = der::wrap_explicit_tag(3, &ext_seq);
 
             tbs.extend(tagged_ext);
         }
