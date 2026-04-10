@@ -8,7 +8,7 @@
 //! - 测试会继续进行，不会因为单个证书失败而中断
 //! - 后续会提供更多证书文件进行测试
 
-use libsmx::sm2::cert::GmCertificate;
+use libsmx::sm2::cert::{self, GmCertificate};
 use libsmx::sm2::cms;
 use libsmx::sm2::PrivateKey;
 use rand::rngs::StdRng;
@@ -170,6 +170,125 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             &priv_pub_key[..16.min(priv_pub_key.len())]
         );
         println!("\n⚠️  证书 {} 测试失败 - 证书和私钥不匹配", name);
+        return false;
+    }
+
+    // 2.5. 国密证书与 X509 证书互转测试
+    println!("\n[2.5/4] 测试国密证书与 X509 证书互转...");
+    
+    // 将国密证书转换为 X509 证书
+    println!("将国密证书转换为 X509 证书...");
+    let x509_cert = match cert::gm_to_x509_certificate(&cert) {
+        Ok(x509) => {
+            println!("✅ 国密证书转换为 X509 证书成功");
+            x509
+        }
+        Err(e) => {
+            println!("\n❌ 国密证书转换为 X509 证书失败：{}", e);
+            println!("   错误类型：{:?}", e);
+            println!("\n   诊断信息:");
+            let cert_der = libsmx::sm2::cert::generate_gm_certificate(&cert);
+            println!("   - 国密证书 DER 长度：{} 字节", cert_der.len());
+            println!(
+                "   - 国密证书 DER (前 50 字节): {:02x?}",
+                &cert_der[..50.min(cert_der.len())]
+            );
+            println!("\n   可能原因:");
+            println!("   - 国密证书使用的 OID 不是标准 X509 支持的 OID");
+            println!("   - 证书扩展项包含 X509 不支持的内容");
+            println!("\n⚠️  证书 {} 测试失败 - 国密证书转 X509 证书失败", name);
+            return false;
+        }
+    };
+
+    // 验证转换后的 X509 证书可以转换回国密证书
+    println!("将 X509 证书转换回国密证书...");
+    let gm_cert_back = match cert::x509_to_gm_certificate(&x509_cert) {
+        Ok(gm_cert) => {
+            println!("✅ X509 证书转换回国密证书成功");
+            gm_cert
+        }
+        Err(e) => {
+            println!("\n❌ X509 证书转换回国密证书失败：{}", e);
+            println!("   错误类型：{:?}", e);
+            println!("\n   诊断信息:");
+            let x509_der = x509_cert.to_der().unwrap();
+            println!("   - X509 证书 DER 长度：{} 字节", x509_der.len());
+            println!(
+                "   - X509 证书 DER (前 50 字节): {:02x?}",
+                &x509_der[..50.min(x509_der.len())]
+            );
+            println!("\n⚠️  证书 {} 测试失败 - X509 证书转国密证书失败", name);
+            return false;
+        }
+    };
+
+    // 验证往返转换后证书信息一致
+    println!("验证往返转换后证书信息一致性...");
+    
+    // 生成国密证书的 DER 编码
+    let gm_cert_der = libsmx::sm2::cert::generate_gm_certificate(&cert);
+    // 生成 X509 证书的 DER 编码（从转换后的 X509 证书生成）
+    let x509_cert_der = x509_cert.to_der().unwrap();
+    // 生成往返转换后的国密证书的 DER 编码
+    let gm_cert_back_der = libsmx::sm2::cert::generate_gm_certificate(&gm_cert_back);
+    
+    if cert.serial_number == gm_cert_back.serial_number
+        && cert.issuer == gm_cert_back.issuer
+        && cert.subject == gm_cert_back.subject
+        && cert.validity == gm_cert_back.validity
+        && cert.signature == gm_cert_back.signature
+        && gm_cert_der == x509_cert_der
+        && gm_cert_der == gm_cert_back_der
+    {
+        println!("✅ 往返转换后证书关键信息一致");
+        println!("   - 序列号：匹配");
+        println!("   - 颁发者：匹配");
+        println!("   - 主体：匹配");
+        println!("   - 有效期：匹配");
+        println!("   - 签名值：匹配");
+        println!("   - 国密证书 DER 编码：匹配");
+        println!("   - X509 证书 DER 编码：匹配");
+    } else {
+        println!("\n❌ 往返转换后证书信息不一致");
+        if cert.serial_number != gm_cert_back.serial_number {
+            println!("   - 序列号：不匹配");
+        }
+        if cert.issuer != gm_cert_back.issuer {
+            println!("   - 颁发者：不匹配");
+        }
+        if cert.subject != gm_cert_back.subject {
+            println!("   - 主体：不匹配");
+        }
+        if cert.validity != gm_cert_back.validity {
+            println!("   - 有效期：不匹配");
+        }
+        if cert.signature != gm_cert_back.signature {
+            println!("   - 签名值：不匹配");
+            println!("     原始签名长度：{} 字节", cert.signature.len());
+            println!("     往返后签名长度：{} 字节", gm_cert_back.signature.len());
+            println!(
+                "     原始签名 (前 32 字节): {:02x?}",
+                &cert.signature[..32.min(cert.signature.len())]
+            );
+            println!(
+                "     往返后签名 (前 32 字节): {:02x?}",
+                &gm_cert_back.signature[..32.min(gm_cert_back.signature.len())]
+            );
+        }
+        if gm_cert_der != x509_cert_der {
+            println!("   - 国密证书与 X509 证书 DER 编码：不匹配");
+            println!("     国密证书 DER 长度：{} 字节", gm_cert_der.len());
+            println!("     X509 证书 DER 长度：{} 字节", x509_cert_der.len());
+            println!("     国密证书 DER (前 50 字节): {:02x?}", &gm_cert_der[..50.min(gm_cert_der.len())]);
+            println!("     X509 证书 DER (前 50 字节): {:02x?}", &x509_cert_der[..50.min(x509_cert_der.len())]);
+        }
+        if gm_cert_der != gm_cert_back_der {
+            println!("   - 往返转换后 DER 编码：不匹配");
+            println!("     原始国密证书 DER 长度：{} 字节", gm_cert_der.len());
+            println!("     往返后国密证书 DER 长度：{} 字节", gm_cert_back_der.len());
+        }
+        println!("\n⚠️  证书 {} 测试失败 - 证书往返转换信息不一致", name);
         return false;
     }
 
