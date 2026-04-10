@@ -37,7 +37,7 @@
 //!     unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
 //! ```
 
-#![cfg(feature = "alloc")]
+#![cfg(all(feature = "alloc", feature = "std"))]
 
 use alloc::format;
 use alloc::string::String;
@@ -57,10 +57,6 @@ use crate::error::Error;
 use crate::sm2::cert::GmCertificate;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
-
-// ====================================================================================
-// 数据结构
-// ====================================================================================
 
 /// 电子签章内容信息 (ContentInfo)
 ///
@@ -358,16 +354,26 @@ fn encode_unsigned_attrs(attrs: &Attributes) -> Result<Vec<u8>, Error> {
 
 /// 编码 signing-time 属性
 fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
+    use std::time::SystemTime;
+
     let mut attr = Vec::new();
 
     // attrType = signing-time (1.2.840.113549.1.9.5)
     attr.extend(encode_oid(crate::sm2::SIGNING_TIME_OID)?);
 
-    // attrValues = SET { UTCTime }
-    // 使用当前时间的简化表示
-    let time_str = b"250101000000Z"; // 示例时间
-    let time_tlv = encode_utc_time(time_str)?;
-    let set_content = wrap_set(time_tlv);
+    // attrValues = SET { Time }
+    let signing_time = Time::try_from(SystemTime::now())
+        .map_err(|_| Error::InvalidSignature)?;
+    
+    // 编码 Time 为 DER
+    let time_der = signing_time.to_der()
+        .map_err(|_| Error::DerEncodeError {
+            field: "signing_time",
+            reason: "failed to encode time",
+        })?;
+    
+    // 包装为 SET OF
+    let set_content = wrap_set(time_der);
     attr.extend(set_content);
 
     Ok(wrap_sequence(attr))
@@ -1086,13 +1092,6 @@ fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(result)
 }
 
-/// 编码 UTCTime
-fn encode_utc_time(time: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut result = vec![0x17]; // UTCTime tag
-    encode_length(&mut result, time.len())?;
-    result.extend(time);
-    Ok(result)
-}
 
 /// DER 长度编码（支持短形式和长形式）
 fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
@@ -1157,7 +1156,7 @@ fn wrap_set(content: Vec<u8>) -> Vec<u8> {
 }
 
 // ====================================================================================
-// 生产级 DER 解析
+// DER 解析
 // ====================================================================================
 
 /// 从 DER 解析 ContentInfo

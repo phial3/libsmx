@@ -300,7 +300,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
 
     println!("创建 CMS 电子签名...");
     let signature =
-        match cms::create_digital_signature(&test_data, &priv_key, &cert, id, &mut rng, false) {
+        match cms::create_digital_signature(&test_data, &priv_key, &cert, id, &mut rng, true) {
             Ok(sig) => {
                 println!("✅ 签名创建成功，长度：{} 字节", sig.len());
                 sig
