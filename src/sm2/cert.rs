@@ -205,6 +205,59 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
     }
 }
 
+/// 创建 CRL Distribution Points 扩展
+///
+/// # 参数
+/// - `crl_urls`: CRL 发布点 URL 列表
+///
+/// # 返回
+/// x509-cert 的 Extension 类型
+pub fn create_crl_distribution_points_extension(crl_urls: &[&str]) -> Extension {
+    use x509_cert::ext::pkix::crl::CrlDistributionPoints;
+    use x509_cert::ext::pkix::crl::dp::DistributionPoint;
+    use x509_cert::ext::pkix::name::{DistributionPointName, GeneralName, GeneralNames};
+    use x509_cert::der::asn1::Ia5String;
+    use alloc::string::ToString;
+    
+    // 创建 DistributionPoint 列表
+    let mut distribution_points = Vec::new();
+    
+    for url in crl_urls {
+        // 创建 URI 类型的 GeneralName
+        let uri = Ia5String::try_from(url.to_string())
+            .expect("Failed to create Ia5String from URL");
+        let general_name = GeneralName::UniformResourceIdentifier(uri);
+        
+        // 创建 GeneralNames
+        let mut names = GeneralNames::new();
+        names.push(general_name);
+        
+        // 创建 DistributionPointName::FullName
+        let dp_name = DistributionPointName::FullName(names);
+        
+        // 创建 DistributionPoint
+        let dp = DistributionPoint {
+            distribution_point: Some(dp_name),
+            reasons: None,
+            crl_issuer: None,
+        };
+        
+        distribution_points.push(dp);
+    }
+    
+    // 创建 CrlDistributionPoints
+    let crl_dps = CrlDistributionPoints(distribution_points);
+    
+    // 编码为 Extension
+    Extension {
+        extn_id: crate::sm2::ID_CE_CRL_DISTRIBUTION_POINTS,
+        critical: false,
+        extn_value: OctetString::new(
+            crl_dps.to_der().expect("Failed to encode CrlDistributionPoints")
+        ).expect("Failed to create OctetString"),
+    }
+}
+
 /// 创建 Subject Key Identifier 扩展
 ///
 /// # 参数
