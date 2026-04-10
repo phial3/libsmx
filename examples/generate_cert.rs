@@ -41,22 +41,13 @@ fn build_ee_subject(common_name: &str) -> Name {
 
 /// 构建有效期（使用当前时间和 1 年有效期）
 fn build_validity_current() -> Validity {
-    #[cfg(feature = "std")]
-    {
-        use std::time::{Duration, SystemTime};
-        let not_before = SystemTime::now();
-        let not_after = not_before + Duration::from_secs(365 * 24 * 3600); // 1 年
-        Validity::<x509_cert::certificate::Rfc5280>::new(
-            Time::try_from(not_before).unwrap(),
-            Time::try_from(not_after).unwrap(),
-        )
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        let not_before_time = parse_utc_time("250101000000Z");
-        let not_after_time = parse_utc_time("300101000000Z");
-        Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time)
-    }
+    use std::time::{Duration, SystemTime};
+    let not_before = SystemTime::now();
+    let not_after = not_before + Duration::from_secs(365 * 24 * 3600); // 1 年
+    Validity::<x509_cert::certificate::Rfc5280>::new(
+        Time::try_from(not_before).unwrap(),
+        Time::try_from(not_after).unwrap(),
+    )
 }
 
 /// 构建序列号（随机 8 字节）
@@ -64,36 +55,6 @@ fn build_serial_random<R: Rng>(rng: &mut R) -> SerialNumber {
     let mut bytes = [0u8; 8];
     rng.fill_bytes(&mut bytes);
     SerialNumber::from(u64::from_be_bytes(bytes))
-}
-
-/// 解析 UTC 时间字符串为 Time 对象
-#[cfg(not(feature = "std"))]
-fn parse_utc_time(time_str: &str) -> Time {
-    // 简单解析 YYMMDDhhmmssZ 格式
-    let year = time_str[0..2].parse::<u32>().unwrap();
-    let month = time_str[2..4].parse::<u8>().unwrap();
-    let day = time_str[4..6].parse::<u8>().unwrap();
-    let hour = time_str[6..8].parse::<u8>().unwrap();
-    let minute = time_str[8..10].parse::<u8>().unwrap();
-    let second = time_str[10..12].parse::<u8>().unwrap();
-
-    // 转换为完整年份（YY -> 20YY，假设都是 21 世纪）
-    let full_year = if year >= 50 { 1900 + year } else { 2000 + year };
-
-    // 使用 SystemTime 创建 Time
-    use std::time::{Duration, SystemTime};
-    // 计算 Unix 时间戳
-    let days_in_month = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-    let mut days = (full_year - 1970) * 365 + ((full_year - 1969) / 4) as u32;
-    days += days_in_month[(month - 1) as usize] as u32;
-    if month > 2 && full_year % 4 == 0 {
-        days += 1;
-    }
-    days += (day - 1) as u32;
-
-    let timestamp = days as u64 * 86400 + hour as u64 * 3600 + minute as u64 * 60 + second as u64;
-    let system_time = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
-    Time::try_from(system_time).unwrap()
 }
 
 fn main() {

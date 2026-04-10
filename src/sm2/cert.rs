@@ -36,6 +36,7 @@
 #![cfg(feature = "alloc")]
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 
 // chrono 用于标准时间处理
@@ -55,7 +56,7 @@ use x509_cert::ext::Extension;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier, SubjectPublicKeyInfo};
-use x509_cert::time::{Time, Validity};
+use x509_cert::time::Validity;
 use x509_cert::Certificate;
 
 // ====================================================================================
@@ -215,7 +216,7 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
 pub fn create_crl_distribution_points_extension(crl_urls: &[&str]) -> Extension {
     use x509_cert::ext::pkix::crl::CrlDistributionPoints;
     use x509_cert::ext::pkix::crl::dp::DistributionPoint;
-    use x509_cert::ext::pkix::name::{DistributionPointName, GeneralName, GeneralNames};
+    use x509_cert::ext::pkix::name::{DistributionPointName, GeneralName};
     use x509_cert::der::asn1::Ia5String;
     use alloc::string::ToString;
     
@@ -227,11 +228,9 @@ pub fn create_crl_distribution_points_extension(crl_urls: &[&str]) -> Extension 
         let uri = Ia5String::try_from(url.to_string())
             .expect("Failed to create Ia5String from URL");
         let general_name = GeneralName::UniformResourceIdentifier(uri);
-        
+
         // 创建 GeneralNames
-        let mut names = GeneralNames::new();
-        names.push(general_name);
-        
+        let names = vec![general_name];
         // 创建 DistributionPointName::FullName
         let dp_name = DistributionPointName::FullName(names);
         
@@ -1657,6 +1656,7 @@ impl CertificateBuilder {
         let not_after = self.not_after.ok_or(Error::InvalidCertificate)?;
 
         // 生成有效期 DER（使用 x509-cert 的 Validity 类型）
+        use x509_cert::time::Time;
         let not_before_time = Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
         let not_after_time = Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
 
@@ -1702,7 +1702,6 @@ impl CertificateBuilder {
 
             // 包装为 [3] EXPLICIT SEQUENCE OF Extension
             let ext_seq = wrap_sequence(ext_content);
-            use alloc::vec;
             let mut tagged_ext = vec![0xA3];
             let len = ext_seq.len();
             if len < 128 {
@@ -2374,9 +2373,10 @@ mod tests {
     use super::*;
     use crate::sm2::generate_keypair;
     use crate::sm2::DEFAULT_ID;
-    use alloc::vec;
+    use core::str::FromStr;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use x509_cert::time::Time;
 
     /// 构建测试用的 X.500 颁发者名称
     ///
@@ -2392,15 +2392,6 @@ mod tests {
         ])
     }
 
-    /// 构建测试用的有效期（默认值）
-    ///
-    /// 默认有效期：2025-01-01 00:00:00Z 到 2030-01-01 00:00:00Z
-    ///
-    /// # 返回
-    /// Validity 结构
-    fn test_validity() -> Validity {
-        build_test_validity("250101000000Z", "300101000000Z")
-    }
 
     /// 构建测试用的 X.500 主体名称
     ///
@@ -2439,24 +2430,10 @@ mod tests {
     /// # 返回
     /// Validity 结构
     fn build_test_validity(not_before: &str, not_after: &str) -> Validity {
-        // 构建 UTCTime DER 编码 (tag 0x17)
-        let encode_utctime = |time_str: &str| -> Vec<u8> {
-            let mut encoded = vec![0x17, time_str.len() as u8];
-            encoded.extend_from_slice(time_str.as_bytes());
-            encoded
-        };
-
-        let not_before_der = encode_utctime(not_before);
-        let not_after_der = encode_utctime(not_after);
-
-        // 构建 Validity SEQUENCE
-        let mut validity_der = Vec::with_capacity(2 + not_before_der.len() + not_after_der.len());
-        validity_der.push(0x30); // SEQUENCE tag
-        validity_der.push((not_before_der.len() + not_after_der.len()) as u8);
-        validity_der.extend(not_before_der);
-        validity_der.extend(not_after_der);
-
-        Validity::from_der(&validity_der).unwrap()
+        // GeneralizedTime 格式
+        let not_before = Time::from_str(not_before).unwrap();
+        let not_after = Time::from_str(not_after).unwrap();
+        Validity::new(not_before, not_after)
     }
 
     // -- 测试数据生成器 ------------------------------------------------------
@@ -2477,8 +2454,8 @@ mod tests {
             Self {
                 common_name: String::from("Test Server"),
                 serial: 1,
-                not_before: String::from("250101000000Z"),
-                not_after: String::from("300101000000Z"),
+                not_before: String::from("2024-01-01T12:13:14Z"),
+                not_after: String::from("2025-01-01T12:13:14Z"),
             }
         }
 
@@ -2592,7 +2569,7 @@ mod tests {
         let params = CertTestBuilder::new()
             .with_common_name("Different Server")
             .with_serial(12345)
-            .with_validity("240101000000Z", "260101000000Z")
+            .with_validity("2024-01-01T12:13:14Z", "2026-01-01T12:13:14Z")
             .build();
 
         let cert = generate_self_signed_cert(
@@ -2747,7 +2724,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = build_test_subject("Test Server");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         let cert = generate_self_signed_cert(
@@ -2778,7 +2755,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = build_test_subject("Test CA");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         // 创建 CA 证书扩展
@@ -2812,7 +2789,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = build_test_subject("Test Signing");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         // 创建签名证书扩展
@@ -2849,7 +2826,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = build_test_subject("Test Encryption");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         // 创建加密证书扩展
@@ -2882,7 +2859,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = build_test_subject("Test Both");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         // 创建通用证书扩展
@@ -2918,7 +2895,7 @@ mod tests {
         let (priv_key, _pub_key) = generate_keypair(&mut rng);
 
         let subject = build_test_subject("Test NoExt");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         // 不指定扩展配置
@@ -2938,7 +2915,7 @@ mod tests {
         // 生成 CA 密钥对
         let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
         let ca_subject = build_test_subject("Test CA");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let ca_serial = build_test_serial(1);
 
         // 生成 CA 证书
@@ -3014,6 +2991,7 @@ mod tests {
         let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
         let ca_subject = build_test_subject("Test CA");
         let ca_serial = build_test_serial(1);
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
 
         // 2. 生成 CA 证书（自签名）
         let mut ca_extensions = Vec::new();
@@ -3022,7 +3000,7 @@ mod tests {
         let ca_cert = generate_self_signed_cert(
             &ca_priv_key,
             &ca_subject,
-            &test_validity(),
+            &validity,
             &ca_serial,
             DEFAULT_ID,
             Some(ca_extensions),
@@ -3039,6 +3017,7 @@ mod tests {
         let (_ee_priv_key, ee_pub_key) = generate_keypair(&mut rng);
         let ee_subject = build_test_subject("Test EE");
         let ee_serial = build_test_serial(2);
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
 
         // 4. 使用 CA 签发终端实体证书（形成证书链）
         let mut ee_extensions = Vec::new();
@@ -3053,7 +3032,7 @@ mod tests {
             &ca_priv_key,
             &ee_subject,
             &ee_pub_key,
-            &test_validity(),
+            &validity,
             &ee_serial,
             DEFAULT_ID,
             Some(ee_extensions),
@@ -3105,7 +3084,7 @@ mod tests {
         let issuer = build_test_issuer("Test CA");
         let _subject = build_test_subject("Test User");
         let serial = build_test_serial(12345);
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
 
         // 生成自签名证书
         let gm_cert = generate_self_signed_cert(
@@ -3182,7 +3161,7 @@ mod tests {
         // 测试大序列号（64 位）
         let serial = SerialNumber::from(0xFFFFFFFFFFFFFFFFu64);
         let issuer = build_test_issuer("Test CA");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
 
         let cert = generate_self_signed_cert(
             &priv_key, &issuer, &validity, &serial, DEFAULT_ID, None, &mut rng,
@@ -3214,7 +3193,7 @@ mod tests {
         ];
 
         let issuer = build_x500_name(&long_name_attributes);
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(1);
 
         let cert = generate_self_signed_cert(
@@ -3291,7 +3270,7 @@ mod tests {
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
         let issuer = build_test_issuer("Test CA");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
 
         // 测试序列号为 0
         let serial_zero = SerialNumber::from(0u32);
@@ -3328,7 +3307,7 @@ mod tests {
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
         let issuer = build_test_issuer("Test CA");
-        let validity = test_validity();
+        let validity = build_test_validity("2024-01-01T12:13:14Z", "2025-01-01T12:13:14Z");
         let serial = build_test_serial(12345);
 
         let cert = generate_self_signed_cert(

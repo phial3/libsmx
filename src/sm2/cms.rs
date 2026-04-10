@@ -722,7 +722,7 @@ pub fn verify_digital_signature(
             is_valid,
             signer: signer_info.sid.clone(),
             certificate,
-            signing_time: signing_time.clone(),
+            signing_time,
             errors,
         });
     }
@@ -1490,13 +1490,14 @@ mod tests {
     use crate::sm2::cert::generate_self_signed_cert;
     use crate::sm2::generate_keypair;
     use crate::sm2::DEFAULT_ID;
+    use core::str::FromStr;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use x509_cert::time::Validity;
 
     /// 生成测试用的简化主体
     fn test_subject() -> Name {
-        Name::from_der(&[0x30, 0x00]).unwrap()
+        Name::from_str("CN=Before\\0dAfter,DC=example,DC=net").unwrap()
     }
 
     /// 生成测试用的序列号
@@ -1508,27 +1509,10 @@ mod tests {
     ///
     /// 固定有效期：2024-01-01 到 2030-01-01
     fn test_validity() -> Validity {
-        // 使用 DER 编码逻辑构建有效期
-        // 格式：SEQUENCE { UTCTime notBefore, UTCTime notAfter }
-
-        // 编码 UTCTime: tag(0x17) + length + time_string
-        let encode_utctime = |time_str: &str| -> Vec<u8> {
-            let mut encoded = vec![0x17, time_str.len() as u8];
-            encoded.extend_from_slice(time_str.as_bytes());
-            encoded
-        };
-
-        let not_before = encode_utctime("240101000000Z");
-        let not_after = encode_utctime("300101000000Z");
-
-        // 包装为 SEQUENCE
-        let mut validity_der = Vec::with_capacity(2 + not_before.len() + not_after.len());
-        validity_der.push(0x30); // SEQUENCE tag
-        validity_der.push((not_before.len() + not_after.len()) as u8);
-        validity_der.extend(not_before);
-        validity_der.extend(not_after);
-        
-        Validity::from_der(&validity_der).unwrap()
+        // GeneralizedTime 格式
+        let not_before = Time::from_str("2024-01-01T12:13:14Z").unwrap();
+        let not_after = Time::from_str("2030-01-01T12:13:14Z").unwrap();
+        Validity::new(not_before, not_after)
     }
 
     #[test]
