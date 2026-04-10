@@ -361,19 +361,7 @@ pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::
     }
     
     // 包装为 SEQUENCE
-    let mut san_seq = Vec::new();
-    san_seq.push(0x30); // SEQUENCE tag
-    if san_content.len() < 128 {
-        san_seq.push(san_content.len() as u8);
-    } else if san_content.len() < 256 {
-        san_seq.push(0x81);
-        san_seq.push(san_content.len() as u8);
-    } else {
-        san_seq.push(0x82);
-        san_seq.push((san_content.len() >> 8) as u8);
-        san_seq.push((san_content.len() & 0xFF) as u8);
-    }
-    san_seq.extend(san_content);
+    let san_seq = der::wrap_sequence(san_content);
     
     Extension {
         extn_id: crate::sm2::ID_CE_SUBJECT_ALT_NAME,
@@ -758,39 +746,14 @@ impl GmCertificate {
                     ext_content.extend(ext_bytes);
                 }
                 // 包装为 [3] 标签
-                let mut ext_wrapper = Vec::new();
-                ext_wrapper.push(0xA3);
-                if ext_content.len() < 128 {
-                    ext_wrapper.push(ext_content.len() as u8);
-                } else if ext_content.len() < 256 {
-                    ext_wrapper.push(0x81);
-                    ext_wrapper.push(ext_content.len() as u8);
-                } else {
-                    ext_wrapper.push(0x82);
-                    ext_wrapper.push((ext_content.len() >> 8) as u8);
-                    ext_wrapper.push((ext_content.len() & 0xFF) as u8);
-                }
-                ext_wrapper.extend(ext_content);
+                let ext_seq = der::wrap_sequence(ext_content);
+                let ext_wrapper = der::wrap_explicit_tag(3, &ext_seq);
                 tbs_bytes.extend(ext_wrapper);
             }
         }
 
         // 包装为 SEQUENCE
-        let mut result = Vec::new();
-        result.push(0x30);
-        if tbs_bytes.len() < 128 {
-            result.push(tbs_bytes.len() as u8);
-        } else if tbs_bytes.len() < 256 {
-            result.push(0x81);
-            result.push(tbs_bytes.len() as u8);
-        } else {
-            result.push(0x82);
-            result.push((tbs_bytes.len() >> 8) as u8);
-            result.push((tbs_bytes.len() & 0xFF) as u8);
-        }
-        result.extend(tbs_bytes);
-
-        result
+        der::wrap_sequence(tbs_bytes)
     }
 }
 
@@ -1022,34 +985,9 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
                 ext_content.extend(ext_bytes);
             }
             // 先将所有扩展包装在一个 SEQUENCE 中
-            let mut ext_seq = Vec::new();
-            ext_seq.push(0x30); // SEQUENCE tag
-            if ext_content.len() < 128 {
-                ext_seq.push(ext_content.len() as u8);
-            } else if ext_content.len() < 256 {
-                ext_seq.push(0x81);
-                ext_seq.push(ext_content.len() as u8);
-            } else {
-                ext_seq.push(0x82);
-                ext_seq.push((ext_content.len() >> 8) as u8);
-                ext_seq.push((ext_content.len() & 0xFF) as u8);
-            }
-            ext_seq.extend(ext_content);
-            
+            let ext_seq = der::wrap_sequence(ext_content);
             // 再将 SEQUENCE 包装为 [3] 标签
-            let mut ext_wrapper = Vec::new();
-            ext_wrapper.push(0xA3);
-            if ext_seq.len() < 128 {
-                ext_wrapper.push(ext_seq.len() as u8);
-            } else if ext_seq.len() < 256 {
-                ext_wrapper.push(0x81);
-                ext_wrapper.push(ext_seq.len() as u8);
-            } else {
-                ext_wrapper.push(0x82);
-                ext_wrapper.push((ext_seq.len() >> 8) as u8);
-                ext_wrapper.push((ext_seq.len() & 0xFF) as u8);
-            }
-            ext_wrapper.extend(ext_seq);
+            let ext_wrapper = der::wrap_explicit_tag(3, &ext_seq);
             tbs_bytes.extend(ext_wrapper);
         }
     }
@@ -1058,20 +996,7 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     let mut cert_bytes = Vec::new();
 
     // TBSCertificate - 包装为 SEQUENCE
-    let mut tbs_with_header = Vec::new();
-    tbs_with_header.push(0x30); // SEQUENCE tag
-                                // 编码长度
-    if tbs_bytes.len() < 128 {
-        tbs_with_header.push(tbs_bytes.len() as u8);
-    } else if tbs_bytes.len() < 256 {
-        tbs_with_header.push(0x81);
-        tbs_with_header.push(tbs_bytes.len() as u8);
-    } else {
-        tbs_with_header.push(0x82);
-        tbs_with_header.push((tbs_bytes.len() >> 8) as u8);
-        tbs_with_header.push((tbs_bytes.len() & 0xFF) as u8);
-    }
-    tbs_with_header.extend(tbs_bytes);
+    let tbs_with_header = der::wrap_sequence(tbs_bytes);
     cert_bytes.extend(tbs_with_header);
 
     // 签名算法（再次编码）
@@ -1088,22 +1013,7 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     cert_bytes.extend(sig_bytes);
 
     // 包装为外层 SEQUENCE
-    let mut result = Vec::new();
-    result.push(0x30); // SEQUENCE tag
-                       // 编码长度
-    if cert_bytes.len() < 128 {
-        result.push(cert_bytes.len() as u8);
-    } else if cert_bytes.len() < 256 {
-        result.push(0x81);
-        result.push(cert_bytes.len() as u8);
-    } else {
-        result.push(0x82);
-        result.push((cert_bytes.len() >> 8) as u8);
-        result.push((cert_bytes.len() & 0xFF) as u8);
-    }
-    result.extend(cert_bytes);
-
-    result
+    der::wrap_sequence(cert_bytes)
 }
 
 /// 从国密证书中提取 SM2 公钥
