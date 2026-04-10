@@ -35,6 +35,7 @@ use alloc::vec::Vec;
 use crate::error::Error;
 use crate::sm2::PrivateKey;
 use x509_cert::der::{Decode, Encode};
+use x509_cert::der::asn1::{OctetStringRef, UintRef};
 use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
@@ -475,40 +476,124 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
 // ── DER 编码辅助函数 ─────────────────────────────────────────────────────
 
 /// 编码 OID
+/// 
+/// 使用 x509_cert::der::Encode trait 进行编码
 #[cfg(feature = "alloc")]
 pub fn encode_oid(oid: ObjectIdentifier) -> Result<Vec<u8>, Error> {
-    let bytes = oid.as_bytes();
-    let mut result = vec![0x06];
-    encode_length(&mut result, bytes.len())?;
-    result.extend(bytes);
-    Ok(result)
+    // 直接使用 ObjectIdentifier 的 to_der() 方法
+    oid.to_der().map_err(|_| Error::DerEncodeError { 
+        field: "oid", 
+        reason: "encoding failed" 
+    })
 }
 
 /// 编码 INTEGER（单字节）
+/// 
+/// 直接使用手写的 DER 编码，避免临时值问题
 #[cfg(feature = "alloc")]
 pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
+    // 直接构造 DER 编码：tag 0x02 + length 0x01 + value
     Ok(vec![0x02, 0x01, val])
 }
 
 /// 编码 INTEGER（字节数组）
+/// 
+/// 使用 x509_cert::der::asn1::UintRef 类型进行编码
 #[cfg(feature = "alloc")]
 pub fn encode_integer_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut result = vec![0x02];
-    encode_length(&mut result, bytes.len())?;
-    result.extend(bytes);
-    Ok(result)
+    // UintRef 可以直接从字节切片创建
+    let uint_ref = UintRef::new(bytes).map_err(|_| Error::DerEncodeError { 
+        field: "integer_bytes", 
+        reason: "encoding failed" 
+    })?;
+    uint_ref.to_der().map_err(|_| Error::DerEncodeError { 
+        field: "integer_bytes", 
+        reason: "encoding failed" 
+    })
 }
 
 /// 编码 OCTET STRING
+/// 
+/// 使用 x509_cert::der::asn1::OctetStringRef 类型进行编码
 #[cfg(feature = "alloc")]
 pub fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut result = vec![0x04];
-    encode_length(&mut result, data.len())?;
-    result.extend(data);
-    Ok(result)
+    // OctetStringRef 可以直接从字节切片创建
+    let octet_ref = OctetStringRef::new(data).map_err(|_| Error::DerEncodeError { 
+        field: "octet_string", 
+        reason: "encoding failed" 
+    })?;
+    octet_ref.to_der().map_err(|_| Error::DerEncodeError { 
+        field: "octet_string", 
+        reason: "encoding failed" 
+    })
+}
+
+/// 包装为 SEQUENCE
+/// 
+/// 直接将内容字节包装为 SEQUENCE（tag 0x30 + length + content）
+/// 注意：此函数假设 content 已经是有效的 DER 编码内容
+#[cfg(feature = "alloc")]
+pub fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
+    let mut result = vec![0x30];
+    // 简化处理，假设长度小于 65536
+    if content.len() < 128 {
+        result.push(content.len() as u8);
+    } else if content.len() < 256 {
+        result.push(0x81);
+        result.push(content.len() as u8);
+    } else {
+        result.push(0x82);
+        result.push((content.len() >> 8) as u8);
+        result.push((content.len() & 0xFF) as u8);
+    }
+    result.extend(content);
+    result
+}
+
+/// 包装为 SET
+/// 
+/// 直接将内容字节包装为 SET（tag 0x31 + length + content）
+/// 注意：此函数假设 content 已经是有效的 DER 编码内容
+#[cfg(feature = "alloc")]
+pub fn wrap_set(content: Vec<u8>) -> Vec<u8> {
+    let mut result = vec![0x31];
+    // 简化处理，假设长度小于 65536
+    if content.len() < 128 {
+        result.push(content.len() as u8);
+    } else if content.len() < 256 {
+        result.push(0x81);
+        result.push(content.len() as u8);
+    } else {
+        result.push(0x82);
+        result.push((content.len() >> 8) as u8);
+        result.push((content.len() & 0xFF) as u8);
+    }
+    result.extend(content);
+    result
+}
+
+/// 包装为显式标签（Context-specific constructed）
+/// 
+/// 用于包装 [n] EXPLICIT 类型的字段
+/// 
+/// # 参数
+/// - `tag`: 标签号（0-30）
+/// - `content`: 标签内的内容字节（必须是有效的 DER 编码）
+/// 
+/// # 返回
+/// DER 编码的显式标签（tag 0xA0+n + length + content）
+#[cfg(feature = "alloc")]
+pub fn wrap_explicit_tag(tag: u8, content: &[u8]) -> Vec<u8> {
+    // 直接构造 DER 编码：tag + length + content
+    let mut result = vec![0xA0 | tag];
+    encode_length(&mut result, content.len()).expect("DER length encoding failed");
+    result.extend_from_slice(content);
+    result
 }
 
 /// DER 长度编码（支持短形式和长形式）
+/// 
+/// 这是内部辅助函数，用于 `wrap_explicit_tag` 和 cms 模块
 #[cfg(feature = "alloc")]
 pub fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
     if len < 128 {
@@ -533,62 +618,6 @@ pub fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
         out.extend(bytes);
     }
     Ok(())
-}
-
-/// 包装为 SEQUENCE
-#[cfg(feature = "alloc")]
-pub fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
-    let mut result = vec![0x30];
-    // 简化处理，假设长度小于 65536
-    if content.len() < 128 {
-        result.push(content.len() as u8);
-    } else if content.len() < 256 {
-        result.push(0x81);
-        result.push(content.len() as u8);
-    } else {
-        result.push(0x82);
-        result.push((content.len() >> 8) as u8);
-        result.push((content.len() & 0xFF) as u8);
-    }
-    result.extend(content);
-    result
-}
-
-/// 包装为 SET
-#[cfg(feature = "alloc")]
-pub fn wrap_set(content: Vec<u8>) -> Vec<u8> {
-    let mut result = vec![0x31];
-    // 简化处理，假设长度小于 65536
-    if content.len() < 128 {
-        result.push(content.len() as u8);
-    } else if content.len() < 256 {
-        result.push(0x81);
-        result.push(content.len() as u8);
-    } else {
-        result.push(0x82);
-        result.push((content.len() >> 8) as u8);
-        result.push((content.len() & 0xFF) as u8);
-    }
-    result.extend(content);
-    result
-}
-
-/// 包装为显式标签（Context-specific constructed）
-///
-/// 用于包装 [n] EXPLICIT 类型的字段
-///
-/// # 参数
-/// - `tag`: 标签号（0-30）
-/// - `content`: 标签内的内容字节
-///
-/// # 返回
-/// DER 编码的显式标签（tag 0xA0+n + length + content）
-#[cfg(feature = "alloc")]
-pub fn wrap_explicit_tag(tag: u8, content: &[u8]) -> Vec<u8> {
-    let mut result = vec![0xA0 | tag];
-    encode_length(&mut result, content.len()).expect("DER length encoding failed");
-    result.extend_from_slice(content);
-    result
 }
 
 #[cfg(test)]

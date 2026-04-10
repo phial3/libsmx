@@ -1193,7 +1193,6 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
 
     // data 已经是 SEQUENCE 的 body，直接解析
     let mut rest = data;
-    // panic!("parse_encap_content_info: data len={}, first 50 bytes={:02x?}", data.len(), &data[..data.len().min(50)]);
 
     // contentType
     let (content_type, r) = der::parse_tlv(rest, 0x06).ok_or_else(err)?;
