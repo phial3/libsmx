@@ -263,18 +263,14 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
         if cert.validity != gm_cert_back.validity {
             println!("   - 有效期：不匹配");
         }
+        let orig_sig_bytes = cert.signature.raw_bytes();
+        let back_sig_bytes = gm_cert_back.signature.raw_bytes();
         if cert.signature != gm_cert_back.signature {
             println!("   - 签名值：不匹配");
-            println!("     原始签名长度：{} 字节", cert.signature.len());
-            println!("     往返后签名长度：{} 字节", gm_cert_back.signature.len());
-            println!(
-                "     原始签名 (前 32 字节): {:02x?}",
-                &cert.signature[..32.min(cert.signature.len())]
-            );
-            println!(
-                "     往返后签名 (前 32 字节): {:02x?}",
-                &gm_cert_back.signature[..32.min(gm_cert_back.signature.len())]
-            );
+            println!("     原始签名长度：{} 字节", orig_sig_bytes.len());
+            println!("     往返后签名长度：{} 字节", back_sig_bytes.len());
+            println!("     原始签名 (前 32 字节): {:02x?}", &orig_sig_bytes[..32.min(orig_sig_bytes.len())]);
+            println!("     往返后签名 (前 32 字节): {:02x?}", &back_sig_bytes[..32.min(back_sig_bytes.len())]);
         }
         if gm_cert_der != x509_cert_der {
             println!("   - 国密证书与 X509 证书 DER 编码：不匹配");

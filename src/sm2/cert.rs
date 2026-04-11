@@ -48,7 +48,7 @@ use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 use rand_core::Rng;
 use x509_cert::attr::AttributeTypeAndValue;
-use x509_cert::der::asn1::{BitString, BitStringRef, OctetString, Utf8StringRef};
+use x509_cert::der::asn1::{BitString, OctetString, Utf8StringRef};
 use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::{Any, Decode, Encode};
 use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages};
@@ -92,8 +92,8 @@ pub struct GmCertificate {
     pub serial_number: SerialNumber,
     /// 签名算法
     pub signature_algorithm: AlgorithmIdentifier<ObjectIdentifier>,
-    /// 签名值（原始字节）
-    pub signature: Vec<u8>,
+    /// 签名值
+    pub signature: BitString,
     /// 签发者
     pub issuer: Name,
     /// 主体
@@ -550,7 +550,7 @@ impl GmCertificate {
         // 解析签名
         let sig_array: [u8; 64] = self
             .signature
-            .as_slice()
+            .raw_bytes()
             .try_into()
             .map_err(|_| Error::InvalidSignature)?;
 
@@ -615,7 +615,7 @@ impl GmCertificate {
     /// - `Err(Error::InvalidSignature)`: 签名验证失败
     pub fn verify_self_signature(&self, id: &[u8]) -> Result<(), Error> {
         let pub_key = self.extract_sm2_public_key()?;
-        self.verify_signature(&self.signature, &pub_key, id)
+        self.verify_signature(self.signature.raw_bytes(), &pub_key, id)
     }
 
     /// 使用 CA 证书验证证书签名
@@ -648,7 +648,7 @@ impl GmCertificate {
         // 解析签名
         let sig_array: [u8; 64] = self
             .signature
-            .as_slice()
+            .raw_bytes()
             .try_into()
             .map_err(|_| Error::InvalidSignature)?;
 
@@ -808,13 +808,10 @@ pub fn parse_gm_certificate_der(der: &[u8]) -> Result<GmCertificate, Error> {
 
     // 解析签名值（BIT STRING）
     let signature = if rest.len() > 3 && rest[0] == 0x03 {
-        let (sig_bit_str, _) = der::parse_tlv(rest, 0x03).ok_or_else(err)?;
-        if sig_bit_str.is_empty() || sig_bit_str[0] != 0 {
-            return Err(err());
-        }
-        sig_bit_str[1..].to_vec()
+        let (sig_bit_str, _) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+        BitString::from_der(sig_bit_str).map_err(|_| err())?
     } else {
-        rest.to_vec()
+        BitString::new(0, rest).map_err(|_| err())?
     };
 
     // 将 DER 字节解析为结构化类型
@@ -905,9 +902,8 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     // 签名算法（再次编码）
     cert.signature_algorithm.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
 
-    // 签名值（BIT STRING）
-    let bit_string = BitStringRef::new(0, &cert.signature).unwrap();
-    bit_string.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
+    // 签名值
+    cert.signature.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
 
     // 包装为外层 SEQUENCE
     der::wrap_sequence(cert_bytes)
@@ -1646,12 +1642,12 @@ pub fn sign_tbs_certificate<R: Rng>(
     priv_key: &PrivateKey,
     id: &[u8],
     rng: &mut R,
-) -> Result<Vec<u8>, Error> {
+) -> Result<BitString, Error> {
     let pub_key = priv_key.public_key();
     let z = crate::sm2::get_z(id, &pub_key);
     let e = crate::sm2::get_e(&z, tbs_data);
     let sig = sign(&e, priv_key, rng);
-    Ok(sig.to_vec())
+    BitString::new(0, &sig).map_err(|_| Error::InvalidSignature)
 }
 
 /// 验证证书 TBS 数据的 SM2 签名
@@ -1991,7 +1987,7 @@ fn build_and_sign_cert<R: Rng>(
         subject: subject.clone(),
         subject_public_key_info: spki,
         extensions: extensions.clone(),
-        signature: Vec::new(),
+        signature: BitString::new(0, &[]).expect("bit string creation failed"),
     };
 
     // 编码 TBS
@@ -2280,7 +2276,7 @@ mod tests {
             ))
             .unwrap(),
             extensions: None,
-            signature: vec![0x00; 64],
+            signature: BitString::new(0, &[0x00; 64]).expect("bit string creation failed"),
         };
 
         // 2025-01-01 00:00:00 UTC
