@@ -249,29 +249,12 @@ pub fn create_digital_signature<R: Rng>(
     let signature = sign(&e, priv_key, rng);
 
     // 构建 SignerInfo
-    let signer_info = SignerInfo {
-        version: 1,
-        sid: SignerIdentifier::IssuerAndSerialNumber {
-            issuer: cert.issuer.clone(),
-            serial_number: cert.serial_number.clone(),
-        },
-        digest_algorithm: AlgorithmIdentifier {
-            oid: crate::sm2::SM3_OID,
-            parameters: None,
-        },
-        signed_attrs: Some(signed_attrs),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        signature: signature.to_vec(),
-        unsigned_attrs: None,
-    };
+    let signer_info = create_signer_info(signed_attrs, signature.to_vec(), cert);
 
     // 构建 SignedData
     let signed_data = SignedData {
         version: 1,
-        digest_algorithms: vec![AlgorithmIdentifier {
-            oid: crate::sm2::SM3_OID,
-            parameters: None,
-        }],
+        digest_algorithms: vec![crate::sm2::SM3_DIGEST_ALGORITHM],
         encap_content_info: EncapsulatedContentInfo {
             content_type: crate::sm2::PKCS7_DATA_OID,
             content: Some(data.to_vec()),
@@ -328,6 +311,33 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attribute
     }
     
     Ok(attrs)
+}
+
+/// 创建 SignerInfo
+///
+/// 根据签名配置创建符合 RFC 5652 标准的 SignerInfo 结构。
+///
+/// # 参数
+/// - `signed_attrs`: 签名属性
+/// - `signature`: 签名值
+/// - `cert`: 签名者证书
+fn create_signer_info(
+    signed_attrs: Attributes,
+    signature: Vec<u8>,
+    cert: &GmCertificate,
+) -> SignerInfo {
+    SignerInfo {
+        version: 1,
+        sid: SignerIdentifier::IssuerAndSerialNumber {
+            issuer: cert.issuer.clone(),
+            serial_number: cert.serial_number.clone(),
+        },
+        digest_algorithm: crate::sm2::SM3_DIGEST_ALGORITHM,
+        signed_attrs: Some(signed_attrs),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        signature,
+        unsigned_attrs: None,
+    }
 }
 
 /// 将 Attributes 编码为 [0] IMPLICIT 格式用于签名
@@ -531,32 +541,14 @@ impl CmsSignerBuilder {
             let signature = sign(&e, &signer_config.private_key, rng);
 
             // 构建 SignerInfo
-            let signer_info = SignerInfo {
-                version: 1,
-                sid: SignerIdentifier::IssuerAndSerialNumber {
-                    issuer: signer_config.certificate.issuer.clone(),
-                    serial_number: signer_config.certificate.serial_number.clone(),
-                },
-                digest_algorithm: AlgorithmIdentifier {
-                    oid: crate::sm2::SM3_OID,
-                    parameters: None,
-                },
-                signed_attrs: Some(signed_attrs),
-                signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-                signature: signature.to_vec(),
-                unsigned_attrs: None,
-            };
-
+            let signer_info = create_signer_info(signed_attrs, signature.to_vec(), &signer_config.certificate);
             signer_infos.push(signer_info);
         }
 
         // 构建 SignedData
         let signed_data = SignedData {
             version: 1,
-            digest_algorithms: vec![AlgorithmIdentifier {
-                oid: crate::sm2::SM3_OID,
-                parameters: None,
-            }],
+            digest_algorithms: vec![crate::sm2::SM3_DIGEST_ALGORITHM],
             encap_content_info: EncapsulatedContentInfo {
                 content_type: self.content_type,
                 content: Some(self.content.clone()),

@@ -664,65 +664,33 @@ impl GmCertificate {
     /// # 返回
     /// TBS 证书的 DER 编码字节数组
     fn tbs_certificate(&self) -> Vec<u8> {
-        // 使用与 generate_gm_certificate 相同的编码逻辑
         let mut tbs_bytes = Vec::new();
 
         // 版本（v3 及以上需要显式编码）
         if self.version > 0 {
-            // 编码为 [0] EXPLICIT INTEGER
             let version_int = der::encode_integer(self.version as u8).expect("version encoding failed");
-            let version_wrapper = der::wrap_explicit_tag(0, &version_int);
-            tbs_bytes.extend(version_wrapper);
+            tbs_bytes.extend(der::wrap_explicit_tag(0, &version_int));
         }
 
-        // 序列号
-        let mut serial_bytes = Vec::new();
-        self.serial_number.encode(&mut serial_bytes).unwrap();
-        tbs_bytes.extend(serial_bytes);
-
-        // 签名算法
-        let mut sig_alg_bytes = Vec::new();
-        self.signature_algorithm.encode(&mut sig_alg_bytes).unwrap();
-        tbs_bytes.extend(sig_alg_bytes);
-
-        // 签发者
-        let mut issuer_bytes = Vec::new();
-        self.issuer.encode(&mut issuer_bytes).unwrap();
-        tbs_bytes.extend(issuer_bytes);
-
-        // 有效期
-        let mut validity_bytes = Vec::new();
-        self.validity.encode(&mut validity_bytes).unwrap();
-        tbs_bytes.extend(validity_bytes);
-
-        // 主体
-        let mut subject_bytes = Vec::new();
-        self.subject.encode(&mut subject_bytes).unwrap();
-        tbs_bytes.extend(subject_bytes);
-
-        // 主体公钥信息
-        let mut spki_bytes = Vec::new();
-        self.subject_public_key_info
-            .encode(&mut spki_bytes)
-            .unwrap();
-        tbs_bytes.extend(spki_bytes);
+        // 序列号、签名算法、签发者、有效期、主体、主体公钥信息
+        self.serial_number.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+        self.signature_algorithm.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+        self.issuer.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+        self.validity.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+        self.subject.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+        self.subject_public_key_info.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
 
         // 扩展（如果存在）
         if let Some(extensions) = &self.extensions {
             if !extensions.is_empty() {
                 let mut ext_content = Vec::new();
                 for ext in extensions {
-                    let ext_bytes = encode_extension(ext);
-                    ext_content.extend(ext_bytes);
+                    ext_content.extend(encode_extension(ext));
                 }
-                // 包装为 [3] 标签
-                let ext_seq = der::wrap_sequence(ext_content);
-                let ext_wrapper = der::wrap_explicit_tag(3, &ext_seq);
-                tbs_bytes.extend(ext_wrapper);
+                tbs_bytes.extend(der::wrap_explicit_tag(3, &der::wrap_sequence(ext_content)));
             }
         }
 
-        // 包装为 SEQUENCE
         der::wrap_sequence(tbs_bytes)
     }
 }
@@ -892,49 +860,25 @@ pub fn parse_gm_certificate_der(der: &[u8]) -> Result<GmCertificate, Error> {
 ///
 /// 此函数仅执行 DER 编码，不生成签名。
 /// 签名值必须预先计算并存储在 `cert.signature` 中。
+/// 将 DER 编码值追加到缓冲区
+///
 pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     // 构建 TBSCertificate 的内容
     let mut tbs_bytes = Vec::new();
 
     // 版本（v3 及以上需要显式编码）
     if cert.version > 0 {
-        // 编码为 [0] EXPLICIT INTEGER
         let version_int = der::encode_integer(cert.version as u8).expect("version encoding failed");
-        let version_wrapper = der::wrap_explicit_tag(0, &version_int);
-        tbs_bytes.extend(version_wrapper);
+        tbs_bytes.extend(der::wrap_explicit_tag(0, &version_int));
     }
 
-    // 序列号
-    let mut serial_bytes = Vec::new();
-    cert.serial_number.encode(&mut serial_bytes).unwrap();
-    tbs_bytes.extend(serial_bytes);
-
-    // 签名算法
-    let mut sig_alg_bytes = Vec::new();
-    cert.signature_algorithm.encode(&mut sig_alg_bytes).unwrap();
-    tbs_bytes.extend(sig_alg_bytes);
-
-    // 签发者
-    let mut issuer_bytes = Vec::new();
-    cert.issuer.encode(&mut issuer_bytes).unwrap();
-    tbs_bytes.extend(issuer_bytes);
-
-    // 有效期
-    let mut validity_bytes = Vec::new();
-    cert.validity.encode(&mut validity_bytes).unwrap();
-    tbs_bytes.extend(validity_bytes);
-
-    // 主体
-    let mut subject_bytes = Vec::new();
-    cert.subject.encode(&mut subject_bytes).unwrap();
-    tbs_bytes.extend(subject_bytes);
-
-    // 主体公钥信息
-    let mut spki_bytes = Vec::new();
-    cert.subject_public_key_info
-        .encode(&mut spki_bytes)
-        .unwrap();
-    tbs_bytes.extend(spki_bytes);
+    // 序列号、签名算法、签发者、有效期、主体、主体公钥信息
+    cert.serial_number.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+    cert.signature_algorithm.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+    cert.issuer.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+    cert.validity.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+    cert.subject.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+    cert.subject_public_key_info.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
 
     // 扩展（如果存在）
     if let Some(extensions) = &cert.extensions {
@@ -956,21 +900,14 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     let mut cert_bytes = Vec::new();
 
     // TBSCertificate - 包装为 SEQUENCE
-    let tbs_with_header = der::wrap_sequence(tbs_bytes);
-    cert_bytes.extend(tbs_with_header);
+    cert_bytes.extend(der::wrap_sequence(tbs_bytes));
 
     // 签名算法（再次编码）
-    let mut sig_alg_bytes2 = Vec::new();
-    cert.signature_algorithm
-        .encode(&mut sig_alg_bytes2)
-        .unwrap();
-    cert_bytes.extend(sig_alg_bytes2);
+    cert.signature_algorithm.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
 
     // 签名值（BIT STRING）
-    let mut sig_bytes = Vec::new();
     let bit_string = BitStringRef::new(0, &cert.signature).unwrap();
-    bit_string.encode(&mut sig_bytes).unwrap();
-    cert_bytes.extend(sig_bytes);
+    bit_string.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
 
     // 包装为外层 SEQUENCE
     der::wrap_sequence(cert_bytes)
@@ -2009,6 +1946,73 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 ///     &mut rng,
 /// ).expect("Failed to generate certificate");
 /// ```
+
+/// 构建证书并签名
+///
+/// 通用函数，用于构建 GmCertificate 并签名。
+///
+/// # 参数
+/// - `issuer`: 签发者名称
+/// - `subject`: 主体名称
+/// - `subject_pub_key`: 主体公钥（65 字节未压缩格式）
+/// - `validity`: 有效期
+/// - `serial_number`: 序列号
+/// - `extensions`: 扩展列表（可选）
+/// - `signing_key`: 签名私钥
+/// - `id`: SM2 签名 ID
+/// - `rng`: 随机数生成器
+///
+/// # 返回
+/// - `Ok(GmCertificate)`: 签名成功的证书
+/// - `Err(Error)`: 签名失败
+fn build_and_sign_cert<R: Rng>(
+    issuer: &Name,
+    subject: &Name,
+    subject_pub_key: &[u8; 65],
+    validity: &Validity,
+    serial_number: &SerialNumber,
+    extensions: Option<Vec<Extension>>,
+    signing_key: &PrivateKey,
+    id: &[u8],
+    rng: &mut R,
+) -> Result<GmCertificate, Error> {
+    // 构建 SubjectPublicKeyInfo
+    let spki_der = der::public_key_to_spki_der(subject_pub_key);
+    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
+        .map_err(|_| Error::InvalidCertificate)?;
+
+    // 构建证书结构（不含签名）
+    let cert_for_tbs = GmCertificate {
+        version: 2,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer.clone(),
+        validity: *validity,
+        subject: subject.clone(),
+        subject_public_key_info: spki,
+        extensions: extensions.clone(),
+        signature: Vec::new(),
+    };
+
+    // 编码 TBS
+    let tbs = cert_for_tbs.tbs_certificate();
+
+    // 签名
+    let signature = sign_tbs_certificate(&tbs, signing_key, id, rng)?;
+
+    Ok(GmCertificate {
+        version: 2,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer.clone(),
+        validity: *validity,
+        subject: subject.clone(),
+        subject_public_key_info: cert_for_tbs.subject_public_key_info,
+        extensions,
+        signature,
+    })
+}
+
 pub fn generate_self_signed_cert<R: Rng>(
     priv_key: &PrivateKey,
     subject: &Name,
@@ -2018,47 +2022,10 @@ pub fn generate_self_signed_cert<R: Rng>(
     extensions: Option<Vec<Extension>>,
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
-    // 获取公钥
     let pub_key = priv_key.public_key();
-
-    // 构建 SubjectPublicKeyInfo
-    let spki_der = der::public_key_to_spki_der(&pub_key);
-    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
-        .map_err(|_| Error::InvalidCertificate)?;
-
-    // 签发者 = 主体
-    let issuer_name = subject.clone();
-
-    // 首先构建 GmCertificate 结构（不含签名）
-    let cert_without_sig = GmCertificate {
-        version: 2,
-        serial_number: serial_number.clone(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        issuer: issuer_name.clone(),
-        validity: *validity,
-        subject: subject.clone(),
-        subject_public_key_info: spki,
-        extensions: extensions.clone(),
-        signature: Vec::new(), // 空签名作为占位符
-    };
-
-    // 使用 generate_gm_certificate 的逻辑编码 TBS
-    let tbs = cert_without_sig.tbs_certificate();
-
-    // 签名
-    let signature = sign_tbs_certificate(&tbs, priv_key, id, rng)?;
-
-    Ok(GmCertificate {
-        version: 2,
-        serial_number: serial_number.clone(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        issuer: issuer_name.clone(),
-        validity: *validity,
-        subject: subject.clone(),
-        subject_public_key_info: cert_without_sig.subject_public_key_info,
-        extensions,
-        signature,
-    })
+    build_and_sign_cert(
+        subject, subject, &pub_key, validity, serial_number, extensions, priv_key, id, rng
+    )
 }
 
 /// 编码单个扩展为 DER 格式
@@ -2121,44 +2088,10 @@ pub fn issue_certificate<R: Rng>(
     extensions: Option<Vec<Extension>>,
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
-    // 构建 SubjectPublicKeyInfo
-    let spki_der = der::public_key_to_spki_der(subject_pub_key);
-    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
-        .map_err(|_| Error::InvalidCertificate)?;
-
-    // 签发者（使用 CA 的主体）
-    let issuer_name = ca_cert.subject.clone();
-
-    // 构建证书结构用于 TBS 编码
-    let cert_for_tbs = GmCertificate {
-        version: 2,
-        serial_number: serial_number.clone(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        issuer: issuer_name.clone(),
-        validity: *validity,
-        subject: subject.clone(),
-        subject_public_key_info: spki.clone(),
-        extensions: extensions.clone(),
-        signature: Vec::new(),
-    };
-
-    // 使用 tbs_certificate() 方法编码 TBS（与 generate_self_signed_cert 一致）
-    let tbs = cert_for_tbs.tbs_certificate();
-
-    // 使用 CA 私钥签名
-    let signature = sign_tbs_certificate(&tbs, ca_priv_key, ca_id, rng)?;
-
-    Ok(GmCertificate {
-        version: 2,
-        serial_number: serial_number.clone(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        issuer: issuer_name.clone(),
-        validity: *validity,
-        subject: subject.clone(),
-        subject_public_key_info: spki,
-        extensions,
-        signature,
-    })
+    build_and_sign_cert(
+        &ca_cert.subject, subject, subject_pub_key, validity, serial_number, 
+        extensions, ca_priv_key, ca_id, rng
+    )
 }
 
 // ====================================================================================

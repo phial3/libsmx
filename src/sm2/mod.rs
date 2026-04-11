@@ -157,10 +157,6 @@ pub const ID_KP_EMAIL_PROTECTION: ObjectIdentifier = ObjectIdentifier::new_unwra
 /// SM2 公钥算法标识符（用于 SubjectPublicKeyInfo）
 ///
 /// 完整的 AlgorithmIdentifier，包含 id-ecPublicKey 和 SM2 曲线参数：
-/// AlgorithmIdentifier {
-///     oid: EC_PUBKEY_OID (1.2.840.10045.2.1),
-///     parameters: Some(SM2_CURVE_OID) (1.2.156.10197.1.301)
-/// }
 pub const SM2_SPKI_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmIdentifier {
     oid: EC_PUBKEY_OID,
     parameters: Some(SM2_CURVE_OID),
@@ -169,13 +165,17 @@ pub const SM2_SPKI_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmI
 /// SM2 签名算法标识符（用于 X.509 证书签名算法和 CMS 签名）
 ///
 /// 完整的 AlgorithmIdentifier for SM2withSM3：
-/// AlgorithmIdentifier {
-///     oid: SM2_SIGNATURE_OID (1.2.156.10197.1.501),
-///     parameters: None
-/// }
 /// 注意：国密标准中 SM2withSM3 算法标识符不包含 parameters
 pub const SM2_SIGNATURE_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmIdentifier {
     oid: SM2_SIGNATURE_OID,
+    parameters: None,
+};
+
+/// SM3 摘要算法标识符（用于 CMS digestAlgorithms）
+///
+/// 符合 RFC 5652 标准的 AlgorithmIdentifier：
+pub const SM3_DIGEST_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmIdentifier {
+    oid: SM3_OID,
     parameters: None,
 };
 
