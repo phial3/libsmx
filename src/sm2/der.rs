@@ -65,13 +65,13 @@ pub fn sig_from_der(der: &[u8]) -> Result<[u8; 64], Error> {
     let err = || Error::InvalidSignature;
 
     // SEQUENCE tag
-    let (tag, rest) = split_first(der).ok_or_else(err)?;
+    let (tag, rest) = der.split_first().ok_or_else(err)?;
     if *tag != 0x30 {
         return Err(err());
     }
 
     // SEQUENCE length
-    let (seq_len, rest) = split_first(rest).ok_or_else(err)?;
+    let (seq_len, rest) = rest.split_first().ok_or_else(err)?;
     let seq_len = *seq_len as usize;
     if rest.len() < seq_len {
         return Err(err());
@@ -137,11 +137,11 @@ fn encode_integer32(bytes: &[u8]) -> Vec<u8> {
 
 /// 从字节流中解析一个 DER INTEGER，返回 (value_bytes, 剩余字节)
 fn decode_integer32(data: &[u8]) -> Option<(&[u8], &[u8])> {
-    let (tag, rest) = split_first(data)?;
+    let (tag, rest) = data.split_first()?;
     if *tag != 0x02 {
         return None;
     }
-    let (len, rest) = split_first(rest)?;
+    let (len, rest) = rest.split_first()?;
     let len = *len as usize;
     if rest.len() < len {
         return None;
@@ -155,10 +155,6 @@ fn strip_leading_zero(bytes: &[u8]) -> &[u8] {
         Some(i) => &bytes[i..],
         None => &bytes[bytes.len().saturating_sub(1)..], // 全零时保留末字节
     }
-}
-
-fn split_first(data: &[u8]) -> Option<(&u8, &[u8])> {
-    data.split_first()
 }
 
 // ── DER 长度解码 ──────────────────────────────────────────────────────────────
@@ -459,23 +455,6 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
 pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
     // 直接构造 DER 编码：tag 0x02 + length 0x01 + value
     Ok(vec![0x02, 0x01, val])
-}
-
-/// 编码 OCTET STRING
-/// 
-/// 使用 x509_cert::der::asn1::OctetStringRef 类型进行编码
-#[cfg(feature = "alloc")]
-pub fn encode_octet_string(data: &[u8]) -> Result<Vec<u8>, Error> {
-    use x509_cert::der::asn1::OctetStringRef;
-    // OctetStringRef 可以直接从字节切片创建
-    let octet_ref = OctetStringRef::new(data).map_err(|_| Error::DerEncodeError { 
-        field: "octet_string", 
-        reason: "encoding failed" 
-    })?;
-    octet_ref.to_der().map_err(|_| Error::DerEncodeError { 
-        field: "octet_string", 
-        reason: "encoding der failed"
-    })
 }
 
 /// 包装为 SEQUENCE

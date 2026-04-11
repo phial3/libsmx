@@ -46,7 +46,7 @@ use alloc::vec::Vec;
 
 use x509_cert::attr::{Attribute, Attributes};
 use x509_cert::der::{Decode, Encode, Tag, Tagged};
-use x509_cert::der::asn1::{Any, SetOfVec};
+use x509_cert::der::asn1::{Any, OctetString, SetOfVec};
 use x509_cert::name::Name;
 use x509_cert::time::Time;
 use x509_cert::serial_number::SerialNumber;
@@ -95,8 +95,8 @@ pub struct SignedData {
 pub struct EncapsulatedContentInfo {
     /// 内容类型 OID
     pub content_type: ObjectIdentifier,
-    /// 内容数据 (可选)
-    pub content: Option<Vec<u8>>,
+    /// 内容数据 (可选)，使用 OctetString 类型简化 DER 编解码
+    pub content: Option<OctetString>,
 }
 
 /// 签名者信息 (SignerInfo)
@@ -114,8 +114,8 @@ pub struct SignerInfo {
     pub signed_attrs: Option<SignedAttributes>,
     /// 签名算法
     pub signature_algorithm: AlgorithmIdentifier<ObjectIdentifier>,
-    /// 签名值
-    pub signature: Vec<u8>,
+    /// 签名值，使用 OctetString 类型简化 DER 编解码
+    pub signature: OctetString,
     /// 未签名属性 (可选)
     pub unsigned_attrs: Option<UnsignedAttributes>,
 }
@@ -249,7 +249,7 @@ pub fn create_digital_signature<R: Rng>(
     let signature = sign(&e, priv_key, rng);
 
     // 构建 SignerInfo
-    let signer_info = create_signer_info(signed_attrs, signature.to_vec(), cert);
+    let signer_info = create_signer_info(signed_attrs, &signature, cert);
 
     // 构建 SignedData
     let signed_data = SignedData {
@@ -257,7 +257,7 @@ pub fn create_digital_signature<R: Rng>(
         digest_algorithms: vec![crate::sm2::SM3_DIGEST_ALGORITHM],
         encap_content_info: EncapsulatedContentInfo {
             content_type: crate::sm2::PKCS7_DATA_OID,
-            content: Some(data.to_vec()),
+            content: Some(OctetString::new(data).expect("octet string creation failed")),
         },
         certificates: vec![cert.clone()],
         crls: None,
@@ -323,7 +323,7 @@ fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attribute
 /// - `cert`: 签名者证书
 fn create_signer_info(
     signed_attrs: Attributes,
-    signature: Vec<u8>,
+    signature: &[u8],
     cert: &GmCertificate,
 ) -> SignerInfo {
     SignerInfo {
@@ -335,7 +335,7 @@ fn create_signer_info(
         digest_algorithm: crate::sm2::SM3_DIGEST_ALGORITHM,
         signed_attrs: Some(signed_attrs),
         signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        signature,
+        signature: OctetString::new(signature).expect("octet string creation failed"),
         unsigned_attrs: None,
     }
 }
@@ -541,7 +541,7 @@ impl CmsSignerBuilder {
             let signature = sign(&e, &signer_config.private_key, rng);
 
             // 构建 SignerInfo
-            let signer_info = create_signer_info(signed_attrs, signature.to_vec(), &signer_config.certificate);
+            let signer_info = create_signer_info(signed_attrs, &signature, &signer_config.certificate);
             signer_infos.push(signer_info);
         }
 
@@ -551,7 +551,7 @@ impl CmsSignerBuilder {
             digest_algorithms: vec![crate::sm2::SM3_DIGEST_ALGORITHM],
             encap_content_info: EncapsulatedContentInfo {
                 content_type: self.content_type,
-                content: Some(self.content.clone()),
+                content: Some(OctetString::new(self.content.clone()).expect("octet string creation failed")),
             },
             certificates: self.certificates,
             crls: None,
@@ -705,7 +705,7 @@ pub fn verify_digital_signature(
         .ok_or(Error::InvalidSignature)?;
 
     // 计算内容摘要
-    let content_digest = crate::sm3::Sm3Hasher::digest(content);
+    let content_digest = crate::sm3::Sm3Hasher::digest(content.as_bytes());
 
     // 验证每个签名者
     let mut signer_results = Vec::new();
@@ -747,7 +747,7 @@ pub fn verify_digital_signature(
 
     let result = VerificationResult {
         is_valid: all_valid,
-        content: content.clone(),
+        content: content.as_bytes().to_vec(),
         signer_results,
         certificates: signed_data.certificates.clone(),
         signing_time,
@@ -835,7 +835,7 @@ fn verify_signer_info(
 
     let sig_array: [u8; 64] = signer_info
         .signature
-        .as_slice()
+        .as_bytes()
         .try_into()
         .map_err(|_| Error::InvalidSignature)?;
 
@@ -980,8 +980,7 @@ fn encode_encap_content_info(info: &EncapsulatedContentInfo) -> Result<Vec<u8>, 
 
     // content [0] EXPLICIT (可选)
     if let Some(ref data) = info.content {
-        let octet_tlv = der::encode_octet_string(data)?;
-        content.extend(der::wrap_explicit_tag(0, &octet_tlv));
+        content.extend(der::wrap_explicit_tag(0, &data.to_der().unwrap()));
     }
 
     Ok(der::wrap_sequence(content))
@@ -1010,8 +1009,8 @@ fn encode_signer_info(signer_info: &SignerInfo) -> Result<Vec<u8>, Error> {
     // signatureAlgorithm
     content.extend(signer_info.signature_algorithm.to_der().unwrap());
 
-    // signatureValue
-    content.extend(der::encode_octet_string(&signer_info.signature)?);
+    // signatureValue (OCTET STRING)
+    content.extend(signer_info.signature.to_der().unwrap());
 
     // unsignedAttrs [1] IMPLICIT (可选)
     if let Some(ref attrs) = signer_info.unsigned_attrs {
@@ -1162,8 +1161,8 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
     let mut content = None;
     if !rest.is_empty() && rest[0] == 0xA0 {
         let (content_tlv, r2) = der::parse_tlv(rest, 0xA0).ok_or_else(err)?;
-        let (octet, _) = der::parse_tlv(content_tlv, 0x04).ok_or_else(err)?;
-        content = Some(octet.to_vec());
+        // content_tlv 是 OCTET STRING 的完整 TLV，直接使用
+        content = Some(OctetString::from_der(content_tlv).map_err(|_| err())?);
         #[allow(unused_assignments)]
         {
             rest = r2;  // 更新 rest，即使后面不使用也保持代码一致性
@@ -1307,8 +1306,9 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
     let signature_algorithm = parse_algorithm_identifier(sig_alg_tlv)?;
     rest = r;
 
-    // signatureValue
-    let (sig, r) = der::parse_tlv(rest, 0x04).ok_or_else(err)?;
+    // signatureValue (OCTET STRING)
+    let (sig_tlv, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
+    let signature = OctetString::from_der(sig_tlv).map_err(|_| err())?;
     rest = r;
 
     // unsignedAttrs [1] (可选)
@@ -1326,7 +1326,7 @@ fn parse_signer_info(data: &[u8]) -> Result<SignerInfo, Error> {
         digest_algorithm,
         signed_attrs,
         signature_algorithm,
-        signature: sig.to_vec(),
+        signature,
         unsigned_attrs,
     })
 }
@@ -1450,9 +1450,9 @@ mod tests {
         let pub_key_cert = cert.extract_sm2_public_key().expect("Extract public key should succeed");
         let z = crate::sm2::get_z(DEFAULT_ID, &pub_key_cert);
         let e = crate::sm2::get_e(&z, &signed_attrs_encoded);
-        
+
         // 验证签名
-        let sig_array: [u8; 64] = signer_info.signature.as_slice().try_into().expect("Signature should be 64 bytes");
+        let sig_array: [u8; 64] = signer_info.signature.as_bytes().try_into().expect("Signature should be 64 bytes");
         verify(&e, &pub_key_cert, &sig_array).expect("Signature verification should succeed");
 
         // 验证签章
