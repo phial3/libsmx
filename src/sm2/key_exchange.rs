@@ -326,7 +326,7 @@ mod tests {
     use crate::sm2::PrivateKey;
 
     #[allow(dead_code)]
-    struct FakeRng(#[allow(dead_code)] [u8; 32]);
+    struct FakeRng([u8; 32]);
     impl rand_core::TryRng for FakeRng {
         type Error = core::convert::Infallible;
         fn try_next_u32(&mut self) -> Result<u32, Self::Error> {

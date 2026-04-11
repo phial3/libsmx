@@ -1647,7 +1647,7 @@ pub fn sign_tbs_certificate<R: Rng>(
     let z = crate::sm2::get_z(id, &pub_key);
     let e = crate::sm2::get_e(&z, tbs_data);
     let sig = sign(&e, priv_key, rng);
-    BitString::new(0, &sig).map_err(|_| Error::InvalidSignature)
+    BitString::new(0, sig).map_err(|_| Error::InvalidSignature)
 }
 
 /// 验证证书 TBS 数据的 SM2 签名
@@ -1868,6 +1868,74 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 // 自签名证书
 // ====================================================================================
 
+
+/// 构建证书并签名
+///
+/// 通用函数，用于构建 GmCertificate 并签名。
+///
+/// # 参数
+/// - `issuer`: 签发者名称
+/// - `subject`: 主体名称
+/// - `subject_pub_key`: 主体公钥（65 字节未压缩格式）
+/// - `validity`: 有效期
+/// - `serial_number`: 序列号
+/// - `extensions`: 扩展列表（可选）
+/// - `signing_key`: 签名私钥
+/// - `id`: SM2 签名 ID
+/// - `rng`: 随机数生成器
+///
+/// # 返回
+/// - `Ok(GmCertificate)`: 签名成功的证书
+/// - `Err(Error)`: 签名失败
+#[allow(clippy::too_many_arguments)]
+fn build_and_sign_cert<R: Rng>(
+    issuer: &Name,
+    subject: &Name,
+    subject_pub_key: &[u8; 65],
+    validity: &Validity,
+    serial_number: &SerialNumber,
+    extensions: Option<Vec<Extension>>,
+    signing_key: &PrivateKey,
+    id: &[u8],
+    rng: &mut R,
+) -> Result<GmCertificate, Error> {
+    // 构建 SubjectPublicKeyInfo
+    let spki_der = der::public_key_to_spki_der(subject_pub_key);
+    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
+        .map_err(|_| Error::InvalidCertificate)?;
+
+    // 构建证书结构（不含签名）
+    let cert_for_tbs = GmCertificate {
+        version: 2,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer.clone(),
+        validity: *validity,
+        subject: subject.clone(),
+        subject_public_key_info: spki,
+        extensions: extensions.clone(),
+        signature: BitString::new(0, []).expect("bit string creation failed"),
+    };
+
+    // 编码 TBS
+    let tbs = cert_for_tbs.tbs_certificate();
+
+    // 签名
+    let signature = sign_tbs_certificate(&tbs, signing_key, id, rng)?;
+
+    Ok(GmCertificate {
+        version: 2,
+        serial_number: serial_number.clone(),
+        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
+        issuer: issuer.clone(),
+        validity: *validity,
+        subject: subject.clone(),
+        subject_public_key_info: cert_for_tbs.subject_public_key_info,
+        extensions,
+        signature,
+    })
+}
+
 /// 生成自签名证书
 ///
 /// 生成自签名证书，其中 issuer 和 subject 相同，使用自己的私钥签名。
@@ -1942,73 +2010,6 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 ///     &mut rng,
 /// ).expect("Failed to generate certificate");
 /// ```
-
-/// 构建证书并签名
-///
-/// 通用函数，用于构建 GmCertificate 并签名。
-///
-/// # 参数
-/// - `issuer`: 签发者名称
-/// - `subject`: 主体名称
-/// - `subject_pub_key`: 主体公钥（65 字节未压缩格式）
-/// - `validity`: 有效期
-/// - `serial_number`: 序列号
-/// - `extensions`: 扩展列表（可选）
-/// - `signing_key`: 签名私钥
-/// - `id`: SM2 签名 ID
-/// - `rng`: 随机数生成器
-///
-/// # 返回
-/// - `Ok(GmCertificate)`: 签名成功的证书
-/// - `Err(Error)`: 签名失败
-fn build_and_sign_cert<R: Rng>(
-    issuer: &Name,
-    subject: &Name,
-    subject_pub_key: &[u8; 65],
-    validity: &Validity,
-    serial_number: &SerialNumber,
-    extensions: Option<Vec<Extension>>,
-    signing_key: &PrivateKey,
-    id: &[u8],
-    rng: &mut R,
-) -> Result<GmCertificate, Error> {
-    // 构建 SubjectPublicKeyInfo
-    let spki_der = der::public_key_to_spki_der(subject_pub_key);
-    let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
-        .map_err(|_| Error::InvalidCertificate)?;
-
-    // 构建证书结构（不含签名）
-    let cert_for_tbs = GmCertificate {
-        version: 2,
-        serial_number: serial_number.clone(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        issuer: issuer.clone(),
-        validity: *validity,
-        subject: subject.clone(),
-        subject_public_key_info: spki,
-        extensions: extensions.clone(),
-        signature: BitString::new(0, &[]).expect("bit string creation failed"),
-    };
-
-    // 编码 TBS
-    let tbs = cert_for_tbs.tbs_certificate();
-
-    // 签名
-    let signature = sign_tbs_certificate(&tbs, signing_key, id, rng)?;
-
-    Ok(GmCertificate {
-        version: 2,
-        serial_number: serial_number.clone(),
-        signature_algorithm: crate::sm2::SM2_SIGNATURE_ALGORITHM,
-        issuer: issuer.clone(),
-        validity: *validity,
-        subject: subject.clone(),
-        subject_public_key_info: cert_for_tbs.subject_public_key_info,
-        extensions,
-        signature,
-    })
-}
-
 pub fn generate_self_signed_cert<R: Rng>(
     priv_key: &PrivateKey,
     subject: &Name,
