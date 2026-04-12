@@ -406,7 +406,7 @@ impl GmCertificate {
     /// # 返回
     /// - `Ok(Vec<u8>)`: PEM 编码的证书数据
     /// - `Err(Error::InvalidCertificate)`: 编码失败
-    pub fn to_pem(&self) -> Result<Vec<u8>, Error> {
+    pub fn to_pem(&self) -> Result<String, Error> {
         generate_gm_certificate_pem(self)
     }
 
@@ -931,12 +931,7 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
 /// - `Err(Error::InvalidCertificate)`: 提取失败（格式错误或不是 SM2 公钥）
 pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
     // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
-    let spki_der = cert
-        .subject_public_key_info
-        .to_der()
-        .map_err(|_| Error::InvalidCertificate)?;
-    let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> =
-        SubjectPublicKeyInfo::from_der(&spki_der).map_err(|_| Error::InvalidCertificate)?;
+    let spki = &cert.subject_public_key_info;
 
     // 验证算法 OID (id-ecPublicKey = 1.2.840.10045.2.1)
     if spki.algorithm.oid != crate::sm2::EC_PUBKEY_OID {
@@ -1559,11 +1554,9 @@ pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
 /// # 返回
 /// - `Ok(Vec<u8>)`: PEM 编码的证书数据
 /// - `Err(Error::InvalidCertificate)`: 编码失败
-pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<Vec<u8>, Error> {
+pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<String, Error> {
     let der = generate_gm_certificate_der(cert);
-    let pem = encode_string("CERTIFICATE", Default::default(), &der)
-        .map_err(|_| Error::InvalidCertificate)?;
-    Ok(pem.as_bytes().to_vec())
+    encode_string("CERTIFICATE", Default::default(), &der).map_err(|_| Error::InvalidCertificate)
 }
 
 // ====================================================================================
@@ -1710,10 +1703,9 @@ pub fn verify_tbs_certificate_signature(
 /// # 返回
 /// - `Ok(Vec<u8>)`: PEM 编码的公钥
 /// - `Err(Error::InvalidPublicKey)`: 编码失败
-pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<Vec<u8>, Error> {
+pub fn public_key_to_spki_pem(pub_key: &[u8; 65]) -> Result<String, Error> {
     let der = der::public_key_to_spki_der(pub_key);
-    let pem = encode_string("PUBLIC KEY", Default::default(), &der).map_err(|_| Error::InvalidPublicKey)?;
-    Ok(pem.as_bytes().to_vec())
+    encode_string("PUBLIC KEY", Default::default(), &der).map_err(|_| Error::InvalidPublicKey)
 }
 
 /// 从 SPKI PEM 解析公钥
@@ -2415,11 +2407,11 @@ mod tests {
 
         // 编码为 PEM
         let pem = public_key_to_spki_pem(&pub_key).expect("PEM encoding should succeed");
-        assert!(pem.starts_with(b"-----BEGIN PUBLIC KEY-----"));
-        assert!(pem.ends_with(b"-----END PUBLIC KEY-----\n"));
+        assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----"));
+        assert!(pem.ends_with("-----END PUBLIC KEY-----\n"));
 
         // 从 PEM 解析
-        let recovered = public_key_from_spki_pem(&pem).expect("PEM parsing should succeed");
+        let recovered = public_key_from_spki_pem(&pem.as_bytes()).expect("PEM parsing should succeed");
         assert_eq!(pub_key, recovered);
     }
 
@@ -2461,11 +2453,11 @@ mod tests {
 
         // 编码为 PEM
         let pem = generate_gm_certificate_pem(&cert).expect("PEM encoding should succeed");
-        assert!(pem.starts_with(b"-----BEGIN CERTIFICATE-----"));
-        assert!(pem.ends_with(b"-----END CERTIFICATE-----\n"));
+        assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(pem.ends_with("-----END CERTIFICATE-----\n"));
 
         // 从 PEM 解析
-        let recovered = parse_gm_certificate_pem(&pem).unwrap_or_else(|e| {
+        let recovered = parse_gm_certificate_pem(&pem.as_bytes()).unwrap_or_else(|e| {
             panic!("PEM parsing failed: {:?}", e);
         });
         assert_eq!(cert.version, recovered.version);

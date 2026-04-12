@@ -31,7 +31,10 @@ pub use der::{
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-#[cfg(feature = "alloc")]
+#[cfg(feature = "std")]
+use alloc::string::String;
+
+#[cfg(feature = "std")]
 use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
 
@@ -230,21 +233,19 @@ impl PrivateKey {
     /// 将私钥编码为 SEC1 PEM 格式
     ///
     /// 将 SM2 私钥编码为 SEC1（RFC 5915）格式的 PEM。
-    pub fn to_sec1_pem(&self) -> Result<Vec<u8>, Error> {
+    #[cfg(feature = "std")]
+    pub fn to_sec1_pem(&self) -> Result<String, Error> {
         let der = der::private_key_to_sec1_der(self);
-        let pem = encode_string("EC PRIVATE KEY", Default::default(), &der)
-            .map_err(|_| Error::InvalidCertificate)?;
-        Ok(pem.as_bytes().to_vec())
+        encode_string("EC PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 将私钥编码为 PKCS#8 PEM 格式
     ///
     /// 将 SM2 私钥编码为 PKCS#8（RFC 5958）格式的 PEM。
-    pub fn to_pkcs8_pem(&self) -> Result<Vec<u8>, Error> {
+    #[cfg(feature = "std")]
+    pub fn to_pkcs8_pem(&self) -> Result<String, Error> {
         let der = der::private_key_to_pkcs8_der(self);
-        let pem = encode_string("PRIVATE KEY", Default::default(), &der)
-            .map_err(|_| Error::InvalidCertificate)?;
-        Ok(pem.as_bytes().to_vec())
+        encode_string("PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 从 SEC1 DER 解析私钥

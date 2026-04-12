@@ -167,7 +167,7 @@ fn test_certificate_files() {
     let parsed_cert = cert::parse_gm_certificate_der(&cert_der).expect("解析 DER 证书应成功");
     assert_eq!(parsed_cert.version, cert.version);
 
-    let parsed_from_pem = cert::parse_gm_certificate_pem(&cert_pem).expect("解析 PEM 证书应成功");
+    let parsed_from_pem = cert::parse_gm_certificate_pem(&cert_pem.as_bytes()).expect("解析 PEM 证书应成功");
     assert_eq!(parsed_from_pem.version, cert.version);
 
     let _ = fs::remove_file(cert_der_file);
@@ -238,7 +238,7 @@ fn test_private_key_sec1() {
     let sec1_pem = priv_key.to_sec1_pem().expect("SEC1 PEM 编码应成功");
     fs::write(priv_key_sec1_pem_file, &sec1_pem).expect("写入 SEC1 PEM 应成功");
 
-    let recovered_pem = PrivateKey::from_sec1_pem(&sec1_pem).expect("SEC1 PEM 解析应成功");
+    let recovered_pem = PrivateKey::from_sec1_pem(&sec1_pem.as_bytes()).expect("SEC1 PEM 解析应成功");
     assert_eq!(priv_key.as_bytes(), recovered_pem.as_bytes());
 
     let _ = fs::remove_file(priv_key_sec1_der_file);
@@ -266,7 +266,7 @@ fn test_private_key_pkcs8() {
     let pkcs8_pem = priv_key.to_pkcs8_pem().expect("PKCS#8 PEM 编码应成功");
     fs::write(priv_key_pkcs8_pem_file, &pkcs8_pem).expect("写入 PKCS#8 PEM 应成功");
 
-    let recovered_pem = PrivateKey::from_pkcs8_pem(&pkcs8_pem).expect("PKCS#8 PEM 解析应成功");
+    let recovered_pem = PrivateKey::from_pkcs8_pem(&pkcs8_pem.as_bytes()).expect("PKCS#8 PEM 解析应成功");
     assert_eq!(priv_key.as_bytes(), recovered_pem.as_bytes());
 
     let _ = fs::remove_file(priv_key_pkcs8_der_file);
