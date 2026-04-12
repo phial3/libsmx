@@ -163,11 +163,11 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
         println!("\n❌ 证书和私钥不匹配");
         println!(
             "   证书公钥：{:02x?}",
-            &cert_pub_key[..16.min(cert_pub_key.len())]
+            &cert_pub_key.as_bytes()[..16.min(cert_pub_key.as_bytes().len())]
         );
         println!(
             "   私钥公钥：{:02x?}",
-            &priv_pub_key[..16.min(priv_pub_key.len())]
+            &priv_pub_key.as_bytes()[..16.min(priv_pub_key.as_bytes().len())]
         );
         println!("\n⚠️  证书 {} 测试失败 - 证书和私钥不匹配", name);
         return false;

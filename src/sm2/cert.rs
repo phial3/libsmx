@@ -45,7 +45,7 @@ use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 use crate::error::Error;
 use crate::sm2::der;
-use crate::sm2::{sign, verify, PrivateKey};
+use crate::sm2::{sign, verify, PrivateKey, PublicKey};
 use rand_core::Rng;
 use x509_cert::attr::AttributeTypeAndValue;
 use x509_cert::der::asn1::{BitString, OctetString, Utf8StringRef};
@@ -264,9 +264,9 @@ pub fn create_crl_distribution_points_extension(crl_urls: &[&str]) -> Extension 
 ///
 /// # 返回
 /// x509-cert 的 Extension 类型
-pub fn create_subject_key_identifier_extension(pub_key: &[u8; 65]) -> Extension {
+pub fn create_subject_key_identifier_extension(pub_key: &PublicKey) -> Extension {
     // 使用公钥指纹作为 SKI
-    let ski = public_key_fingerprint(pub_key);
+    let ski = public_key_fingerprint(pub_key.as_bytes());
     
     Extension {
         extn_id: crate::sm2::ID_CE_SUBJECT_KEY_IDENTIFIER,
@@ -447,13 +447,13 @@ impl GmCertificate {
 
     /// 提取 SM2 公钥（65 字节未压缩格式）
     ///
-    /// 从证书的 subjectPublicKeyInfo 字段提取 65 字节未压缩公钥。
+    /// 从证书的 subjectPublicKeyInfo 字段提取 SM2 公钥。
     /// 公钥格式：0x04 || x(32 字节) || y(32 字节)
     ///
     /// # 返回
-    /// - `Ok([u8; 65])`: 65 字节未压缩公钥
+    /// - `Ok(PublicKey)`: SM2 公钥
     /// - `Err(Error::InvalidCertificate)`: 提取失败（格式错误或不是 SM2 公钥）
-    pub fn extract_sm2_public_key(&self) -> Result<[u8; 65], Error> {
+    pub fn extract_sm2_public_key(&self) -> Result<PublicKey, Error> {
         extract_sm2_public_key(self)
     }
 
@@ -544,7 +544,7 @@ impl GmCertificate {
         let tbs = self.tbs_certificate();
 
         // 计算 Z 值和消息摘要
-        let z = crate::sm2::get_z(id, &pub_key);
+        let z = crate::sm2::get_z(id, pub_key.as_bytes());
         let e = crate::sm2::get_e(&z, &tbs);
 
         // 解析签名
@@ -555,7 +555,7 @@ impl GmCertificate {
             .map_err(|_| Error::InvalidSignature)?;
 
         // 验证签名
-        verify(&e, &pub_key, &sig_array)
+        verify(&e, pub_key.as_bytes(), &sig_array)
     }
 
     /// 比较与 x509_cert::Certificate 的关键字段
@@ -582,7 +582,7 @@ impl GmCertificate {
     ///
     /// # 参数
     /// - `signature`: 签名值（64 字节 r || s）
-    /// - `pub_key`: SM2 公钥（65 字节未压缩格式）
+    /// - `pub_key`: SM2 公钥
     /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
     ///
     /// # 返回
@@ -591,18 +591,18 @@ impl GmCertificate {
     pub fn verify_signature(
         &self,
         signature: &[u8],
-        pub_key: &[u8; 65],
+        pub_key: &PublicKey,
         id: &[u8],
     ) -> Result<(), Error> {
         // 计算 Z 值和消息摘要
-        let z = crate::sm2::get_z(id, pub_key);
+        let z = crate::sm2::get_z(id, pub_key.as_bytes());
         let e = crate::sm2::get_e(&z, &self.tbs_certificate());
 
         // 解析签名
         let sig_array: [u8; 64] = signature.try_into().map_err(|_| Error::InvalidSignature)?;
 
         // 验证签名
-        verify(&e, pub_key, &sig_array)
+        verify(&e, pub_key.as_bytes(), &sig_array)
     }
 
     /// 验证证书签名（简化版本，使用证书自带的签名和公钥）
@@ -642,7 +642,7 @@ impl GmCertificate {
         let ca_pub_key = ca_cert.extract_sm2_public_key()?;
 
         // 使用 CA 公钥计算 Z 值（SM2 签名验证需要使用签名者的公钥）
-        let z = crate::sm2::get_z(id, &ca_pub_key);
+        let z = crate::sm2::get_z(id, ca_pub_key.as_bytes());
         let e = crate::sm2::get_e(&z, &self.tbs_certificate());
 
         // 解析签名
@@ -653,7 +653,7 @@ impl GmCertificate {
             .map_err(|_| Error::InvalidSignature)?;
 
         // 验证签名
-        verify(&e, &ca_pub_key, &sig_array)
+        verify(&e, ca_pub_key.as_bytes(), &sig_array)
     }
 
     /// 获取 TBS（To Be Signed）证书数据
@@ -927,9 +927,9 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
 /// - `cert`: 国密证书
 ///
 /// # 返回
-/// - `Ok([u8; 65])`: 65 字节未压缩公钥
+/// - `Ok(PublicKey)`: SM2 公钥
 /// - `Err(Error::InvalidCertificate)`: 提取失败（格式错误或不是 SM2 公钥）
-pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
+pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<PublicKey, Error> {
     // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
     let spki = &cert.subject_public_key_info;
 
@@ -957,7 +957,7 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<[u8; 65], Error> {
 
     let mut pub_key = [0u8; 65];
     pub_key.copy_from_slice(pub_key_bytes);
-    Ok(pub_key)
+    PublicKey::from_bytes(&pub_key)
 }
 
 /// X.500 可分辨名称属性类型
@@ -1413,7 +1413,7 @@ impl CertificateBuilder {
     /// 使用提供的公钥、私钥和签名 ID 构建并签署证书。
     ///
     /// # 参数
-    /// - `pub_key`: SM2 公钥（65 字节未压缩格式）
+    /// - `pub_key`: SM2 公钥
     /// - `priv_key`: SM2 私钥
     /// - `id`: SM2 签名 ID（通常为 "1234567812345678"）
     /// - `rng`: 随机数生成器
@@ -1424,7 +1424,7 @@ impl CertificateBuilder {
     /// - `Err(Error::InvalidPublicKey)`: 公钥格式错误
     pub fn build<R: Rng>(
         self,
-        pub_key: &[u8; 65],
+        pub_key: &PublicKey,
         priv_key: &PrivateKey,
         id: &[u8],
         rng: &mut R,
@@ -1442,7 +1442,7 @@ impl CertificateBuilder {
         let validity = Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time);
 
         // 构建 SPKI DER 并解析为结构化类型
-        let spki_der = der::public_key_to_spki_der(pub_key);
+        let spki_der = der::public_key_to_spki_der(pub_key.as_bytes());
         let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
             .map_err(|_| Error::InvalidPublicKey)?;
 
@@ -1637,7 +1637,7 @@ pub fn sign_tbs_certificate<R: Rng>(
     rng: &mut R,
 ) -> Result<BitString, Error> {
     let pub_key = priv_key.public_key();
-    let z = crate::sm2::get_z(id, &pub_key);
+    let z = crate::sm2::get_z(id, pub_key.as_bytes());
     let e = crate::sm2::get_e(&z, tbs_data);
     let sig = sign(&e, priv_key, rng);
     BitString::new(0, sig).map_err(|_| Error::InvalidSignature)
@@ -1665,15 +1665,15 @@ pub fn sign_tbs_certificate<R: Rng>(
 pub fn verify_tbs_certificate_signature(
     tbs_data: &[u8],
     signature: &[u8],
-    pub_key: &[u8; 65],
+    pub_key: &PublicKey,
     id: &[u8],
 ) -> Result<(), Error> {
-    let z = crate::sm2::get_z(id, pub_key);
+    let z = crate::sm2::get_z(id, pub_key.as_bytes());
     let e = crate::sm2::get_e(&z, tbs_data);
 
     let sig_array: [u8; 64] = signature.try_into().map_err(|_| Error::InvalidSignature)?;
 
-    verify(&e, pub_key, &sig_array)
+    verify(&e, pub_key.as_bytes(), &sig_array)
 }
 
 // ====================================================================================
@@ -1883,7 +1883,7 @@ pub fn public_key_fingerprint(pub_key: &[u8; 65]) -> [u8; 32] {
 fn build_and_sign_cert<R: Rng>(
     issuer: &Name,
     subject: &Name,
-    subject_pub_key: &[u8; 65],
+    subject_pub_key: &PublicKey,
     validity: &Validity,
     serial_number: &SerialNumber,
     extensions: Option<Vec<Extension>>,
@@ -1892,7 +1892,7 @@ fn build_and_sign_cert<R: Rng>(
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
     // 构建 SubjectPublicKeyInfo
-    let spki_der = der::public_key_to_spki_der(subject_pub_key);
+    let spki_der = der::public_key_to_spki_der(subject_pub_key.as_bytes());
     let spki = SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der)
         .map_err(|_| Error::InvalidCertificate)?;
 
@@ -2055,7 +2055,7 @@ pub fn encode_extension(ext: &Extension) -> Vec<u8> {
 /// - `ca_cert`: CA 证书（包含 CA 公钥和主体信息）
 /// - `ca_priv_key`: CA 私钥（用于签名）
 /// - `subject`: 新证书的主体名称（`Name` 类型）
-/// - `subject_pub_key`: 新证书的公钥（65 字节未压缩格式）
+/// - `subject_pub_key`: 新证书的公钥
 /// - `validity`: 新证书的有效期（`Validity` 类型）
 /// - `serial_number`: 新证书的序列号（`SerialNumber` 类型）
 /// - `ca_id`: CA 的 SM2 签名 ID（通常为 "1234567812345678"）
@@ -2070,7 +2070,7 @@ pub fn issue_certificate<R: Rng>(
     ca_cert: &GmCertificate,
     ca_priv_key: &PrivateKey,
     subject: &Name,
-    subject_pub_key: &[u8; 65],
+    subject_pub_key: &PublicKey,
     validity: &Validity,
     serial_number: &SerialNumber,
     ca_id: &[u8],
@@ -2265,7 +2265,7 @@ mod tests {
             validity: params.validity,
             subject: params.subject,
             subject_public_key_info: SubjectPublicKeyInfo::from_der(&der::public_key_to_spki_der(
-                &pub_key,
+                pub_key.as_bytes(),
             ))
             .unwrap(),
             extensions: None,
@@ -2356,10 +2356,10 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
 
-        let der = der::public_key_to_spki_der(&pub_key);
+        let der = der::public_key_to_spki_der(pub_key.as_bytes());
         let recovered = der::public_key_from_spki_der(&der).expect("Parse should succeed");
 
-        assert_eq!(pub_key, recovered);
+        assert_eq!(*pub_key.as_bytes(), recovered);
     }
 
     // -- 公钥压缩测试 --------------------------------------------------------
@@ -2369,7 +2369,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
 
-        let compressed = public_key_to_compressed(&pub_key).expect("Compression should succeed");
+        let compressed = public_key_to_compressed(pub_key.as_bytes()).expect("Compression should succeed");
         assert_eq!(compressed.len(), 33);
         assert!(compressed[0] == 0x02 || compressed[0] == 0x03);
     }
@@ -2379,11 +2379,11 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
 
-        let compressed = public_key_to_compressed(&pub_key).expect("Compression should succeed");
+        let compressed = public_key_to_compressed(pub_key.as_bytes()).expect("Compression should succeed");
         let decompressed =
             public_key_from_compressed(&compressed).expect("Decompression should succeed");
 
-        assert_eq!(pub_key, decompressed);
+        assert_eq!(*pub_key.as_bytes(), decompressed);
     }
 
     #[test]
@@ -2391,11 +2391,11 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
 
-        let compressed = public_key_to_compressed(&pub_key).expect("Compression should succeed");
+        let compressed = public_key_to_compressed(pub_key.as_bytes()).expect("Compression should succeed");
         let decompressed =
             public_key_from_compressed(&compressed).expect("Decompression should succeed");
 
-        assert_eq!(pub_key, decompressed);
+        assert_eq!(*pub_key.as_bytes(), decompressed);
     }
 
     // -- 公钥 PEM 编解码测试 -------------------------------------------------
@@ -2406,13 +2406,13 @@ mod tests {
         let (_, pub_key) = generate_keypair(&mut rng);
 
         // 编码为 PEM
-        let pem = public_key_to_spki_pem(&pub_key).expect("PEM encoding should succeed");
+        let pem = public_key_to_spki_pem(pub_key.as_bytes()).expect("PEM encoding should succeed");
         assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----"));
         assert!(pem.ends_with("-----END PUBLIC KEY-----\n"));
 
         // 从 PEM 解析
         let recovered = public_key_from_spki_pem(&pem.as_bytes()).expect("PEM parsing should succeed");
-        assert_eq!(pub_key, recovered);
+        assert_eq!(*pub_key.as_bytes(), recovered);
     }
 
     // -- 公钥指纹测试 --------------------------------------------------------
@@ -2422,16 +2422,16 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
 
-        let fingerprint = public_key_fingerprint(&pub_key);
+        let fingerprint = public_key_fingerprint(pub_key.as_bytes());
         assert_eq!(fingerprint.len(), 32); // SM3 输出为 32 字节
 
         // 相同公钥应该产生相同指纹
-        let fingerprint2 = public_key_fingerprint(&pub_key);
+        let fingerprint2 = public_key_fingerprint(pub_key.as_bytes());
         assert_eq!(fingerprint, fingerprint2);
 
         // 不同公钥应该产生不同指纹（概率极高）
         let (_, pub_key2) = generate_keypair(&mut rng);
-        let fingerprint3 = public_key_fingerprint(&pub_key2);
+        let fingerprint3 = public_key_fingerprint(pub_key2.as_bytes());
         assert_ne!(fingerprint, fingerprint3);
     }
 
@@ -2789,7 +2789,7 @@ mod tests {
         let (priv_key, pub_key) = generate_keypair(&mut rng);
 
         // 测试 SPKI roundtrip
-        let spki_der_original = der::public_key_to_spki_der(&pub_key);
+        let spki_der_original = der::public_key_to_spki_der(pub_key.as_bytes());
         let spki =
             SubjectPublicKeyInfo::<ObjectIdentifier, BitString>::from_der(&spki_der_original)
                 .expect("Failed to parse SPKI");

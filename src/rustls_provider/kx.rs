@@ -23,7 +23,7 @@ impl SupportedKxGroup for Sm2KxGroup {
         let (private_key, pub_key_bytes) = generate_keypair(&mut rng);
         Ok(StartedKeyExchange::Single(Box::new(Sm2KeyExchange {
             private_key,
-            pub_key: pub_key_bytes.to_vec(),
+            pub_key: pub_key_bytes.as_bytes().to_vec(),
         })))
     }
 

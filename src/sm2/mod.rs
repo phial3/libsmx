@@ -205,15 +205,16 @@ impl PrivateKey {
         &self.bytes
     }
 
-    /// 计算对应公钥（65 字节，04||x||y）
-    pub fn public_key(&self) -> [u8; 65] {
+    /// 计算对应公钥（返回 PublicKey 类型）
+    pub fn public_key(&self) -> PublicKey {
         let d = U256::from_be_slice(&self.bytes);
         let pub_jac = JacobianPoint::scalar_mul_g(&d);
         // Reason: 私钥合法性已在构造时验证，scalar_mul_g 结果不会是无穷远点
         let pub_aff = pub_jac
             .to_affine()
             .expect("valid private key produces valid public key");
-        pub_aff.to_bytes()
+        PublicKey::from_bytes(&pub_aff.to_bytes())
+            .expect("valid affine point produces valid public key")
     }
 }
 
@@ -261,6 +262,7 @@ impl PrivateKey {
     /// 从 SEC1 PEM 解析私钥
     ///
     /// 从 SEC1 格式的 PEM 解析 SM2 私钥。
+    #[cfg(feature = "std")]
     pub fn from_sec1_pem(pem: &[u8]) -> Result<Self, Error> {
         let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
         der::private_key_from_sec1_der(&der)
@@ -269,19 +271,112 @@ impl PrivateKey {
     /// 从 PKCS#8 PEM 解析私钥
     ///
     /// 从 PKCS#8 格式的 PEM 解析 SM2 私钥。
+    #[cfg(feature = "std")]
     pub fn from_pkcs8_pem(pem: &[u8]) -> Result<Self, Error> {
         let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
         der::private_key_from_pkcs8_der(&der)
     }
 }
 
+// ── 公钥类型 ──────────────────────────────────────────────────────────────────
+
+/// SM2 公钥（65 字节未压缩格式：0x04 || X(32B) || Y(32B)）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PublicKey {
+    bytes: [u8; 65],
+}
+
+impl PublicKey {
+    /// 从字节构造公钥（验证格式）
+    pub fn from_bytes(bytes: &[u8; 65]) -> Result<Self, Error> {
+        // 验证未压缩格式标记
+        if bytes[0] != 0x04 {
+            return Err(Error::InvalidPublicKey);
+        }
+        Ok(PublicKey { bytes: *bytes })
+    }
+
+    /// 以字节引用访问公钥
+    pub fn as_bytes(&self) -> &[u8; 65] {
+        &self.bytes
+    }
+
+    /// 将公钥转换为字节数组（不泄露值所有权）
+    pub fn to_bytes(&self) -> [u8; 65] {
+        self.bytes
+    }
+
+    /// 获取 X 坐标（32 字节）
+    pub fn x(&self) -> [u8; 32] {
+        let mut x = [0u8; 32];
+        x.copy_from_slice(&self.bytes[1..33]);
+        x
+    }
+
+    /// 获取 Y 坐标（32 字节）
+    pub fn y(&self) -> [u8; 32] {
+        let mut y = [0u8; 32];
+        y.copy_from_slice(&self.bytes[33..65]);
+        y
+    }
+}
+
+#[cfg(feature = "std")]
+impl x509_cert::spki::EncodePublicKey for PublicKey {
+    fn to_public_key_der(&self) -> x509_cert::spki::Result<x509_cert::der::Document> {
+        use x509_cert::der::asn1::BitStringRef;
+        use x509_cert::spki::SubjectPublicKeyInfo;
+
+        // 创建 BIT STRING（公钥数据）
+        let subject_public_key = BitStringRef::new(0, self.bytes.as_slice())
+            .map_err(|_| x509_cert::spki::Error::KeyMalformed)?;
+
+        // 创建 SubjectPublicKeyInfo
+        let spki = SubjectPublicKeyInfo {
+            algorithm: SM2_SPKI_ALGORITHM,
+            subject_public_key,
+        };
+
+        // 编码为 DER
+        x509_cert::der::Document::encode_msg(&spki)
+            .map_err(|_| x509_cert::spki::Error::KeyMalformed)
+    }
+}
+
+#[cfg(feature = "std")]
+impl x509_cert::spki::DecodePublicKey for PublicKey {
+    fn from_public_key_der(bytes: &[u8]) -> x509_cert::spki::Result<Self> {
+        use x509_cert::der::Decode;
+        use x509_cert::spki::SubjectPublicKeyInfo;
+
+        // 解析 SPKI
+        let spki: SubjectPublicKeyInfo<ObjectIdentifier, x509_cert::der::asn1::BitStringRef<'_>> =
+            SubjectPublicKeyInfo::from_der(bytes).map_err(|_| Error::InvalidPublicKey).unwrap();
+
+        // 验证算法标识符
+        if spki.algorithm.oid != EC_PUBKEY_OID {
+            return Err(x509_cert::spki::Error::OidUnknown {oid: spki.algorithm.oid});
+        }
+
+        // 获取公钥数据
+        let pub_key_bytes = spki.subject_public_key.raw_bytes();
+        if pub_key_bytes.len() != 65 {
+            return Err(x509_cert::spki::Error::KeyMalformed);
+        }
+
+        let mut bytes = [0u8; 65];
+        bytes.copy_from_slice(pub_key_bytes);
+        Ok(Self::from_bytes(&bytes).unwrap())
+    }
+}
+
 // ── 密钥生成 ──────────────────────────────────────────────────────────────────
 
-/// 生成 SM2 密钥对（私钥 + 公钥 65 字节）
+/// 生成 SM2 密钥对（私钥 + 公钥）
 ///
 /// 符合 GB/T 32918.1-2016 §6.1
 /// 需要提供 `rand_core::RngCore` 实现（如 `rand::rngs::OsRng`）。
-pub fn generate_keypair<R: Rng>(rng: &mut R) -> (PrivateKey, [u8; 65]) {
+pub fn generate_keypair<R: Rng>(rng: &mut R) -> (PrivateKey, PublicKey) {
     loop {
         let mut d_bytes = [0u8; 32];
         rng.fill_bytes(&mut d_bytes);
@@ -404,7 +499,7 @@ pub fn sign_with_k(e: &[u8; 32], pri_key: &PrivateKey, k: &U256) -> Result<[u8; 
 /// 符合 GB/T 32918.2-2016 §5.5。
 pub fn sign_message<R: Rng>(msg: &[u8], id: &[u8], pri_key: &PrivateKey, rng: &mut R) -> [u8; 64] {
     let pub_key = pri_key.public_key();
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, pub_key.as_bytes());
     let e = get_e(&z, msg);
     sign(&e, pri_key, rng)
 }
@@ -416,7 +511,7 @@ pub fn sign_message<R: Rng>(msg: &[u8], id: &[u8], pri_key: &PrivateKey, rng: &m
 /// # 参数
 /// - `msg`: 原始消息
 /// - `id`: 用户可辨别标识
-/// - `pub_key`: 公钥（65 字节，04||x||y）
+/// - `pub_key`: 公钥
 /// - `sig`: 签名（64 字节，r||s）
 pub fn verify_message(
     msg: &[u8],
@@ -455,8 +550,8 @@ pub fn sign<R: Rng>(e: &[u8; 32], pri_key: &PrivateKey, rng: &mut R) -> [u8; 64]
 ///
 /// # 参数
 /// - `e`: 消息摘要 e = SM3(Z||M)（32 字节）
-/// - `pub_key`: 公钥（65 字节，04||x||y）
-/// - `sig`: 签名（64 字��，r||s）
+/// - `pub_key`: 公钥
+/// - `sig`: 签名（64 字节，r||s）
 ///
 /// # 返回
 /// 验证通过返回 `Ok(())`，否则返回错误码
@@ -505,8 +600,8 @@ pub fn verify(e: &[u8; 32], pub_key: &[u8; 65], sig: &[u8; 64]) -> Result<(), Er
 ///
 /// 需要 `alloc` feature。
 #[cfg(feature = "alloc")]
-pub fn encrypt<R: Rng>(pub_key: &[u8; 65], message: &[u8], rng: &mut R) -> Result<Vec<u8>, Error> {
-    let pa = AffinePoint::from_bytes(pub_key)?;
+pub fn encrypt<R: Rng>(pub_key: &PublicKey, message: &[u8], rng: &mut R) -> Result<Vec<u8>, Error> {
+    let pa = AffinePoint::from_bytes(pub_key.as_bytes())?;
 
     loop {
         // A1：生成随机 k ∈ [1, n-1]
@@ -644,9 +739,9 @@ mod tests {
 
     #[test]
     fn test_get_z_deterministic() {
-        let pub_key = [0x04u8; 65];
-        let z1 = get_z(DEFAULT_ID, &pub_key);
-        let z2 = get_z(DEFAULT_ID, &pub_key);
+        let pub_key = PublicKey::from_bytes(&[0x04u8; 65]).expect("公钥应有效");
+        let z1 = get_z(DEFAULT_ID, &pub_key.as_bytes());
+        let z2 = get_z(DEFAULT_ID, &pub_key.as_bytes());
         assert_eq!(z1, z2);
     }
 
@@ -662,7 +757,7 @@ mod tests {
         let pub_key = pri_key.public_key();
 
         let msg = b"hello sm2";
-        let z = get_z(DEFAULT_ID, &pub_key);
+        let z = get_z(DEFAULT_ID, &pub_key.as_bytes());
         let e = get_e(&z, msg);
 
         // 使用固定 k（仅测试用）—— k 必须 ∈ [1, n-1]
@@ -674,7 +769,7 @@ mod tests {
         let k = U256::from_be_slice(&k_bytes);
         let sig = sign_with_k(&e, &pri_key, &k).expect("签名应成功");
 
-        verify(&e, &pub_key, &sig).expect("验签应通过");
+        verify(&e, &pub_key.as_bytes(), &sig).expect("验签应通过");
     }
 
     #[test]
@@ -688,7 +783,7 @@ mod tests {
         let pub_key = pri_key.public_key();
 
         let msg = b"hello sm2";
-        let z = get_z(DEFAULT_ID, &pub_key);
+        let z = get_z(DEFAULT_ID, &pub_key.as_bytes());
         let e = get_e(&z, msg);
 
         let k_bytes: [u8; 32] = [
@@ -701,7 +796,7 @@ mod tests {
 
         // 篡改签名第一个字节
         sig[0] ^= 0x01;
-        assert!(verify(&e, &pub_key, &sig).is_err());
+        assert!(verify(&e, &pub_key.as_bytes(), &sig).is_err());
     }
 
     #[cfg(feature = "alloc")]
@@ -746,7 +841,7 @@ mod tests {
 
         let msg = b"hello sign_message";
         let sig = sign_message(msg, DEFAULT_ID, &pri_key, &mut rng);
-        verify_message(msg, DEFAULT_ID, &pub_key, &sig).expect("便捷验签应通过");
+        verify_message(msg, DEFAULT_ID, &pub_key.as_bytes(), &sig).expect("便捷验签应通过");
     }
 
     #[test]
@@ -768,7 +863,7 @@ mod tests {
         let msg = b"hello sign_message";
         let sig = sign_message(msg, DEFAULT_ID, &pri_key, &mut rng);
         // 用错误 ID 验签应失败
-        assert!(verify_message(msg, b"wrong-id", &pub_key, &sig).is_err());
+        assert!(verify_message(msg, b"wrong-id", &pub_key.as_bytes(), &sig).is_err());
     }
 
     #[cfg(feature = "alloc")]

@@ -26,11 +26,11 @@ fn test_keypair_generation() {
     assert_eq!(priv_key.as_bytes().len(), 32);
 
     // 验证公钥长度（未压缩格式）
-    assert_eq!(pub_key.len(), 65);
-    assert_eq!(pub_key[0], 0x04); // 未压缩格式标记
+    assert_eq!(pub_key.as_bytes().len(), 65);
+    assert_eq!(pub_key.as_bytes()[0], 0x04); // 未压缩格式标记
 
     // 验证公钥在曲线上
-    let z = get_z(DEFAULT_ID, &pub_key);
+    let z = get_z(DEFAULT_ID, &pub_key.as_bytes());
     assert_eq!(z.len(), 32);
 }
 
@@ -61,7 +61,7 @@ fn test_sign_verify_basic() {
     let (priv_key, pub_key) = generate_keypair(&mut rng);
 
     let message = b"Hello, SM2!";
-    let z = get_z(DEFAULT_ID, &pub_key);
+    let z = get_z(DEFAULT_ID, &pub_key.as_bytes());
     let e = get_e(&z, message);
 
     // 签名
@@ -69,7 +69,7 @@ fn test_sign_verify_basic() {
     assert_eq!(signature.len(), 64);
 
     // 验签
-    verify(&e, &pub_key, &signature).expect("Verification should succeed");
+    verify(&e, &pub_key.as_bytes(), &signature).expect("Verification should succeed");
 }
 
 /// 测试签名和验签 - 使用 sign_message/verify_message 便捷函数
@@ -85,7 +85,7 @@ fn test_sign_verify_message() {
     assert_eq!(signature.len(), 64);
 
     // 验签
-    verify_message(message, DEFAULT_ID, &pub_key, &signature).expect("Verification should succeed");
+    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &signature).expect("Verification should succeed");
 }
 
 /// 测试签名 - 相同消息不同签名（随机性）
@@ -106,8 +106,8 @@ fn test_sign_randomness() {
     );
 
     // 但都应能通过验签
-    verify_message(message, DEFAULT_ID, &pub_key, &sig1).expect("First signature should verify");
-    verify_message(message, DEFAULT_ID, &pub_key, &sig2).expect("Second signature should verify");
+    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &sig1).expect("First signature should verify");
+    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &sig2).expect("Second signature should verify");
 }
 
 /// 测试验签失败 - 篡改消息
@@ -123,7 +123,7 @@ fn test_verify_failure_tampered_message() {
     let tampered_message = b"Tampered message";
 
     // 验签应失败
-    let result = verify_message(tampered_message, DEFAULT_ID, &pub_key, &signature);
+    let result = verify_message(tampered_message, DEFAULT_ID, &pub_key.as_bytes(), &signature);
     assert!(
         result.is_err(),
         "Verification should fail for tampered message"
@@ -143,7 +143,7 @@ fn test_verify_failure_tampered_signature() {
     signature[0] ^= 0xFF;
 
     // 验签应失败
-    let result = verify_message(message, DEFAULT_ID, &pub_key, &signature);
+    let result = verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &signature);
     assert!(
         result.is_err(),
         "Verification should fail for tampered signature"
@@ -161,7 +161,7 @@ fn test_verify_failure_wrong_pubkey() {
     let signature = sign_message(message, DEFAULT_ID, &priv_key, &mut rng);
 
     // 使用错误的公钥验签应失败
-    let result = verify_message(message, DEFAULT_ID, &wrong_pub_key, &signature);
+    let result = verify_message(message, DEFAULT_ID, &wrong_pub_key.as_bytes(), &signature);
     assert!(
         result.is_err(),
         "Verification should fail with wrong public key"
@@ -182,11 +182,11 @@ fn test_sign_verify_with_custom_id() {
     let signature = sign_message(message, custom_id, &priv_key, &mut rng);
 
     // 使用相同 ID 验签应成功
-    verify_message(message, custom_id, &pub_key, &signature)
+    verify_message(message, custom_id, &pub_key.as_bytes(), &signature)
         .expect("Verification with same ID should succeed");
 
     // 使用不同 ID 验签必须失败
-    let result = verify_message(message, different_id, &pub_key, &signature);
+    let result = verify_message(message, different_id, &pub_key.as_bytes(), &signature);
     assert!(result.is_err(), "Verification with different ID must fail");
 }
 
@@ -199,7 +199,7 @@ fn test_sign_verify_empty_message() {
     let empty_message = b"";
 
     let signature = sign_message(empty_message, DEFAULT_ID, &priv_key, &mut rng);
-    verify_message(empty_message, DEFAULT_ID, &pub_key, &signature)
+    verify_message(empty_message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
         .expect("Verification of empty message should succeed");
 }
 
@@ -213,7 +213,7 @@ fn test_sign_verify_large_message() {
     let large_message = vec![0xABu8; 1024 * 1024];
 
     let signature = sign_message(&large_message, DEFAULT_ID, &priv_key, &mut rng);
-    verify_message(&large_message, DEFAULT_ID, &pub_key, &signature)
+    verify_message(&large_message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
         .expect("Verification of large message should succeed");
 }
 
@@ -322,10 +322,10 @@ fn test_ecdh_key_exchange() {
     let (bob_priv, bob_pub) = generate_keypair(&mut rng);
 
     // Alice 计算共享密钥
-    let shared_alice = ecdh(&alice_priv, &bob_pub).expect("Alice's ECDH should succeed");
+    let shared_alice = ecdh(&alice_priv, &bob_pub.as_bytes()).expect("Alice's ECDH should succeed");
 
     // Bob 计算共享密钥
-    let shared_bob = ecdh(&bob_priv, &alice_pub).expect("Bob's ECDH should succeed");
+    let shared_bob = ecdh(&bob_priv, &alice_pub.as_bytes()).expect("Bob's ECDH should succeed");
 
     // 共享密钥应相同
     assert_eq!(shared_alice, shared_bob);
@@ -339,12 +339,12 @@ fn test_pubkey_spki() {
     let (_priv_key, pub_key) = generate_keypair(&mut rng);
 
     // 编码为 SPKI
-    let spki = public_key_to_spki_der(&pub_key);
+    let spki = public_key_to_spki_der(pub_key.as_bytes());
     assert!(!spki.is_empty());
 
     // 解码
     let decoded = public_key_from_spki_der(&spki).expect("Failed to decode SPKI");
-    assert_eq!(decoded, pub_key);
+    assert_eq!(decoded, *pub_key.as_bytes());
 }
 
 /// 测试私钥 SEC1 编码和解码
@@ -384,21 +384,21 @@ fn test_get_z() {
     let (_priv_key, pub_key) = generate_keypair(&mut rng);
 
     // 使用默认 ID
-    let z1 = get_z(DEFAULT_ID, &pub_key);
+    let z1 = get_z(DEFAULT_ID, &pub_key.as_bytes());
     assert_eq!(z1.len(), 32);
 
     // 相同输入应产生相同 Z
-    let z2 = get_z(DEFAULT_ID, &pub_key);
+    let z2 = get_z(DEFAULT_ID, &pub_key.as_bytes());
     assert_eq!(z1, z2);
 
     // 不同 ID 应产生不同 Z
     let custom_id = b"custom_id_12345678";
-    let z3 = get_z(custom_id, &pub_key);
+    let z3 = get_z(custom_id, &pub_key.as_bytes());
     assert_ne!(z1, z3);
 
     // 不同公钥应产生不同 Z
     let (_priv_key2, pub_key2) = generate_keypair(&mut rng);
-    let z4 = get_z(DEFAULT_ID, &pub_key2);
+    let z4 = get_z(DEFAULT_ID, &pub_key2.as_bytes());
     assert_ne!(z1, z4);
 }
 
@@ -435,7 +435,7 @@ fn test_signature_stability() {
 
     for i in 0..100 {
         let signature = sign_message(message, DEFAULT_ID, &priv_key, &mut rng);
-        verify_message(message, DEFAULT_ID, &pub_key, &signature)
+        verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
             .expect(&format!("Verification should succeed at iteration {}", i));
     }
 }
@@ -469,7 +469,7 @@ fn test_zero_message() {
     let zero_message = vec![0u8; 100];
 
     let signature = sign_message(&zero_message, DEFAULT_ID, &priv_key, &mut rng);
-    verify_message(&zero_message, DEFAULT_ID, &pub_key, &signature)
+    verify_message(&zero_message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
         .expect("Verification of zero message should succeed");
 }
 
@@ -482,7 +482,7 @@ fn test_ff_message() {
     let ff_message = vec![0xFFu8; 100];
 
     let signature = sign_message(&ff_message, DEFAULT_ID, &priv_key, &mut rng);
-    verify_message(&ff_message, DEFAULT_ID, &pub_key, &signature)
+    verify_message(&ff_message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
         .expect("Verification of 0xFF message should succeed");
 }
 
@@ -496,7 +496,7 @@ fn test_special_length_messages() {
     for len in [1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257] {
         let message = vec![0xABu8; len];
         let signature = sign_message(&message, DEFAULT_ID, &priv_key, &mut rng);
-        verify_message(&message, DEFAULT_ID, &pub_key, &signature)
+        verify_message(&message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
             .expect(&format!("Verification should succeed for length {}", len));
     }
 }

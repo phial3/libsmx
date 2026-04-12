@@ -67,7 +67,7 @@ fn make_sm2_keypair() -> (Vec<u8>, Vec<u8>) {
     ]);
     sec1.extend_from_slice(pri_key.as_bytes());
 
-    let spki = public_key_to_spki_der(&pub_key);
+    let spki = public_key_to_spki_der(pub_key.as_bytes());
     (sec1, spki)
 }
 

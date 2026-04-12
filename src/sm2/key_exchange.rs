@@ -388,8 +388,8 @@ mod tests {
         let pub_b = pri_b.public_key();
 
         // A 用 B 的公钥算 ECDH，B 用 A 的公钥算 ECDH，结果应一致
-        let shared_a = ecdh(&pri_a, &pub_b).unwrap();
-        let shared_b = ecdh(&pri_b, &pub_a).unwrap();
+        let shared_a = ecdh(&pri_a, &pub_b.as_bytes()).unwrap();
+        let shared_b = ecdh(&pri_b, &pub_a.as_bytes()).unwrap();
         assert_eq!(shared_a, shared_b);
     }
 
@@ -438,8 +438,8 @@ mod tests {
         let pri_b = PrivateKey::from_bytes(&d_b).unwrap();
         let pub_b = pri_b.public_key();
 
-        let r1 = ecdh(&pri_a, &pub_b).unwrap();
-        let r2 = ecdh_from_slice(&pri_a, &pub_b).unwrap();
+        let r1 = ecdh(&pri_a, &pub_b.as_bytes()).unwrap();
+        let r2 = ecdh_from_slice(&pri_a, pub_b.as_bytes()).unwrap();
         assert_eq!(r1, r2);
     }
 
@@ -478,8 +478,8 @@ mod tests {
             id_a,
             id_b,
             &pri_a,
-            &pub_a,
-            &pub_b,
+            &pub_a.as_bytes(),
+            &pub_b.as_bytes(),
             &eph_a,
             eph_b.public_key(),
         )
@@ -490,8 +490,8 @@ mod tests {
             id_a,
             id_b,
             &pri_b,
-            &pub_a,
-            &pub_b,
+            &pub_a.as_bytes(),
+            &pub_b.as_bytes(),
             &eph_b,
             eph_a.public_key(),
         )
@@ -536,8 +536,8 @@ mod tests {
             id_a,
             id_b,
             &pri_a,
-            &pub_a,
-            &pub_b,
+            &pub_a.as_bytes(),
+            &pub_b.as_bytes(),
             &eph_a,
             eph_b.public_key(),
         )
@@ -548,8 +548,8 @@ mod tests {
             id_a,
             id_b,
             &pri_b,
-            &pub_a,
-            &pub_b,
+            &pub_a.as_bytes(),
+            &pub_b.as_bytes(),
             &eph_b,
             eph_a.public_key(),
         )
@@ -592,8 +592,8 @@ mod tests {
             b"ID_A_1",
             b"ID_B_1",
             &pri_a,
-            &pub_a,
-            &pub_b,
+            &pub_a.as_bytes(),
+            &pub_b.as_bytes(),
             &eph_a1,
             eph_b1.public_key(),
         )
@@ -606,8 +606,8 @@ mod tests {
             b"ID_A_2",
             b"ID_B_2",
             &pri_a,
-            &pub_a,
-            &pub_b,
+            &pub_a.as_bytes(),
+            &pub_b.as_bytes(),
             &eph_a2,
             eph_b2.public_key(),
         )

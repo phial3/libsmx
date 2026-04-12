@@ -243,7 +243,7 @@ pub fn create_digital_signature<R: Rng>(
     // 对签名属性进行 SM2 签名
     // 注意：签名时需要使用 SET OF 编码的属性，而不是 [0] IMPLICIT 编码
     let pub_key = priv_key.public_key();
-    let z = crate::sm2::get_z(id, &pub_key);
+    let z = crate::sm2::get_z(id, pub_key.as_bytes());
     let signed_attrs_for_sign = encode_signed_attrs_for_sign(&signed_attrs)?;
     let e = crate::sm2::get_e(&z, &signed_attrs_for_sign);
     let signature = sign(&e, priv_key, rng);
@@ -535,7 +535,7 @@ impl CmsSignerBuilder {
 
             // 对签名属性进行 SM2 签名
             let pub_key = signer_config.private_key.public_key();
-            let z = crate::sm2::get_z(&signer_config.id, &pub_key);
+            let z = crate::sm2::get_z(&signer_config.id, pub_key.as_bytes());
             let signed_attrs_for_sign = encode_signed_attrs_for_sign(&signed_attrs)?;
             let e = crate::sm2::get_e(&z, &signed_attrs_for_sign);
             let signature = sign(&e, &signer_config.private_key, rng);
@@ -829,7 +829,7 @@ fn verify_signer_info(
     }
 
     // 验证 SM2 签名
-    let z = crate::sm2::get_z(id, &pub_key);
+    let z = crate::sm2::get_z(id, pub_key.as_bytes());
     let signed_attrs_for_verify = encode_signed_attrs_for_sign(signed_attrs)?;
     let e = crate::sm2::get_e(&z, &signed_attrs_for_verify);
 
@@ -840,7 +840,7 @@ fn verify_signer_info(
         .map_err(|_| Error::InvalidSignature)?;
 
     // 验证签名，如果失败返回详细错误
-    verify(&e, &pub_key, &sig_array)?;
+    verify(&e, pub_key.as_bytes(), &sig_array)?;
 
     Ok(())
 }
@@ -887,9 +887,9 @@ fn find_signer_certificate(
 /// 3. 公钥和持有者信息组合后的哈希
 ///
 /// 这里使用公钥的 SHA-1 哈希（前 20 字节）作为 SKI。
-fn compute_subject_key_identifier(pub_key: &[u8; 65]) -> Vec<u8> {
+fn compute_subject_key_identifier(pub_key: &crate::sm2::PublicKey) -> Vec<u8> {
     // 使用 SM3 计算公钥哈希（国密环境使用 SM3 替代 SHA-1）
-    let hash = crate::sm2::cert::public_key_fingerprint(pub_key);
+    let hash = crate::sm2::cert::public_key_fingerprint(pub_key.as_bytes());
     // 取前 20 字节作为 SKI（与 SHA-1 输出长度一致）
     hash[..20].to_vec()
 }
@@ -1448,12 +1448,12 @@ mod tests {
         
         // 计算 e
         let pub_key_cert = cert.extract_sm2_public_key().expect("Extract public key should succeed");
-        let z = crate::sm2::get_z(DEFAULT_ID, &pub_key_cert);
+        let z = crate::sm2::get_z(DEFAULT_ID, &pub_key_cert.as_bytes());
         let e = crate::sm2::get_e(&z, &signed_attrs_encoded);
 
         // 验证签名
         let sig_array: [u8; 64] = signer_info.signature.as_bytes().try_into().expect("Signature should be 64 bytes");
-        verify(&e, &pub_key_cert, &sig_array).expect("Signature verification should succeed");
+        verify(&e, &pub_key_cert.as_bytes(), &sig_array).expect("Signature verification should succeed");
 
         // 验证签章
         let result = verify_digital_signature(&signed_data, DEFAULT_ID);

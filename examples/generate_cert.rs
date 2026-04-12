@@ -210,7 +210,7 @@ fn main() {
 
     // 服务器公钥
     let server_pub_pem =
-        public_key_to_spki_pem(&server_pub_key).expect("Server pub PEM encoding failed");
+        public_key_to_spki_pem(server_pub_key.as_bytes()).expect("Server pub PEM encoding failed");
     fs::write(
         output_dir.join(format!("{}_server_pub.pem", cert_name)),
         &server_pub_pem,

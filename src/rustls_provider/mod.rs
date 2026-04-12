@@ -102,7 +102,7 @@ mod tests {
         let mut rng = crate::rustls_provider::kx::Sm2Rng;
         let (pri_key, pub_key) = generate_keypair(&mut rng);
         let sig_raw = sign_message(message, DEFAULT_ID, &pri_key, &mut rng);
-        (pub_key, sig_raw.to_vec())
+        (pub_key.to_bytes(), sig_raw.to_vec())
     }
 
     #[test]
@@ -126,7 +126,7 @@ mod tests {
         // 用另一个公钥验证
         let mut rng = crate::rustls_provider::kx::Sm2Rng;
         let (_, other_pub) = generate_keypair(&mut rng);
-        let result = SM2_SM3_ALG.verify_signature(&other_pub, msg, &sig);
+        let result = SM2_SM3_ALG.verify_signature(other_pub.as_bytes(), msg, &sig);
         assert!(result.is_err());
     }
 

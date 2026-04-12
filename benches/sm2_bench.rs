@@ -11,7 +11,7 @@ fn bench_sm2_sign(c: &mut Criterion) {
     let (pri_key, pub_key) = generate_keypair(&mut rng);
     let id = b"benchuser";
     let msg = b"benchmark message for SM2 sign";
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
 
     c.bench_function("SM2/sign", |b| {
@@ -25,11 +25,11 @@ fn bench_sm2_verify(c: &mut Criterion) {
     let (pri_key, pub_key) = generate_keypair(&mut rng);
     let id = b"benchuser";
     let msg = b"benchmark message for SM2 verify";
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
     let sig = sign(&e, &pri_key, &mut rng);
 
-    c.bench_function("SM2/verify", |b| b.iter(|| verify(&e, &pub_key, &sig)));
+    c.bench_function("SM2/verify", |b| b.iter(|| verify(&e, &pub_key.as_bytes(), &sig)));
 }
 
 fn bench_sm2_encrypt(c: &mut Criterion) {

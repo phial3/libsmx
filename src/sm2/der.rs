@@ -773,13 +773,13 @@ mod tests {
         use crate::sm2::PrivateKey;
         let pri = PrivateKey::from_bytes(&RAW_KEY).unwrap();
         let pub_key = pri.public_key();
-        let spki = public_key_to_spki_der(&pub_key);
+        let spki = public_key_to_spki_der(pub_key.as_bytes());
 
         // 外层 SEQUENCE
         assert_eq!(spki[0], 0x30, "外层 tag 应为 SEQUENCE");
         // BIT STRING 内包含 04||x||y（65字节）
         // 确认公钥原始字节出现在 SPKI 中
-        let pos = spki.windows(65).position(|w| w == pub_key);
+        let pos = spki.windows(65).position(|w| w == pub_key.as_bytes());
         assert!(pos.is_some(), "SPKI 应包含原始公钥字节");
     }
 
@@ -789,9 +789,9 @@ mod tests {
         use crate::sm2::PrivateKey;
         let pri = PrivateKey::from_bytes(&RAW_KEY).unwrap();
         let pub_key = pri.public_key();
-        let spki = public_key_to_spki_der(&pub_key);
+        let spki = public_key_to_spki_der(pub_key.as_bytes());
         let recovered = public_key_from_spki_der(&spki).expect("SPKI 解析应成功");
-        assert_eq!(recovered, pub_key);
+        assert_eq!(recovered, *pub_key.as_bytes());
     }
 
     #[cfg(feature = "alloc")]
@@ -800,7 +800,7 @@ mod tests {
         use crate::sm2::PrivateKey;
         let pri = PrivateKey::from_bytes(&RAW_KEY).unwrap();
         let pub_key = pri.public_key();
-        let spki = public_key_to_spki_der(&pub_key);
+        let spki = public_key_to_spki_der(pub_key.as_bytes());
         // 使用 oid 模块的常量验证
         assert!(
             spki.windows(crate::sm2::EC_PUBKEY_OID.as_bytes().len())

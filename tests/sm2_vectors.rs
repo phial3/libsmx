@@ -6,7 +6,7 @@
 use crypto_bigint::U256;
 use libsmx::sm2::{
     get_e, get_z, sign_with_k, verify, sign_message, verify_message,
-    PrivateKey, DEFAULT_ID,
+    PrivateKey, PublicKey, DEFAULT_ID,
 };
 
 // ============================================================================
@@ -29,7 +29,7 @@ fn test_sm2_gb_t_a1_basic() {
         .expect("私钥应有效");
     let pub_key = pri_key.public_key();
     
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
     
     let k = U256::from_be_slice(&k_bytes);
@@ -39,7 +39,7 @@ fn test_sm2_gb_t_a1_basic() {
     assert_eq!(sig.len(), 64, "签名应为 64 字节");
     
     // 验签应成功
-    verify(&e, &pub_key, &sig).expect("验签应成功");
+    verify(&e, &pub_key.as_bytes(), &sig).expect("验签应成功");
     
     // 验证签名的确定性（相同输入应产生相同签名）
     let sig2 = sign_with_k(&e, &pri_key, &k).expect("重复签名应成功");
@@ -73,13 +73,13 @@ fn test_sm2_gb_t_a1_different_ids() {
     let mut signatures = Vec::new();
     
     for &id in &ids {
-        let z = get_z(id, &pub_key);
+        let z = get_z(id, &pub_key.as_bytes());
         let e = get_e(&z, msg);
         let sig = sign_with_k(&e, &pri_key, &k).expect("签名应成功");
         signatures.push(sig);
         
         // 验签应成功
-        verify(&e, &pub_key, &sig).expect("验签应成功");
+        verify(&e, &pub_key.as_bytes(), &sig).expect("验签应成功");
     }
     
     // 不同 ID 应产生不同签名
@@ -107,13 +107,13 @@ fn test_sm2_gb_t_a1_boundary() {
         .expect("最小私钥应有效");
     let pub_key = pri_key.public_key();
     
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
     
     let k = U256::from_be_slice(&k_bytes);
     let sig = sign_with_k(&e, &pri_key, &k).expect("边界私钥签名应成功");
     
-    verify(&e, &pub_key, &sig).expect("边界私钥验签应成功");
+    verify(&e, &pub_key.as_bytes(), &sig).expect("边界私钥验签应成功");
 }
 
 /// GB/T 32918.2-2016 附录 A.1 示例 4：随机数边界测试（k=1）
@@ -132,13 +132,13 @@ fn test_sm2_gb_t_a1_random_boundary() {
         .expect("私钥应有效");
     let pub_key = pri_key.public_key();
     
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
     
     let k = U256::from_be_slice(&k_bytes);
     let sig = sign_with_k(&e, &pri_key, &k).expect("边界随机数签名应成功");
     
-    verify(&e, &pub_key, &sig).expect("边界随机数验签应成功");
+    verify(&e, &pub_key.as_bytes(), &sig).expect("边界随机数验签应成功");
 }
 
 // ============================================================================
@@ -161,14 +161,14 @@ fn test_sm2_sign_verify_with_known_key() {
     let id = b"ALICE123@YAHOO.COM";
     let msg = b"message digest";
 
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
 
     let k = U256::from_be_slice(&k_bytes);
     let sig = sign_with_k(&e, &pri_key, &k).expect("签名应成功");
 
     // 验签
-    verify(&e, &pub_key, &sig).expect("验签应成功");
+    verify(&e, &pub_key.as_bytes(), &sig).expect("验签应成功");
 
     // 签名长度正确
     assert_eq!(sig.len(), 64, "签名应为 64 字节");
@@ -187,7 +187,7 @@ fn test_sm2_different_messages_different_sigs() {
         &hex::decode("59276e27d506861a16680f3ad9c02dccef3cc1fa3cdbe4ce6d54b80deac1bc21").unwrap(),
     );
 
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e1 = get_e(&z, b"message 1");
     let e2 = get_e(&z, b"message 2");
 
@@ -208,7 +208,7 @@ fn test_sm2_verify_tampered_message_fails() {
 
     let id = b"1234567812345678";
     let msg = b"original message";
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
 
     let k = U256::from_be_slice(
@@ -219,7 +219,7 @@ fn test_sm2_verify_tampered_message_fails() {
     // 对不同消息的摘要验签，应失败
     let e_wrong = get_e(&z, b"tampered message");
     assert!(
-        verify(&e_wrong, &pub_key, &sig).is_err(),
+        verify(&e_wrong, &pub_key.as_bytes(), &sig).is_err(),
         "篡改消息后验签应失败"
     );
 }
@@ -234,7 +234,7 @@ fn test_sm2_verify_tampered_sig_fails() {
 
     let id = b"1234567812345678";
     let msg = b"test message";
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
 
     let k = U256::from_be_slice(
@@ -243,7 +243,7 @@ fn test_sm2_verify_tampered_sig_fails() {
     let mut sig = sign_with_k(&e, &pri_key, &k).unwrap();
     sig[0] ^= 1; // 篡改 r 的第一字节
 
-    assert!(verify(&e, &pub_key, &sig).is_err(), "篡改签名后验签应失败");
+    assert!(verify(&e, &pub_key.as_bytes(), &sig).is_err(), "篡改签名后验签应失败");
 }
 
 /// Z 值计算确定性验证（相同输入产生相同 Z）
@@ -255,8 +255,8 @@ fn test_sm2_z_value_deterministic() {
     let pub_key = pri_key.public_key();
 
     let id = b"ALICE123@YAHOO.COM";
-    let z1 = get_z(id, &pub_key);
-    let z2 = get_z(id, &pub_key);
+    let z1 = get_z(id, &pub_key.as_bytes());
+    let z2 = get_z(id, &pub_key.as_bytes());
     assert_eq!(z1, z2, "Z 值计算应为确定性");
 }
 
@@ -281,7 +281,7 @@ fn test_sm2_gb_t_a1_convenience_api() {
     let sig = sign_message(msg, id, &pri_key, &mut rand::rng());
     
     // 使用便捷接口验签
-    verify_message(msg, id, &pub_key, &sig).expect("便捷接口验签应成功");
+    verify_message(msg, id, &pub_key.as_bytes(), &sig).expect("便捷接口验签应成功");
     
     // 签名长度正确
     assert_eq!(sig.len(), 64, "便捷接口签名应为 64 字节");
@@ -302,27 +302,28 @@ fn test_sm2_gb_t_a1_error_cases() {
         .expect("私钥应有效");
     let pub_key = pri_key.public_key();
     
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let e = get_e(&z, msg);
     
     let k = U256::from_be_slice(&k_bytes);
     let sig = sign_with_k(&e, &pri_key, &k).expect("签名应成功");
     
     // 测试错误公钥
-    let mut wrong_pub_key = pub_key;
-    wrong_pub_key[64] ^= 0x01; // 篡改公钥最后一个字节
-    assert!(verify(&e, &wrong_pub_key, &sig).is_err(), 
+    let mut wrong_pub_key_bytes = *pub_key.as_bytes();
+    wrong_pub_key_bytes[64] ^= 0x01; // 篡改公钥最后一个字节
+    let wrong_pub_key = PublicKey::from_bytes(&wrong_pub_key_bytes).expect("公钥应有效");
+    assert!(verify(&e, &wrong_pub_key.as_bytes(), &sig).is_err(), 
         "错误公钥验签应失败");
     
     // 测试错误消息
     let wrong_msg = b"wrong message";
     let wrong_e = get_e(&z, wrong_msg);
-    assert!(verify(&wrong_e, &pub_key, &sig).is_err(), "错误消息验签应失败");
+    assert!(verify(&wrong_e, &pub_key.as_bytes(), &sig).is_err(), "错误消息验签应失败");
     
     // 测试错误签名
     let mut wrong_sig = sig;
     wrong_sig[0] ^= 0x01; // 篡改签名第一个字节
-    assert!(verify(&e, &pub_key, &wrong_sig).is_err(), "错误签名验签应失败");
+    assert!(verify(&e, &pub_key.as_bytes(), &wrong_sig).is_err(), "错误签名验签应失败");
 }
 
 // ============================================================================
@@ -342,7 +343,7 @@ fn test_sm2_gb_t_a1_randomness() {
         .expect("私钥应有效");
     let pub_key = pri_key.public_key();
     
-    let z = get_z(id, &pub_key);
+    let z = get_z(id, &pub_key.as_bytes());
     let _e = get_e(&z, msg);
     
     // 生成多个签名，验证随机性
@@ -353,7 +354,7 @@ fn test_sm2_gb_t_a1_randomness() {
         signatures.push(sig);
         
         // 每个签名都应能通过验证
-        verify_message(msg, id, &pub_key, &signatures.last().unwrap())
+        verify_message(msg, id, &pub_key.as_bytes(), &signatures.last().unwrap())
             .expect("随机签名验签应成功");
     }
     
@@ -383,7 +384,7 @@ fn test_sm2_gb_t_a1_empty_message() {
     let sig = sign_message(msg, id, &pri_key, &mut rand::rng());
     
     // 空消息验签应成功
-    verify_message(msg, id, &pub_key, &sig).expect("空消息验签应成功");
+    verify_message(msg, id, &pub_key.as_bytes(), &sig).expect("空消息验签应成功");
     
     // 签名长度正确
     assert_eq!(sig.len(), 64, "空消息签名应为 64 字节");
@@ -408,7 +409,7 @@ fn test_sm2_gb_t_a1_long_message() {
     let sig = sign_message(&msg, id, &pri_key, &mut rand::rng());
     
     // 长消息验签应成功
-    verify_message(&msg, id, &pub_key, &sig).expect("长消息验签应成功");
+    verify_message(&msg, id, &pub_key.as_bytes(), &sig).expect("长消息验签应成功");
     
     // 签名长度正确
     assert_eq!(sig.len(), 64, "长消息签名应为 64 字节");
@@ -432,7 +433,7 @@ fn test_sm2_gb_t_a1_performance() {
     // 执行多次签名操作
     for _ in 0..100 {
         let sig = sign_message(msg, id, &pri_key, &mut rand::rng());
-        verify_message(msg, id, &pub_key, &sig).expect("性能测试验签应成功");
+        verify_message(msg, id, &pub_key.as_bytes(), &sig).expect("性能测试验签应成功");
     }
     
     let duration = start.elapsed();

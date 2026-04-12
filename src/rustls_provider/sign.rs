@@ -4,13 +4,15 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::sm2::der::{public_key_to_spki_der, sig_to_der};
+use crate::sm2::der::sig_to_der;
 use crate::sm2::{sign_message, verify_message, PrivateKey, DEFAULT_ID};
 use pki_types::{
     AlgorithmIdentifier, PrivateKeyDer, SignatureVerificationAlgorithm, SubjectPublicKeyInfoDer,
 };
 use rustls::crypto::{SignatureScheme, Signer, SigningKey};
 use rustls::error::Error;
+use x509_cert::der::Encode;
+use x509_cert::spki::EncodePublicKey;
 
 // SM2 公钥算法标识符的 DER 编码（静态常量）
 const SM2_SPKI_ALGORITHM_DER: &[u8] = &[
@@ -106,9 +108,9 @@ impl SigningKey for Sm2SigningKey {
     }
 
     fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
-        let pub_key_bytes = self.pri_key.public_key();
-        let spki = public_key_to_spki_der(&pub_key_bytes);
-        Some(SubjectPublicKeyInfoDer::from(spki))
+        let pub_key = self.pri_key.public_key();
+        let spki_der = pub_key.to_public_key_der().unwrap().to_der().unwrap();
+        Some(SubjectPublicKeyInfoDer::from(spki_der))
     }
 }
 
@@ -166,7 +168,7 @@ mod tests {
         let (pri_key, pub_key) = generate_keypair(&mut rng);
         let sec1 = encode_sec1_der(&pri_key);
         let key_der = pki_types::PrivateKeyDer::Sec1(pki_types::PrivateSec1KeyDer::from(sec1));
-        (pri_key, pub_key, key_der)
+        (pri_key, pub_key.to_bytes(), key_der)
     }
 
     #[test]
