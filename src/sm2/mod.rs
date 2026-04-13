@@ -36,8 +36,7 @@ use alloc::vec::Vec;
 use alloc::string::String;
 
 #[cfg(feature = "std")]
-use x509_cert::der::{Decode, Encode};
-use x509_cert::der::pem::{decode_vec, encode_string};
+use x509_cert::der::{pem, Decode, Encode};
 use x509_cert::spki::{SubjectPublicKeyInfo, AlgorithmIdentifier, ObjectIdentifier};
 use x509_cert::der::asn1::BitString;
 
@@ -240,7 +239,7 @@ impl PrivateKey {
     #[cfg(feature = "std")]
     pub fn to_sec1_pem(&self) -> Result<String, Error> {
         let der = der::private_key_to_sec1_der(self);
-        encode_string("EC PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
+        pem::encode_string("EC PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 将私钥编码为 PKCS#8 PEM 格式
@@ -249,7 +248,7 @@ impl PrivateKey {
     #[cfg(feature = "std")]
     pub fn to_pkcs8_pem(&self) -> Result<String, Error> {
         let der = der::private_key_to_pkcs8_der(self);
-        encode_string("PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
+        pem::encode_string("PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 从 SEC1 DER 解析私钥
@@ -267,7 +266,7 @@ impl PrivateKey {
     /// 从 SEC1 格式的 PEM 解析 SM2 私钥。
     #[cfg(feature = "std")]
     pub fn from_sec1_pem(pem: &[u8]) -> Result<Self, Error> {
-        let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+        let (_label, der) = pem::decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
         der::private_key_from_sec1_der(&der)
     }
 
@@ -276,7 +275,7 @@ impl PrivateKey {
     /// 从 PKCS#8 格式的 PEM 解析 SM2 私钥。
     #[cfg(feature = "std")]
     pub fn from_pkcs8_pem(pem: &[u8]) -> Result<Self, Error> {
-        let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
+        let (_label, der) = pem::decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
         der::private_key_from_pkcs8_der(&der)
     }
 }
@@ -448,6 +447,7 @@ impl PublicKey {
     }
 
     /// 将公钥转换为 SPKI 格式
+    #[cfg(feature = "std")]
     pub fn to_spki(&self) ->  SubjectPublicKeyInfo<ObjectIdentifier,BitString> {
         use x509_cert::spki::EncodePublicKey;
         let document = &self.to_public_key_der().unwrap();
@@ -456,6 +456,7 @@ impl PublicKey {
     }
 
     /// 将 SPKI 格式的公钥转换为 SM2 公钥
+    #[cfg(feature = "std")]
     pub fn from_spki(spki: &SubjectPublicKeyInfo<ObjectIdentifier,BitString>) -> Self {
         use x509_cert::spki::DecodePublicKey;
         Self::from_public_key_der(&spki.to_der().unwrap()).unwrap()
@@ -469,7 +470,6 @@ impl x509_cert::spki::EncodePublicKey for PublicKey {
         let subject_public_key = BitString::new(0, self.as_bytes())
             .map_err(|_| x509_cert::spki::Error::KeyMalformed)?;
 
-        // 创建 SubjectPublicKeyInfo
         let spki = SubjectPublicKeyInfo {
             algorithm: SM2_SPKI_ALGORITHM,
             subject_public_key,

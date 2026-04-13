@@ -282,6 +282,7 @@ pub fn create_subject_key_identifier_extension(pub_key: &PublicKey) -> Extension
 ///
 /// # 返回
 /// x509-cert 的 Extension 类型
+#[cfg(feature = "std")]
 pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Extension {
     // 使用 CA 证书的公钥指纹作为 AKI
     let ca_pub_key = PublicKey::from_spki(&ca_cert.subject_public_key_info);
@@ -1693,6 +1694,7 @@ pub fn verify_tbs_certificate_signature(
 /// # 返回
 /// - `Ok(GmCertificate)`: 签名成功的证书
 /// - `Err(Error)`: 签名失败
+#[cfg(feature = "std")]
 #[allow(clippy::too_many_arguments)]
 fn build_and_sign_cert<R: Rng>(
     issuer: &Name,
@@ -1814,6 +1816,7 @@ fn build_and_sign_cert<R: Rng>(
 ///     &mut rng,
 /// ).expect("Failed to generate certificate");
 /// ```
+#[cfg(feature = "std")]
 pub fn generate_self_signed_cert<R: Rng>(
     priv_key: &PrivateKey,
     subject: &Name,
@@ -1877,6 +1880,7 @@ pub fn encode_extension(ext: &Extension) -> Vec<u8> {
 /// # 返回
 /// - `Ok(GmCertificate)`: 签发成功的新证书
 /// - `Err(Error)`: 签发失败
+#[cfg(feature = "std")]
 #[allow(clippy::too_many_arguments)]
 pub fn issue_certificate<R: Rng>(
     ca_cert: &GmCertificate,
