@@ -11,7 +11,7 @@
 //! - 多签名者场景
 //! - 文件往返测试
 
-#![cfg(all(feature = "alloc", feature = "std"))]
+#![cfg(feature = "std")]
 
 use libsmx::sm2::cert::{self, build_x500_name, generate_self_signed_cert, GmCertificate, X500Attribute, X500AttributeType};
 use libsmx::sm2::cms::{self, CmsSignerBuilder, create_digital_signature, verify_digital_signature};

@@ -42,8 +42,17 @@
 //! | SM9 | GB/T 38635.1-2-2020 |
 
 #![no_std]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
-#![warn(missing_docs, rust_2018_idioms)]
+#![warn(
+    clippy::mod_module_files,
+    clippy::unwrap_used,
+    missing_docs,
+    rust_2018_idioms,
+    unused_lifetimes,
+    unused_qualifications
+)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -67,3 +76,8 @@ pub mod kdf;
 
 #[cfg(feature = "rustls-provider")]
 pub mod rustls_provider;
+
+#[cfg(feature = "alloc")]
+pub use x509_cert as x509;
+
+pub use crypto_bigint as bigint;

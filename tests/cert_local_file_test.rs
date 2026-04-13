@@ -1,4 +1,4 @@
-#![cfg(all(feature = "alloc", feature = "std"))]
+#![cfg(feature = "std")]
 
 //! 使用 data 目录中的真实证书和密钥进行证书和 CMS 测试
 //!

@@ -2744,7 +2744,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "alloc", feature = "std"))]
+    #[cfg(feature = "std")]
     fn test_certificate_builder_with_name_type() {
         use std::time::Duration;
 

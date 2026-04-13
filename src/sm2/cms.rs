@@ -37,7 +37,7 @@
 //!     unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
 //! ```
 
-#![cfg(all(feature = "alloc", feature = "std"))]
+#![cfg(feature = "alloc")]
 
 use alloc::format;
 use alloc::string::String;
@@ -380,8 +380,6 @@ fn encode_unsigned_attrs(attrs: &Attributes) -> Result<Vec<u8>, Error> {
 /// 使用 `SystemTime::now()` 获取 UTC 时间，符合 X.509 和 CMS 标准。
 /// 时间格式为 UTCTime（YYMMDDHHMMSSZ）。
 fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
-    use std::time::SystemTime;
-
     let mut attr = Vec::new();
 
     // attrType = signing-time
@@ -389,15 +387,29 @@ fn encode_signing_time_attr() -> Result<Vec<u8>, Error> {
     attr.extend(&oid_der);
 
     // attrValues = SET { Time }
-    let signing_time = Time::try_from(SystemTime::now())
-        .map_err(|_| Error::InvalidSignature)?;
-    let time_der = signing_time.to_der().unwrap();
-    
+    let time_der = encode_signing_time_der()?;
+
     // 包装为 SET OF
     let set_content = der::wrap_set(time_der);
     attr.extend(set_content);
 
     Ok(der::wrap_sequence(attr))
+}
+
+/// 编码时间值为 DER
+#[cfg(feature = "std")]
+fn encode_signing_time_der() -> Result<Vec<u8>, Error> {
+    use std::time::SystemTime;
+    let signing_time = Time::try_from(SystemTime::now()).map_err(|_| Error::InvalidInput)?;
+    signing_time.to_der().map_err(|_| Error::InvalidInput)
+}
+
+/// 编码时间值为 DER（非 std 环境下返回错误）
+#[cfg(not(feature = "std"))]
+fn encode_signing_time_der() -> Result<Vec<u8>, Error> {
+    // 非 std 环境下无法获取当前时间，返回错误
+    // 调用方应该在非 std 环境下避免使用 include_time=true
+    Err(Error::InvalidInput)
 }
 
 // ====================================================================================
