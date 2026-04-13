@@ -58,6 +58,10 @@ criterion = { version = "0.8", features = ["html_reports"] }
 rustls = { git = "https://github.com/rustls/rustls.git", branch = "main", default-features = false, features = ["log", "webpki"] }
 pki-types = { package = "rustls-pki-types", version = "1", features = ["alloc"] }
 
+[[example]]
+name = "generate_cert"
+required-features = ["std"]
+
 [[bench]]
 name = "sm2_bench"
 harness = false

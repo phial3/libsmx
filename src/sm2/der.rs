@@ -383,7 +383,7 @@ pub fn private_key_from_pkcs8_der(der: &[u8]) -> Result<PrivateKey, Error> {
 ///
 /// let mut rng = StdRng::seed_from_u64(12345);
 /// let (_, pub_key) = generate_keypair(&mut rng);
-/// let spki_der = public_key_to_spki_der(&pub_key);
+/// let spki_der = public_key_to_spki_der(pub_key.as_bytes());
 /// ```
 #[cfg(feature = "alloc")]
 pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {

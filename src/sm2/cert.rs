@@ -1903,7 +1903,7 @@ pub fn issue_certificate<R: Rng>(
 // 测试
 // ====================================================================================
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     use crate::sm2::generate_keypair;

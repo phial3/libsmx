@@ -11,8 +11,6 @@ use pki_types::{
 };
 use rustls::crypto::{SignatureScheme, Signer, SigningKey};
 use rustls::error::Error;
-use x509_cert::der::Encode;
-use x509_cert::spki::EncodePublicKey;
 
 // SM2 公钥算法标识符的 DER 编码（静态常量）
 const SM2_SPKI_ALGORITHM_DER: &[u8] = &[
@@ -108,8 +106,9 @@ impl SigningKey for Sm2SigningKey {
     }
 
     fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
+        use x509_cert::der::Encode;
         let pub_key = self.pri_key.public_key();
-        let spki_der = pub_key.to_public_key_der().unwrap().to_der().unwrap();
+        let spki_der = pub_key.to_spki().to_der().unwrap();
         Some(SubjectPublicKeyInfoDer::from(spki_der))
     }
 }
