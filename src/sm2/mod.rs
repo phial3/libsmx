@@ -21,11 +21,12 @@ pub mod cert;
 #[cfg(feature = "alloc")]
 pub mod cms;
 
-// 重新导出 der 模块的密钥编解码函数
 #[cfg(feature = "alloc")]
 pub use der::{
-    private_key_from_pkcs8_der, private_key_from_sec1_der, private_key_to_pkcs8_der,
-    private_key_to_sec1_der, public_key_from_spki_der, public_key_to_spki_der,
+    private_key_from_pkcs8_der,
+    private_key_from_sec1_der,
+    private_key_to_pkcs8_der,
+    private_key_to_sec1_der,
 };
 
 #[cfg(feature = "alloc")]
@@ -35,8 +36,10 @@ use alloc::vec::Vec;
 use alloc::string::String;
 
 #[cfg(feature = "std")]
+use x509_cert::der::{Decode, Encode};
 use x509_cert::der::pem::{decode_vec, encode_string};
-use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
+use x509_cert::spki::{SubjectPublicKeyInfo, AlgorithmIdentifier, ObjectIdentifier};
+use x509_cert::der::asn1::BitString;
 
 use crypto_bigint::U256;
 use rand_core::Rng;
@@ -319,16 +322,151 @@ impl PublicKey {
         y.copy_from_slice(&self.bytes[33..65]);
         y
     }
+
+    /// 将公钥转换为压缩格式 (33字节)
+    ///
+    /// 将 65 字节未压缩公钥压缩为 33 字节格式。
+    ///
+    /// ## 压缩格式
+    ///
+    /// - **02 || x**: y 坐标为偶数
+    /// - **03 || x**: y 坐标为奇数
+    ///
+    /// ## 压缩原理
+    ///
+    /// 椭圆曲线方程 y² = x³ + ax + b，给定 x 可以计算出 y²，
+    /// 然后根据 y 的奇偶性选择正确的 y 值。
+    ///
+    /// # 参数
+    /// - `pub_key`: 65 字节未压缩公钥 (0x04 || x || y)
+    ///
+    /// # 返回
+    /// - `Ok([u8; 33])`: 33 字节压缩公钥
+    /// - `Err(Error::InvalidPublicKey)`: 输入格式错误
+    pub fn to_compressed(&self) -> Result<[u8; 33], Error> {
+        let x = &self.x();
+        let y = &self.y();
+
+        // 根据 y 的奇偶性选择前缀
+        let y_is_odd = y[31] & 1;
+        let prefix = if y_is_odd != 0 { 0x03 } else { 0x02 };
+
+        let mut compressed = [0u8; 33];
+        compressed[0] = prefix;
+        compressed[1..33].copy_from_slice(x);
+
+        Ok(compressed)
+    }
+
+    /// 将压缩公钥解压为完整格式 (65字节)
+    ///
+    /// 使用椭圆曲线点解压缩算法将 33 字节压缩公钥解压为 65 字节完整格式。
+    ///
+    /// ## 解压算法
+    ///
+    /// 1. 从压缩格式提取 x 坐标和前缀（02 或 03）
+    /// 2. 计算 α = x³ + ax + b (mod p)
+    /// 3. 计算 y = √α (mod p) 使用 Tonelli-Shanks 算法
+    /// 4. 根据前缀选择正确的 y 值（02=偶数，03=奇数）
+    ///
+    /// ## 参数
+    /// - `compressed`: 33 字节压缩公钥
+    ///
+    /// ## 返回
+    /// - `Ok([u8; 65])`: 65 字节未压缩公钥 (0x04 || x || y)
+    /// - `Err(Error::InvalidPublicKey)`: 解压失败（无效格式或坐标）
+    ///
+    /// ## 注意
+    ///
+    /// 需要启用 `alloc` feature 以使用有限域运算。
+    pub fn from_compressed(compressed: &[u8; 33]) -> Result<Self, Error> {
+        use crate::sm2::field::{fp_from_bytes, fp_sqrt, fp_to_bytes};
+
+        let prefix = compressed[0];
+        if prefix != 0x02 && prefix != 0x03 {
+            return Err(Error::InvalidPublicKey);
+        }
+
+        // 提取 x 坐标
+        let x_bytes: [u8; 32] = compressed[1..33].try_into().unwrap();
+        let x = fp_from_bytes(&x_bytes);
+
+        // 计算 y² = x³ + ax + b
+        let a = CURVE_A;
+        let b = CURVE_B;
+
+        let x3 = field::fp_mul(&x, &field::fp_mul(&x, &x));
+        let ax = field::fp_mul(&a, &x);
+        let x3_plus_ax = field::fp_add(&x3, &ax);
+        let y2 = field::fp_add(&x3_plus_ax, &b);
+
+        // 计算 y = √y²
+        let y = fp_sqrt(&y2).ok_or(Error::InvalidPublicKey)?;
+
+        // 根据前缀选择正确的 y 值
+        let y_is_odd = fp_to_bytes(&y)[31] & 1;
+        let y_expected_odd = prefix == 0x03;
+
+        let final_y = if (y_is_odd != 0) != y_expected_odd {
+            field::fp_neg(&y)
+        } else {
+            y
+        };
+
+        let y_bytes = fp_to_bytes(&final_y);
+
+        // 构建未压缩公钥
+        let mut pub_key = [0u8; 65];
+        pub_key[0] = 0x04;
+        pub_key[1..33].copy_from_slice(&x_bytes);
+        pub_key[33..65].copy_from_slice(&y_bytes);
+
+        Ok(Self { bytes: pub_key })
+    }
+
+    /// 计算公钥指纹 (SM3)
+    ///
+    /// 对公钥进行 SM3 哈希，生成 32 字节指纹。
+    ///
+    /// ## 用途
+    ///
+    /// 公钥指纹可用于：
+    /// - 快速比较公钥
+    /// - 证书标识
+    /// - 密钥管理
+    ///
+    /// # 参数
+    /// - `pub_key`: 65 字节未压缩公钥
+    ///
+    /// # 返回
+    /// 32 字节 SM3 哈希值
+    pub fn fingerprint(&self) -> [u8; 32] {
+        use crate::sm3::Sm3Hasher;
+        let mut hasher = Sm3Hasher::new();
+        hasher.update(self.as_bytes());
+        hasher.finalize()
+    }
+
+    /// 将公钥转换为 SPKI 格式
+    pub fn to_spki(&self) ->  SubjectPublicKeyInfo<ObjectIdentifier,BitString> {
+        use x509_cert::spki::EncodePublicKey;
+        let document = &self.to_public_key_der().unwrap();
+        let der_bytes = document.to_der().unwrap();
+        SubjectPublicKeyInfo::<ObjectIdentifier,BitString>::from_der(&der_bytes).unwrap()
+    }
+
+    /// 将 SPKI 格式的公钥转换为 SM2 公钥
+    pub fn from_spki(spki: &SubjectPublicKeyInfo<ObjectIdentifier,BitString>) -> Self {
+        use x509_cert::spki::DecodePublicKey;
+        Self::from_public_key_der(&spki.to_der().unwrap()).unwrap()
+    }
 }
 
 #[cfg(feature = "std")]
 impl x509_cert::spki::EncodePublicKey for PublicKey {
     fn to_public_key_der(&self) -> x509_cert::spki::Result<x509_cert::der::Document> {
-        use x509_cert::der::asn1::BitStringRef;
-        use x509_cert::spki::SubjectPublicKeyInfo;
-
         // 创建 BIT STRING（公钥数据）
-        let subject_public_key = BitStringRef::new(0, self.bytes.as_slice())
+        let subject_public_key = BitString::new(0, self.as_bytes())
             .map_err(|_| x509_cert::spki::Error::KeyMalformed)?;
 
         // 创建 SubjectPublicKeyInfo
@@ -346,20 +484,24 @@ impl x509_cert::spki::EncodePublicKey for PublicKey {
 #[cfg(feature = "std")]
 impl x509_cert::spki::DecodePublicKey for PublicKey {
     fn from_public_key_der(bytes: &[u8]) -> x509_cert::spki::Result<Self> {
-        use x509_cert::der::Decode;
-        use x509_cert::spki::SubjectPublicKeyInfo;
-
         // 解析 SPKI
-        let spki: SubjectPublicKeyInfo<ObjectIdentifier, x509_cert::der::asn1::BitStringRef<'_>> =
+        let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> =
             SubjectPublicKeyInfo::from_der(bytes).map_err(|_| Error::InvalidPublicKey).unwrap();
 
-        // 验证算法标识符
+        // 验证算法 OID（id-ecPublicKey）
         if spki.algorithm.oid != EC_PUBKEY_OID {
             return Err(x509_cert::spki::Error::OidUnknown {oid: spki.algorithm.oid});
         }
 
-        // 获取公钥数据
-        let pub_key_bytes = spki.subject_public_key.raw_bytes();
+        // 验证参数 OID（SM2 曲线）
+        match spki.algorithm.parameters {
+            Some(oid) if oid == SM2_CURVE_OID => {}
+            _ => return Err(x509_cert::spki::Error::KeyMalformed),
+        }
+
+        // 提取公钥数据
+        let pub_key_bytes: &[u8] = spki.subject_public_key.raw_bytes();
+        // 验证公钥长度（应为 65 字节：0x04 || X(32B) || Y(32B)）
         if pub_key_bytes.len() != 65 {
             return Err(x509_cert::spki::Error::KeyMalformed);
         }

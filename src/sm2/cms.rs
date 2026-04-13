@@ -889,7 +889,7 @@ fn find_signer_certificate(
 /// 这里使用公钥的 SHA-1 哈希（前 20 字节）作为 SKI。
 fn compute_subject_key_identifier(pub_key: &crate::sm2::PublicKey) -> Vec<u8> {
     // 使用 SM3 计算公钥哈希（国密环境使用 SM3 替代 SHA-1）
-    let hash = crate::sm2::cert::public_key_fingerprint(pub_key.as_bytes());
+    let hash = pub_key.fingerprint();
     // 取前 20 字节作为 SKI（与 SHA-1 输出长度一致）
     hash[..20].to_vec()
 }

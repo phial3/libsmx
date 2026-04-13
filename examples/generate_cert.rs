@@ -3,16 +3,18 @@ use libsmx::sm2::cert::{
     create_basic_constraints_extension, create_extended_key_usage_extension,
     create_key_usage_extension, create_subject_alternative_name_extension,
     create_subject_key_identifier_extension, generate_gm_certificate_pem, key_usage_presets,
-    parse_gm_certificate_pem, public_key_to_spki_pem, X500Attribute, X500AttributeType,
+    parse_gm_certificate_pem, X500Attribute, X500AttributeType,
 };
 use libsmx::sm2::{generate_keypair, DEFAULT_ID, ID_KP_SERVER_AUTH};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::fs;
 use std::path::Path;
+use x509_cert::der::pem::LineEnding;
 use x509_cert::ext::pkix::name::GeneralName;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
+use x509_cert::spki::EncodePublicKey;
 use x509_cert::time::{Time, Validity};
 
 /// 构建 CA 主体名称
@@ -209,8 +211,7 @@ fn main() {
     println!("   ✅ 保存 {}_server_key.pem", cert_name);
 
     // 服务器公钥
-    let server_pub_pem =
-        public_key_to_spki_pem(server_pub_key.as_bytes()).expect("Server pub PEM encoding failed");
+    let server_pub_pem = server_pub_key.to_public_key_pem(LineEnding::LF).unwrap();
     fs::write(
         output_dir.join(format!("{}_server_pub.pem", cert_name)),
         &server_pub_pem,

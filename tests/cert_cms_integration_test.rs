@@ -15,13 +15,16 @@
 
 use libsmx::sm2::cert::{self, build_x500_name, generate_self_signed_cert, GmCertificate, X500Attribute, X500AttributeType};
 use libsmx::sm2::cms::{self, CmsSignerBuilder, create_digital_signature, verify_digital_signature};
-use libsmx::sm2::{generate_keypair, public_key_from_spki_der, public_key_to_spki_der, PrivateKey, DEFAULT_ID};
+use libsmx::sm2::{generate_keypair, PrivateKey, DEFAULT_ID};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
+use x509_cert::der::Encode;
+use x509_cert::der::pem::LineEnding;
 use x509_cert::serial_number::SerialNumber;
+use x509_cert::spki::EncodePublicKey;
 use x509_cert::time::{Time, Validity};
 
 // ====================================================================================
@@ -178,21 +181,6 @@ fn test_certificate_files() {
 // 公钥功能测试
 // ====================================================================================
 
-/// 测试公钥 SPKI 编码和解码
-#[test]
-fn test_pubkey_spki() {
-    let mut rng = StdRng::seed_from_u64(123456);
-    let (_priv_key, pub_key) = generate_keypair(&mut rng);
-
-    // 编码为 SPKI
-    let spki = public_key_to_spki_der(pub_key.as_bytes());
-    assert!(!spki.is_empty());
-
-    // 解码
-    let decoded = public_key_from_spki_der(&spki).expect("Failed to decode SPKI");
-    assert_eq!(decoded, pub_key.to_bytes());
-}
-
 /// 测试公钥 SPKI 文件生成
 #[test]
 fn test_pubkey_spki_files() {
@@ -205,11 +193,11 @@ fn test_pubkey_spki_files() {
     let mut rng = StdRng::seed_from_u64(333333333);
     let (_, pub_key) = generate_keypair(&mut rng);
 
-    let spki_der = public_key_to_spki_der(pub_key.as_bytes());
+    let spki_der = pub_key.to_public_key_der().unwrap().to_der().unwrap();
     fs::write(pub_key_spki_der_file, &spki_der).expect("写入 SPKI DER 应成功");
     assert!(Path::new(pub_key_spki_der_file).exists());
 
-    let spki_pem = cert::public_key_to_spki_pem(pub_key.as_bytes()).expect("SPKI PEM 编码应成功");
+    let spki_pem = pub_key.to_public_key_pem(LineEnding::LF).unwrap();
     fs::write(pub_key_spki_pem_file, &spki_pem).expect("写入 SPKI PEM 应成功");
     assert!(Path::new(pub_key_spki_pem_file).exists());
 

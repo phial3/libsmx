@@ -338,13 +338,16 @@ fn test_pubkey_spki() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (_priv_key, pub_key) = generate_keypair(&mut rng);
 
+    use x509_cert::der::Encode;
+    use x509_cert::spki::DecodePublicKey;
+
     // 编码为 SPKI
-    let spki = public_key_to_spki_der(pub_key.as_bytes());
-    assert!(!spki.is_empty());
+    let spki_der = pub_key.to_spki().to_der().unwrap();
+    assert!(!spki_der.is_empty());
 
     // 解码
-    let decoded = public_key_from_spki_der(&spki).expect("Failed to decode SPKI");
-    assert_eq!(decoded, *pub_key.as_bytes());
+    let decoded = PublicKey::from_public_key_der(&spki_der).unwrap();
+    assert_eq!(decoded.as_bytes(), pub_key.as_bytes());
 }
 
 /// 测试私钥 SEC1 编码和解码

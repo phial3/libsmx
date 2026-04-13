@@ -19,7 +19,7 @@ use rustls::{ClientConfig, ClientConnection, Connection, ServerConfig, ServerCon
 
 use libsmx::rustls_provider;
 use libsmx::sm2::{
-    der::{public_key_to_spki_der, sig_from_der},
+    der::sig_from_der,
     generate_keypair, verify_message, DEFAULT_ID,
 };
 
@@ -67,7 +67,8 @@ fn make_sm2_keypair() -> (Vec<u8>, Vec<u8>) {
     ]);
     sec1.extend_from_slice(pri_key.as_bytes());
 
-    let spki = public_key_to_spki_der(pub_key.as_bytes());
+    use x509_cert::der::Encode;
+    let spki = pub_key.to_spki().to_der().unwrap();
     (sec1, spki)
 }
 
