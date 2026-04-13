@@ -35,6 +35,7 @@
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
+#[cfg(feature = "alloc")]
 use crate::error::Error;
 
 /// SM4 分组大小（128 位 = 16 字节）

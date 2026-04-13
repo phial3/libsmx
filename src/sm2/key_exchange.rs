@@ -13,8 +13,13 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::Error;
 use crate::sm2::ec::{AffinePoint, JacobianPoint};
-use crate::sm2::field::{fn_add, fn_mul, fp_to_bytes, Fn, GROUP_ORDER_MINUS_1};
+use crate::sm2::field::{fp_to_bytes, GROUP_ORDER_MINUS_1};
+
+#[cfg(feature = "alloc")]
+use crate::sm2::field::{fn_add, fn_mul, Fn};
+#[cfg(feature = "alloc")]
 use crate::sm2::get_z;
+#[cfg(feature = "alloc")]
 use crate::sm3::Sm3Hasher;
 
 // ── x̄ 辅助函数（GB/T 32918.3 核心运算）─────────────────────────────────────────

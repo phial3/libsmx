@@ -662,7 +662,7 @@ mod tests {
 
     /// 构造最小 SEC1 DER（只有 version + privateKey 字段）
     #[cfg(feature = "alloc")]
-    fn make_sec1_der(key: &[u8; 32]) -> alloc::vec::Vec<u8> {
+    fn make_sec1_der(key: &[u8; 32]) -> Vec<u8> {
         // version INTEGER = 1：02 01 01
         // privateKey OCTET STRING：04 20 <32 bytes>
         // inner = 3 + 2 + 32 = 37 bytes → SEQUENCE 30 25 ...
@@ -673,7 +673,7 @@ mod tests {
 
     /// 构造最小 PKCS#8 DER（包含虚拟 AlgorithmIdentifier OID）
     #[cfg(feature = "alloc")]
-    fn make_pkcs8_der(key: &[u8; 32]) -> alloc::vec::Vec<u8> {
+    fn make_pkcs8_der(key: &[u8; 32]) -> Vec<u8> {
         let sec1 = make_sec1_der(key);
         // AlgorithmIdentifier 最小化：30 06 06 01 00 06 01 00（两个 OID，各 1 字节占位）
         let alg_id: &[u8] = &[0x30, 0x06, 0x06, 0x01, 0x00, 0x06, 0x01, 0x00];

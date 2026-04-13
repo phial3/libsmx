@@ -756,7 +756,7 @@ mod pairing_tests {
         for byte in n.to_be_bytes().iter().rev() {
             for bit in 0..8 {
                 let product = fp12_mul(&result, &base);
-                let choice = subtle::Choice::from((byte >> bit) & 1);
+                let choice = Choice::from((byte >> bit) & 1);
                 result = Fp12::conditional_select(&result, &product, choice);
                 base = fp12_mul(&base, &base);
             }

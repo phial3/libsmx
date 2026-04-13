@@ -719,23 +719,21 @@ mod tests {
         use crate::sm9::fields::fp::FIELD_MODULUS;
         use crate::sm9::fields::fp2::fp2_mul;
         // 计算 u^{(p-1)/3} 其中 u = (0, 1) ∈ Fp2
-        let pm1 = FIELD_MODULUS.wrapping_sub(&crypto_bigint::U256::ONE);
+        let pm1 = FIELD_MODULUS.wrapping_sub(&U256::ONE);
         let (pm1_div3, rem) =
-            pm1.div_rem(&crypto_bigint::NonZero::new(crypto_bigint::U256::from(3u32)).unwrap());
-        assert_eq!(rem, crypto_bigint::U256::ZERO, "(p-1) 应被 3 整除");
+            pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(3u32)).unwrap());
+        assert_eq!(rem, U256::ZERO, "(p-1) 应被 3 整除");
 
         let (pm1_div6, _) =
-            pm1.div_rem(&crypto_bigint::NonZero::new(crypto_bigint::U256::from(6u32)).unwrap());
+            pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(6u32)).unwrap());
 
-        fn fp2_pow_exp(base: &Fp2, exp: &crypto_bigint::U256) -> Fp2 {
-            use crate::sm9::fields::fp2::{fp2_mul, fp2_square};
-            use subtle::ConditionallySelectable;
+        fn fp2_pow_exp(base: &Fp2, exp: &U256) -> Fp2 {
             let mut result = Fp2::ONE;
             let mut b = *base;
             for byte in exp.to_be_bytes().iter().rev() {
                 for bit in 0..8 {
                     let product = fp2_mul(&result, &b);
-                    let choice = subtle::Choice::from((byte >> bit) & 1);
+                    let choice = Choice::from((byte >> bit) & 1);
                     result = Fp2::conditional_select(&result, &product, choice);
                     b = fp2_square(&b);
                 }
@@ -744,8 +742,8 @@ mod tests {
         }
 
         let u = Fp2 {
-            c0: crate::sm9::fields::fp::Fp::ZERO,
-            c1: crate::sm9::fields::fp::Fp::ONE,
+            c0: Fp::ZERO,
+            c1: Fp::ONE,
         };
         // 正确的 γ_{1,1} = u^{(p-1)/3}
         let correct_v1_0 = fp2_pow_exp(&u, &pm1_div3);
@@ -776,7 +774,7 @@ mod g2_frob_tests {
     fn test_compute_g2_frobenius_constants() {
         use crate::sm9::fields::fp::FIELD_MODULUS;
 
-        fn fp2_pow_exp(base: &Fp2, exp: &crypto_bigint::U256) -> Fp2 {
+        fn fp2_pow_exp(base: &Fp2, exp: &U256) -> Fp2 {
             use crate::sm9::fields::fp2::{fp2_mul, fp2_square};
             use subtle::ConditionallySelectable;
             let mut result = Fp2::ONE;
@@ -784,7 +782,7 @@ mod g2_frob_tests {
             for byte in exp.to_be_bytes().iter().rev() {
                 for bit in 0..8 {
                     let product = fp2_mul(&result, &b);
-                    let choice = subtle::Choice::from((byte >> bit) & 1);
+                    let choice = Choice::from((byte >> bit) & 1);
                     result = Fp2::conditional_select(&result, &product, choice);
                     b = fp2_square(&b);
                 }
@@ -793,7 +791,7 @@ mod g2_frob_tests {
         }
 
         let p = FIELD_MODULUS;
-        let pm1 = p.wrapping_sub(&crypto_bigint::U256::ONE);
+        let pm1 = p.wrapping_sub(&U256::ONE);
         let u = Fp2 {
             c0: Fp::ZERO,
             c1: Fp::ONE,
@@ -803,10 +801,10 @@ mod g2_frob_tests {
         let u_pm1_div2 = fp2_pow_exp(&u, &pm1_div2);
 
         let (pm1_div3, _) =
-            pm1.div_rem(&crypto_bigint::NonZero::new(crypto_bigint::U256::from(3u32)).unwrap());
+            pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(3u32)).unwrap());
         let u_pm1_div3 = fp2_pow_exp(&u, &pm1_div3);
 
-        let pp1 = p.wrapping_add(&crypto_bigint::U256::ONE);
+        let pp1 = p.wrapping_add(&U256::ONE);
         let u_pm21_div3 = fp2_pow_exp(&u_pm1_div3, &pp1);
 
         // Reason: 验证 G2 Frobenius 修正常量与计算值一致

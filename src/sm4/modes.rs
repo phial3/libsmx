@@ -500,7 +500,7 @@ pub fn sm4_decrypt_gcm(
     aad: &[u8],
     ciphertext: &[u8],
     tag: &[u8; 16],
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     let sm4 = Sm4Key::new(key);
     let rk = sm4.round_keys();
 
@@ -520,7 +520,7 @@ pub fn sm4_decrypt_gcm(
 
     // 常量时间 tag 比较，防止时序侧信道
     if expected_tag.ct_eq(tag).unwrap_u8() == 0 {
-        return Err(crate::error::Error::AuthTagMismatch);
+        return Err(Error::AuthTagMismatch);
     }
 
     let mut ctr = j0;
@@ -550,7 +550,7 @@ fn ccm_cbc_mac(
     aad: &[u8],
     message: &[u8],
     tag_len: usize,
-) -> Result<[u8; 16], crate::error::Error> {
+) -> Result<[u8; 16], Error> {
     let q = 3usize; // nonce=12B 时 q=15-12=3
     let has_aad = !aad.is_empty();
     let flags = ((has_aad as u8) << 6) | (((tag_len - 2) / 2) as u8) << 3 | (q as u8 - 1);
@@ -576,7 +576,7 @@ fn ccm_cbc_mac(
         //   当前实现仅支持 2 字节编码，超限时必须拒绝而非静默跳过 AAD。
         //   静默跳过会导致认证标签不包含 AAD，攻击者可随意篡改 AAD 而不被检测。
         if prefix_len > aad_buf.len() {
-            return Err(crate::error::Error::InvalidInputLength);
+            return Err(Error::InvalidInputLength);
         }
 
         aad_buf[0..2].copy_from_slice(&(aad_len as u16).to_be_bytes());
@@ -619,7 +619,7 @@ pub fn sm4_encrypt_ccm(
     aad: &[u8],
     plaintext: &[u8],
     tag_len: usize,
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     assert!(
         (4..=16).contains(&tag_len) && tag_len % 2 == 0,
         "CCM tag_len 须为 4~16 的偶数"
@@ -666,9 +666,9 @@ pub fn sm4_decrypt_ccm(
     aad: &[u8],
     ciphertext_with_tag: &[u8],
     tag_len: usize,
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     if ciphertext_with_tag.len() < tag_len {
-        return Err(crate::error::Error::InvalidInputLength);
+        return Err(Error::InvalidInputLength);
     }
     let ct = &ciphertext_with_tag[..ciphertext_with_tag.len() - tag_len];
     let received_tag = &ciphertext_with_tag[ciphertext_with_tag.len() - tag_len..];
@@ -705,7 +705,7 @@ pub fn sm4_decrypt_ccm(
     // Step 3: 常量时间比较，验证通过才返回明文
     // Reason: 先验证后解密，防止选择密文攻击
     if expected_tag[..tag_len].ct_eq(received_tag).unwrap_u8() == 0 {
-        return Err(crate::error::Error::AuthTagMismatch);
+        return Err(Error::AuthTagMismatch);
     }
 
     Ok(plaintext)
@@ -737,9 +737,9 @@ pub fn sm4_decrypt_gcm_combined(
     nonce: &[u8; 12],
     aad: &[u8],
     ciphertext_with_tag: &[u8],
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     if ciphertext_with_tag.len() < 16 {
-        return Err(crate::error::Error::InvalidInputLength);
+        return Err(Error::InvalidInputLength);
     }
     let ct_len = ciphertext_with_tag.len() - 16;
     let ct = &ciphertext_with_tag[..ct_len];
@@ -757,7 +757,7 @@ pub fn sm4_encrypt_ccm_combined(
     nonce: &[u8; 12],
     aad: &[u8],
     plaintext: &[u8],
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     sm4_encrypt_ccm(key, nonce, aad, plaintext, 16)
 }
 
@@ -770,7 +770,7 @@ pub fn sm4_decrypt_ccm_combined(
     nonce: &[u8; 12],
     aad: &[u8],
     ciphertext_with_tag: &[u8],
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     sm4_decrypt_ccm(key, nonce, aad, ciphertext_with_tag, 16)
 }
 
@@ -809,11 +809,11 @@ pub fn sm4_encrypt_xts(
     key2: &[u8; 16],
     tweak_sector: &[u8; 16],
     data: &[u8],
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     // Reason: 非对齐输入在旧实现中被静默丢弃（最后不足 16 字节块跳过），
     //   导致密文比明文短而调用方无感知。拒绝非对齐输入防止数据静默丢失。
     if data.is_empty() || data.len() % 16 != 0 {
-        return Err(crate::error::Error::InvalidInputLength);
+        return Err(Error::InvalidInputLength);
     }
 
     let sm4_1 = Sm4Key::new(key1);
@@ -846,10 +846,10 @@ pub fn sm4_decrypt_xts(
     key2: &[u8; 16],
     tweak_sector: &[u8; 16],
     data: &[u8],
-) -> Result<Vec<u8>, crate::error::Error> {
+) -> Result<Vec<u8>, Error> {
     // Reason: 同 sm4_encrypt_xts，拒绝非对齐输入防止数据静默丢失。
     if data.is_empty() || data.len() % 16 != 0 {
-        return Err(crate::error::Error::InvalidInputLength);
+        return Err(Error::InvalidInputLength);
     }
 
     let sm4_1 = Sm4Key::new(key1);

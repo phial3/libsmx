@@ -256,12 +256,12 @@ impl PrivateKey {
 impl PrivateKey {
     /// 将私钥编码为 SEC1 DER 格式
     pub fn to_sec1_der(&self) -> Vec<u8> {
-        der::private_key_to_sec1_der(self)
+        private_key_to_sec1_der(self)
     }
 
     /// 将私钥编码为 PKCS#8 DER 格式
     pub fn to_pkcs8_der(&self) -> Vec<u8> {
-        der::private_key_to_pkcs8_der(self)
+        private_key_to_pkcs8_der(self)
     }
 
     /// 将私钥编码为 SEC1 PEM 格式
@@ -269,7 +269,7 @@ impl PrivateKey {
     /// 将 SM2 私钥编码为 SEC1（RFC 5915）格式的 PEM。
     #[cfg(feature = "alloc")]
     pub fn to_sec1_pem(&self) -> Result<String, Error> {
-        let der = der::private_key_to_sec1_der(self);
+        let der = private_key_to_sec1_der(self);
         pem::encode_string("EC PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
     }
 
@@ -278,18 +278,18 @@ impl PrivateKey {
     /// 将 SM2 私钥编码为 PKCS#8（RFC 5958）格式的 PEM。
     #[cfg(feature = "alloc")]
     pub fn to_pkcs8_pem(&self) -> Result<String, Error> {
-        let der = der::private_key_to_pkcs8_der(self);
+        let der = private_key_to_pkcs8_der(self);
         pem::encode_string("PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 从 SEC1 DER 解析私钥
     pub fn from_sec1_der(der: &[u8]) -> Result<Self, Error> {
-        der::private_key_from_sec1_der(der)
+        private_key_from_sec1_der(der)
     }
 
     /// 从 PKCS#8 DER 解析私钥
     pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, Error> {
-        der::private_key_from_pkcs8_der(der)
+        private_key_from_pkcs8_der(der)
     }
 
     /// 从 SEC1 PEM 解析私钥
@@ -298,7 +298,7 @@ impl PrivateKey {
     #[cfg(feature = "alloc")]
     pub fn from_sec1_pem(pem: &[u8]) -> Result<Self, Error> {
         let (_label, der) = pem::decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
-        der::private_key_from_sec1_der(&der)
+        private_key_from_sec1_der(&der)
     }
 
     /// 从 PKCS#8 PEM 解析私钥
@@ -307,7 +307,7 @@ impl PrivateKey {
     #[cfg(feature = "alloc")]
     pub fn from_pkcs8_pem(pem: &[u8]) -> Result<Self, Error> {
         let (_label, der) = pem::decode_vec(pem).map_err(|_| Error::InvalidCertificate)?;
-        der::private_key_from_pkcs8_der(&der)
+        private_key_from_pkcs8_der(&der)
     }
 }
 
@@ -503,7 +503,7 @@ impl x509_cert::spki::EncodePublicKey for PublicKey {
             .map_err(|_| x509_cert::spki::Error::KeyMalformed)?;
 
         let spki = SubjectPublicKeyInfo {
-            algorithm: oids::SM2_SPKI_ALGORITHM,
+            algorithm: SM2_SPKI_ALGORITHM,
             subject_public_key,
         };
 
@@ -522,13 +522,13 @@ impl x509_cert::spki::DecodePublicKey for PublicKey {
             SubjectPublicKeyInfo::from_der(bytes).map_err(|_| Error::InvalidPublicKey).unwrap();
 
         // 验证算法 OID（id-ecPublicKey）
-        if spki.algorithm.oid != oids::EC_PUBKEY_OID {
+        if spki.algorithm.oid != EC_PUBKEY_OID {
             return Err(x509_cert::spki::Error::OidUnknown {oid: spki.algorithm.oid});
         }
 
         // 验证参数 OID（SM2 曲线）
         match spki.algorithm.parameters {
-            Some(oid) if oid == oids::SM2_CURVE_OID => {}
+            Some(oid) if oid == SM2_CURVE_OID => {}
             _ => return Err(x509_cert::spki::Error::KeyMalformed),
         }
 
