@@ -34,8 +34,12 @@ use alloc::vec::Vec;
 
 use crate::error::Error;
 use crate::sm2::PrivateKey;
-use x509_cert::der::{Decode, Encode};
-use x509_cert::spki::{ObjectIdentifier, SubjectPublicKeyInfo};
+
+#[cfg(feature = "alloc")]
+use x509_cert::{
+    der::{Decode, Encode},
+    spki::{ObjectIdentifier, SubjectPublicKeyInfo},
+};
 
 /// 将原始签名 `r||s`（64 字节）编码为 DER SEQUENCE
 ///
@@ -413,6 +417,7 @@ pub fn public_key_to_spki_der(pub_key: &[u8; 65]) -> Vec<u8> {
 ///
 /// # 错误
 /// DER 格式不合法或公钥格式不合法时返回 `Error::InvalidPublicKey`
+#[cfg(feature = "alloc")]
 pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
     // 使用 x509-cert 的 SubjectPublicKeyInfo 结构解析
     use x509_cert::der::asn1::BitString;

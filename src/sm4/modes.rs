@@ -41,6 +41,7 @@ use alloc::vec::Vec;
 use subtle::ConstantTimeEq;
 
 use super::cipher::{encrypt_block_raw, Sm4Key};
+#[cfg(feature = "alloc")]
 use super::padding::{pkcs5_pad, pkcs5_unpad, pkcs7_pad, pkcs7_unpad};
 use crate::error::Error;
 

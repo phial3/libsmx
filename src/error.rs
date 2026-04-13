@@ -61,6 +61,7 @@ pub enum Error {
         reason: &'static str,
     },
     /// 证书验证错误
+    #[cfg(feature = "alloc")]
     CertificateValidationError {
         /// 验证阶段
         stage: &'static str,
@@ -72,6 +73,7 @@ pub enum Error {
     /// 证书尚未生效
     CertificateNotYetValid,
     /// 证书链验证失败
+    #[cfg(feature = "alloc")]
     CertificateChainError {
         /// 失败的证书索引
         index: usize,
@@ -90,6 +92,7 @@ pub enum Error {
         reason: &'static str,
     },
     /// CMS 验证错误
+    #[cfg(feature = "alloc")]
     CmsValidationError {
         /// 验证阶段
         stage: &'static str,
@@ -156,11 +159,13 @@ impl fmt::Display for Error {
             Error::CertificateParseError { field, reason } => {
                 write!(f, "certificate parse error in {}: {}", field, reason)
             }
+            #[cfg(feature = "alloc")]
             Error::CertificateValidationError { stage, reason } => {
                 write!(f, "certificate validation error at {}: {}", stage, reason)
             }
             Error::CertificateExpired => write!(f, "certificate has expired"),
             Error::CertificateNotYetValid => write!(f, "certificate is not yet valid"),
+            #[cfg(feature = "alloc")]
             Error::CertificateChainError { index, reason } => {
                 write!(f, "certificate chain error at index {}: {}", index, reason)
             }
@@ -170,6 +175,7 @@ impl fmt::Display for Error {
             Error::CmsParseError { field, reason } => {
                 write!(f, "CMS parse error in {}: {}", field, reason)
             }
+            #[cfg(feature = "alloc")]
             Error::CmsValidationError { stage, reason } => {
                 write!(f, "CMS validation error at {}: {}", stage, reason)
             }
