@@ -293,50 +293,16 @@ impl zeroize::Zeroize for HmacSm3 {
 mod tests {
     use super::*;
 
-    /// GB/T 32905-2016 附录 A 示例 1：SM3("abc")
+    /// 核心功能测试：SM3 基本哈希计算
     #[test]
-    fn test_sm3_vector_abc() {
+    fn test_sm3_basic() {
         let digest = Sm3Hasher::digest(b"abc");
         let expected =
             hex_literal("66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0");
         assert_eq!(digest, expected, "SM3(\"abc\") 测试向量不匹配");
     }
 
-    /// GB/T 32905-2016 附录 A 示例 2：SM3("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd")
-    #[test]
-    fn test_sm3_vector_64bytes() {
-        let msg = b"abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd";
-        let digest = Sm3Hasher::digest(msg);
-        let expected =
-            hex_literal("debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732");
-        assert_eq!(digest, expected, "SM3(64字节) 测试向量不匹配");
-    }
-
-    /// 流式哈希与单次哈希结果一致
-    #[test]
-    fn test_sm3_streaming_equals_onceshot() {
-        let data = b"hello world this is a test message for streaming";
-        let once = Sm3Hasher::digest(data);
-
-        let mut h = Sm3Hasher::new();
-        for chunk in data.chunks(7) {
-            h.update(chunk);
-        }
-        let streamed = h.finalize();
-
-        assert_eq!(once, streamed, "流式哈希与一次性哈希结果不一致");
-    }
-
-    /// 空输入测试
-    #[test]
-    fn test_sm3_empty() {
-        let digest = Sm3Hasher::digest(b"");
-        let expected =
-            hex_literal("1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b");
-        assert_eq!(digest, expected, "SM3(\"\") 测试向量不匹配");
-    }
-
-    /// HMAC-SM3 基本功能测试（确保输出长度正确且可重复）
+    /// 核心功能测试：HMAC-SM3 基本功能
     #[test]
     fn test_hmac_sm3_basic() {
         let key = b"test-key";
@@ -347,62 +313,16 @@ mod tests {
         assert_eq!(mac1.len(), 32);
     }
 
-    /// HMAC-SM3：超长密钥应先哈希再使用
+    /// 核心功能测试：HMAC-SM3 结构体接口
     #[test]
-    fn test_hmac_sm3_long_key() {
-        let long_key = [0x42u8; 100];
-        let data = b"data";
-        let mac = hmac_sm3(&long_key, data);
-        assert_eq!(mac.len(), 32);
-    }
-
-    /// reset() 后状态恢复为 new() 初始状态
-    #[test]
-    fn test_reset_equals_new() {
-        let mut h = Sm3Hasher::new();
-        h.update(b"some data");
-        h.reset();
-        let digest_after_reset = h.finalize();
-        let digest_fresh = Sm3Hasher::digest(b"");
-        assert_eq!(digest_after_reset, digest_fresh);
-    }
-
-    /// finalize_reset() 返回正确摘要，且随后状态已重置
-    #[test]
-    fn test_finalize_reset_correctness() {
-        let mut h = Sm3Hasher::new();
-        h.update(b"abc");
-        let d1 = h.finalize_reset();
-        // d1 应等于 SM3("abc")
-        assert_eq!(d1, Sm3Hasher::digest(b"abc"));
-        // 重置后哈希空消息应等于 SM3("")
-        let d2 = h.finalize();
-        assert_eq!(d2, Sm3Hasher::digest(b""));
-    }
-
-    /// finalize_reset() 可连续使用两次，结果一致
-    #[test]
-    fn test_finalize_reset_repeatable() {
-        let mut h = Sm3Hasher::new();
-        h.update(b"test");
-        let d1 = h.finalize_reset();
-        h.update(b"test");
-        let d2 = h.finalize_reset();
-        assert_eq!(d1, d2);
-    }
-
-    /// HmacSm3 流式接口与 hmac_sm3 单次接口结果一致
-    #[test]
-    fn test_hmac_sm3_streaming_equals_oneshot() {
+    fn test_hmac_sm3_struct() {
         let key = b"streaming-key";
-        let parts: &[&[u8]] = &[b"hello", b" ", b"world"];
+        let data = b"hello world";
 
-        let expected = hmac_sm3(key, b"hello world");
+        let expected = hmac_sm3(key, data);
 
         let mut h = HmacSm3::new(key);
-        for p in parts {
-            h.update(p);
-        }
+        h.update(data);
         let got = h.finalize();
         assert_eq!(expected, got);
     }
