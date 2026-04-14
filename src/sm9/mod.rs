@@ -668,6 +668,59 @@ mod tests {
             "配对双线性性验证失败：e(G1,2G2) != e(G1,G2)²"
         );
     }
+
+    #[test]
+    fn test_generate_enc_master_keypair() {
+        let mut rng = FakeRng([0x42u8; 32]);
+        let (_ke, ppub) = generate_enc_master_keypair(&mut rng);
+        // 验证 ppub 在 G2 上
+        let p = G2Affine::from_bytes(ppub.as_bytes()).expect("公钥应有效");
+        assert!(p.is_on_curve());
+    }
+
+    #[test]
+    fn test_generate_enc_user_key() {
+        let mut rng = FakeRng([0x42u8; 32]);
+        let (ke, _ppub) = generate_enc_master_keypair(&mut rng);
+        let id = b"Bob";
+        let de = generate_enc_user_key(&ke, id).expect("加密私钥生成应成功");
+        // 验证 de 在 G1 上
+        let p = G1Affine::from_bytes(de.as_bytes()).expect("私钥点应有效");
+        assert!(p.is_on_curve());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let mut rng = FakeRng([0x42u8; 32]);
+        let (master_priv, enc_pub) = generate_enc_master_keypair(&mut rng);
+        let pub_key = Sm9EncPubKey::from_bytes(enc_pub.as_bytes()).unwrap();
+        let id = b"Bob";
+        let de = generate_enc_user_key(&master_priv, id).expect("用户加密私钥应生成成功");
+        let msg = b"hello sm9 encryption";
+        
+        let ciphertext = sm9_encrypt(id, msg, &pub_key, &mut rng).expect("加密应成功");
+        let plaintext = sm9_decrypt(id, &ciphertext, &de).expect("解密应成功");
+        
+        assert_eq!(plaintext, msg, "加密解密往返不一致");
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_decrypt_rejects_tampered_ciphertext() {
+        let mut rng = FakeRng([0x42u8; 32]);
+        let (master_priv, enc_pub) = generate_enc_master_keypair(&mut rng);
+        let pub_key = Sm9EncPubKey::from_bytes(enc_pub.as_bytes()).unwrap();
+        let id = b"Bob";
+        let de = generate_enc_user_key(&master_priv, id).expect("用户加密私钥应生成成功");
+        let msg = b"test message";
+        
+        let mut ciphertext = sm9_encrypt(id, msg, &pub_key, &mut rng).unwrap();
+        // 篡改密文（C1部分）
+        ciphertext[10] ^= 0xFF;
+        
+        assert!(sm9_decrypt(id, &ciphertext, &de).is_err(), "篡改的密文应解密失败");
+    }
 }
 
 #[cfg(test)]
