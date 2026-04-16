@@ -65,10 +65,12 @@ assert_eq!(mac.len(), 32);
 
 ### SM2 Sign / Verify
 
-```rust
+```rust,ignore
 use libsmx::sm2::{generate_keypair, get_z, get_e, sign, verify};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
-let mut rng = rand::rngs::OsRng;
+let mut rng = StdRng::seed_from_u64(12345);
 
 // Key generation
 let (pri_key, pub_key) = generate_keypair(&mut rng);
@@ -113,11 +115,13 @@ assert_eq!(decrypted, plaintext);
 
 ### SM9 Identity-Based Sign / Verify
 
-```rust
+```rust,ignore
 use libsmx::sm9::{generate_sign_master_keypair, generate_sign_user_key};
 use libsmx::sm9::{sm9_sign, sm9_verify};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
-let mut rng = rand::rngs::OsRng;
+let mut rng = StdRng::seed_from_u64(12345);
 
 // KGC generates master keypair
 let (master_priv, sign_pub) = generate_sign_master_keypair(&mut rng);

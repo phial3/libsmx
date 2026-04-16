@@ -550,7 +550,7 @@ impl x509_cert::spki::DecodePublicKey for PublicKey {
 /// 生成 SM2 密钥对（私钥 + 公钥）
 ///
 /// 符合 GB/T 32918.1-2016 §6.1
-/// 需要提供 `rand_core::RngCore` 实现（如 `rand::rngs::OsRng`）。
+/// 需要提供 `rand_core::Rng` 实现（如 `rand::rngs::StdRng`）。
 pub fn generate_keypair<R: Rng>(rng: &mut R) -> (PrivateKey, PublicKey) {
     loop {
         let mut d_bytes = [0u8; 32];

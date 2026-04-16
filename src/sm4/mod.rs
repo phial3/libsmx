@@ -6,4 +6,5 @@ mod modes;
 pub mod padding;
 
 pub use cipher::Sm4Key;
+#[cfg(feature = "alloc")]
 pub use modes::*;

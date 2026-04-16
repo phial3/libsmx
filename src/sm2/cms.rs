@@ -432,8 +432,6 @@ fn encode_signing_time_der() -> Result<Vec<u8>, Error> {
 /// # use rand::rngs::StdRng;
 /// # use rand::SeedableRng;
 /// # use std::time::{Duration, SystemTime};
-/// # use libsmx::sm2::cert::Validity;
-/// # use x509_cert::time::Time;
 /// let mut rng = StdRng::seed_from_u64(123456);
 /// let (priv_key, _pub_key) = generate_keypair(&mut rng);
 ///

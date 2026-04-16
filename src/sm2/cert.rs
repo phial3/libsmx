@@ -364,10 +364,28 @@ impl GmCertificate {
     ///
     /// ```ignore
     /// use libsmx::sm2::cert::GmCertificate;
+    /// use libsmx::sm2::cert::{generate_self_signed_cert, build_x500_name};
+    /// use libsmx::sm2::generate_keypair;
+    /// use x509_cert::time::{Time, Validity};
+    /// use x509_cert::serial_number::SerialNumber;
+    /// use rand::rngs::StdRng;
+    /// use rand::SeedableRng;
+    /// use std::time::{SystemTime, Duration};
     ///
-    /// // 从 DER 编码解析证书
-    /// let der_bytes: Vec<u8> = vec![/* DER encoded certificate */];
-    /// let cert = GmCertificate::from_der(&der_bytes).expect("Valid certificate");
+    /// // 首先生成一个证书
+    /// let mut rng = StdRng::seed_from_u64(12345);
+    /// let (priv_key, _) = generate_keypair(&mut rng);
+    /// let subject = build_x500_name(&[(libsmx::sm2::X500AttributeType::CommonName, "Test")]);
+    /// let not_before = Time::try_from(SystemTime::now()).unwrap();
+    /// let not_after = Time::try_from(SystemTime::now() + Duration::from_secs(86400)).unwrap();
+    /// let validity = Validity::new(not_before, not_after);
+    /// let serial = SerialNumber::from(1u32);
+    /// let cert = generate_self_signed_cert(&priv_key, &subject, &validity, &serial, b"1234567812345678", None, &mut rng).unwrap();
+    ///
+    /// // 编码为 DER 然后解析
+    /// let der_bytes = cert.to_der();
+    /// let parsed = GmCertificate::from_der(&der_bytes).expect("Valid certificate");
+    /// assert_eq!(parsed.serial_number, cert.serial_number);
     /// ```
     pub fn from_der(der: &[u8]) -> Result<Self, Error> {
         parse_gm_certificate_der(der)
@@ -417,9 +435,15 @@ impl GmCertificate {
     ///
     /// # 示例
     ///
-    /// ```ignore
+    /// ```
     /// use libsmx::sm2::cert::{GmCertificate, X500Attribute, X500AttributeType};
+    /// use libsmx::sm2::generate_keypair;
     /// use std::time::{SystemTime, Duration};
+    /// use rand::rngs::StdRng;
+    /// use rand::SeedableRng;
+    ///
+    /// let mut rng = StdRng::seed_from_u64(12345);
+    /// let (priv_key, pub_key) = generate_keypair(&mut rng);
     ///
     /// let cert = GmCertificate::builder()
     ///     .subject(&[
@@ -1242,9 +1266,15 @@ fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
 ///
 /// # 示例
 ///
-/// ```ignore
+/// ```
 /// use libsmx::sm2::cert::{GmCertificate, CertificateBuilder, X500Attribute, X500AttributeType};
+/// use libsmx::sm2::generate_keypair;
 /// use std::time::{SystemTime, Duration};
+/// use rand::rngs::StdRng;
+/// use rand::SeedableRng;
+///
+/// let mut rng = StdRng::seed_from_u64(12345);
+/// let (priv_key, pub_key) = generate_keypair(&mut rng);
 ///
 /// let cert = CertificateBuilder::new()
 ///     .subject(&[
@@ -1781,9 +1811,10 @@ fn build_and_sign_cert<R: Rng>(
 /// # 示例
 ///
 /// ```ignore
-/// use libsmx::sm2::{generate_keypair, cert, build_x500_name, X500Attribute, X500AttributeType};
-/// use libsmx::sm2::cert::Validity;
-/// use x509_cert::time::Time;
+/// use libsmx::sm2::{generate_keypair, cert::build_x500_name, X500Attribute, X500AttributeType};
+/// use libsmx::sm2::cert::generate_self_signed_cert;
+/// use x509_cert::serial_number::SerialNumber;
+/// use x509_cert::time::{Time, Validity};
 /// use rand::rngs::StdRng;
 /// use rand::SeedableRng;
 /// use std::time::{SystemTime, Duration};
