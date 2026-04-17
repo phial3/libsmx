@@ -35,18 +35,18 @@
 
 #![cfg(feature = "alloc")]
 
+use crate::error::Error;
+use crate::sm2::{sign, verify, PrivateKey, PublicKey};
+
 use alloc::vec::Vec;
 use x509_cert::crl::{CertificateList, RevokedCert, TbsCertList};
 use x509_cert::der::pem::{decode_vec, encode_string};
 use x509_cert::der::{Decode, Encode};
-use x509_cert::ext::Extensions;
+use x509_cert::ext::Extension;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::time::Time;
 use x509_cert::AlgorithmIdentifier;
-
-use crate::error::Error;
-use crate::sm2::{sign, verify, PrivateKey, PublicKey};
 
 /// 被撤销的证书条目
 ///
@@ -76,7 +76,7 @@ pub struct RevokedCertificate {
     pub invalidity_date: Option<Time>,
     /// CRL 条目扩展（RFC 5280 §5.3）
     /// 包含 CRLReason、Invalidity Date、Certificate Issuer 等扩展
-    pub crl_entry_extensions: Option<Extensions>,
+    pub crl_entry_extensions: Option<Vec<Extension>>,
 }
 
 /// 证书撤销列表（CRL）
@@ -170,8 +170,8 @@ impl Crl {
     }
 
     /// 获取 CRL 扩展
-    pub fn extensions(&self) -> Option<&Extensions> {
-        self.cert_list.tbs_cert_list.crl_extensions.as_ref()
+    pub fn extensions(&self) -> Option<&[Extension]> {
+        self.cert_list.tbs_cert_list.crl_extensions.as_deref()
     }
 
     /// 检查指定序列号的证书是否被撤销
@@ -328,7 +328,7 @@ pub struct CrlBuilder {
     this_update: Option<std::time::SystemTime>,
     next_update: Option<std::time::SystemTime>,
     revoked_certs: Vec<RevokedCertificate>,
-    extensions: Option<Extensions>,
+    extensions: Option<Vec<Extension>>,
 }
 
 #[cfg(feature = "std")]
@@ -398,7 +398,7 @@ impl CrlBuilder {
         // 根据 RFC 5280 §5.3 构建 CRL 条目扩展
         let crl_entry_extensions = if reason_code.is_some() || invalidity_date.is_some() {
             // 扩展将通过 sign 方法构建, 这里仅标记需要扩展
-            Some(Extensions::default())
+            Some(Vec::new())
         } else {
             None
         };
@@ -415,8 +415,8 @@ impl CrlBuilder {
     }
 
     /// 设置 CRL 扩展
-    pub fn extensions(mut self, extensions: Extensions) -> Self {
-        self.extensions = Some(extensions);
+    pub fn extensions(mut self, extensions: &[Extension]) -> Self {
+        self.extensions = Some(extensions.to_vec());
         self
     }
 
@@ -528,7 +528,7 @@ impl CrlBuilder {
 fn build_crl_entry_extensions(
     reason_code: Option<u8>,
     invalidity_date: Option<&Time>,
-) -> Option<Extensions> {
+) -> Option<Vec<Extension>> {
     if reason_code.is_none() && invalidity_date.is_none() {
         return None;
     }
@@ -557,7 +557,7 @@ fn build_crl_entry_extensions(
         };
 
         if !reason_der.is_empty() {
-            extensions.push(x509_cert::ext::Extension {
+            extensions.push(Extension {
                 extn_id: crate::sm2::ID_CE_CRL_REASONS,
                 critical: false, // CRLReason 不是关键扩展
                 extn_value: x509_cert::der::asn1::OctetString::new(reason_der.as_slice())
@@ -571,7 +571,7 @@ fn build_crl_entry_extensions(
         // Invalidity Date 是 GeneralizedTime 类型
         let inv_date_der = inv_date.to_der().expect("Valid Time encoding");
 
-        extensions.push(x509_cert::ext::Extension {
+        extensions.push(Extension {
             extn_id: crate::sm2::ID_CE_INVALIDITY_DATE,
             critical: false, // Invalidity Date 不是关键扩展
             extn_value: x509_cert::der::asn1::OctetString::new(inv_date_der.as_slice())
