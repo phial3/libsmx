@@ -55,6 +55,7 @@ use rand_core::Rng;
 
 use crate::error::Error;
 use crate::sm2::cert::GmCertificate;
+use crate::sm2::crl::Crl;
 use crate::sm2::der;
 use crate::sm2::{sign, verify, PrivateKey};
 
@@ -83,7 +84,7 @@ pub struct SignedData {
     /// 证书集合
     pub certificates: Vec<GmCertificate>,
     /// 证书撤销列表
-    pub crls: Option<Vec<Vec<u8>>>,
+    pub crls: Option<Vec<Crl>>,
     /// 签名者信息集合
     pub signer_infos: Vec<SignerInfo>,
 }
@@ -466,7 +467,7 @@ pub struct CmsSignerBuilder {
     certificates: Vec<GmCertificate>,
     include_signing_time: bool,
     content_type: ObjectIdentifier,
-    crls: Vec<Vec<u8>>,
+    crls: Vec<Crl>,
 }
 
 #[derive(Clone)]
@@ -526,18 +527,9 @@ impl CmsSignerBuilder {
     /// 添加 CRL（证书撤销列表）
     ///
     /// # 参数
-    /// - `crl_der`: DER 编码的 CRL 数据
-    pub fn add_crl(mut self, crl_der: &[u8]) -> Self {
-        self.crls.push(crl_der.to_vec());
-        self
-    }
-
-    /// 添加多个 CRL
-    ///
-    /// # 参数
-    /// - `crls`: DER 编码的 CRL 数据列表
-    pub fn add_crls(mut self, crls: &[Vec<u8>]) -> Self {
-        self.crls.extend(crls.iter().cloned());
+    /// - `crl`: CRL 对象
+    pub fn add_crl(mut self, crl: Crl) -> Self {
+        self.crls.push(crl);
         self
     }
 
@@ -1005,7 +997,7 @@ fn encode_signed_data(signed_data: &SignedData) -> Result<Vec<u8>, Error> {
         if !crls.is_empty() {
             let mut crls_set = Vec::new();
             for crl in crls {
-                crls_set.extend(crl);
+                crls_set.extend(crl.to_der());
             }
             // 先包装为 SET OF，再包装为 [1] IMPLICIT
             let crls_set_der = der::wrap_set(crls_set);
@@ -1160,12 +1152,18 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
 
     // 如果 certificates 不存在，rest 不变，继续解析后续字段
     // crls [1] (可选)
-    let mut crls = Vec::new();
-    if rest.first() == Some(&0xA1) {
+    let crls = if rest.first() == Some(&0xA1) {
         let (crls_tlv, r) = der::parse_tlv(rest, 0xA1).ok_or_else(err)?;
-        crls = parse_crls(crls_tlv)?;
+        let parsed_crls = parse_crls(crls_tlv)?;
         rest = r;
-    }
+        if parsed_crls.is_empty() {
+            None
+        } else {
+            Some(parsed_crls)
+        }
+    } else {
+        None
+    };
 
     // signerInfos SET - 必须存在
     if rest.is_empty() {
@@ -1180,7 +1178,7 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
         digest_algorithms,
         encap_content_info,
         certificates,
-        crls: Some(crls),
+        crls,
         signer_infos,
     })
 }
@@ -1267,8 +1265,8 @@ fn parse_certificates(data: &[u8]) -> Result<Vec<GmCertificate>, Error> {
 /// - `data`: CRL 集合的 DER 编码数据（不包含 [1] 标签）
 ///
 /// # 返回
-/// CRL DER 编码的字节数组列表
-fn parse_crls(data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
+/// CRL 对象列表
+fn parse_crls(data: &[u8]) -> Result<Vec<Crl>, Error> {
     let mut crls = Vec::new();
     let mut rest = data;
 
@@ -1285,8 +1283,10 @@ fn parse_crls(data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
         // 尝试解析下一个 CRL
         // CRL 可以是 CertificateList (SEQUENCE) 或其他格式
         if rest.first() == Some(&0x30) {
-            let (crl_tlv, r) = der::parse_tlv(rest, 0x30).ok_or(Error::InvalidSignature)?;
-            crls.push(crl_tlv.to_vec());
+            // 解析完整的 TLV（包括标签和长度）
+            let (crl_full_tlv, r) = der::parse_tlv_any_full(rest).ok_or(Error::InvalidSignature)?;
+            let crl = Crl::from_der(crl_full_tlv)?;
+            crls.push(crl);
             rest = r;
         } else {
             // 未知格式，跳过剩余数据

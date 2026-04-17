@@ -530,8 +530,7 @@ fn build_crl_entry_extensions(
         return None;
     }
 
-    // 注意：x509_cert 库的 Extensions 类型是 Vec<Extension>
-    // 我们需要手动构建扩展条目
+    // 我们需要手动构建扩展条目 Vec<Extension>
     let mut extensions = Vec::new();
 
     // CRLReason 扩展 (OID: 2.5.29.21)

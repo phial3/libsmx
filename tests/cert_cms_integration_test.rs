@@ -974,12 +974,11 @@ fn test_cms_with_crl_embedding() {
     println!("✅ CRL 创建成功");
 
     let content = b"Test content with CRL embedding";
-    let crl_der = crl.to_der();
 
     let cms_signed = CmsSignerBuilder::new()
         .content(content)
         .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
-        .add_crl(&crl_der)
+        .add_crl(crl)
         .include_signing_time(true)
         .sign(&mut rng)
         .expect("CMS signing with CRL should succeed");
@@ -1089,8 +1088,8 @@ fn test_edge_cases_crl() {
     let cms_with_multiple_crls = CmsSignerBuilder::new()
         .content(b"Test with multiple CRLs")
         .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
-        .add_crl(&crl1.to_der())
-        .add_crl(&crl2.to_der())
+        .add_crl(crl1)
+        .add_crl(crl2)
         .sign(&mut rng)
         .expect("CMS with multiple CRLs should succeed");
 
