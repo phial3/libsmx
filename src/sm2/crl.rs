@@ -179,10 +179,9 @@ impl Crl {
     /// # 返回
     /// - `true`: 证书已被撤销
     /// - `false`: 证书未被撤销
-    pub fn is_revoked(&self, serial: u64) -> bool {
-        let serial = SerialNumber::from(serial);
+    pub fn is_revoked(&self, serial: &SerialNumber) -> bool {
         if let Some(revoked) = self.revoked_certificates() {
-            revoked.iter().any(|cert| cert.serial_number == serial)
+            revoked.iter().any(|cert| cert.serial_number == *serial)
         } else {
             false
         }
@@ -385,7 +384,7 @@ impl CrlBuilder {
     /// - RFC 5280 §5.3.2 Invalidity Date
     pub fn add_revoked(
         mut self,
-        serial: u64,
+        serial: SerialNumber,
         revocation_time: std::time::SystemTime,
         reason_code: Option<u8>,
         invalidity_date: Option<std::time::SystemTime>,
@@ -400,9 +399,8 @@ impl CrlBuilder {
             None
         };
 
-        let serial_number = SerialNumber::from(serial);
         self.revoked_certs.push(RevokedCertificate {
-            serial_number,
+            serial_number: serial,
             revocation_date,
             reason_code,
             invalidity_date: invalidity_date.map(|t| Time::try_from(t).expect("Valid system time")),
@@ -603,11 +601,12 @@ mod tests {
 
         let revocation_time = SystemTime::now() - Duration::from_secs(3600);
 
+        let serial_number = SerialNumber::from(100u64);
         let crl = CrlBuilder::new()
             .issuer(&issuer)
             .this_update(SystemTime::now() - Duration::from_secs(60))
             .next_update(SystemTime::now() + Duration::from_secs(86400))
-            .add_revoked(100u64, revocation_time, Some(1), None)
+            .add_revoked(serial_number.clone(), revocation_time, Some(1), None)
             .sign(&ca_priv_key, b"1234567812345678", &mut rng)
             .expect("CRL signing should succeed");
 
@@ -620,10 +619,10 @@ mod tests {
             .expect("CRL should be valid");
 
         // 检查被撤销的证书
-        assert!(crl.is_revoked(100u64));
+        assert!(crl.is_revoked(&serial_number));
 
         // 检查未被撤销的证书
-        assert!(!crl.is_revoked(200u64));
+        assert!(!crl.is_revoked(&SerialNumber::from(200u64)));
     }
 
     #[test]

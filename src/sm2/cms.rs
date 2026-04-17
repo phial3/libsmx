@@ -197,10 +197,10 @@ impl VerificationResult {
 }
 
 // ====================================================================================
-// 生产级电子签章创建
+// 电子签章创建
 // ====================================================================================
 
-/// 创建电子签章（生产级实现）
+/// 创建电子签章
 ///
 /// 创建符合 GM/T 0031-2014 标准的 PKCS#7/CMS SignedData 格式电子签章。
 ///
@@ -618,7 +618,7 @@ impl Default for CmsSignerBuilder {
 pub struct CmsVerifier {
     /// 是否检查证书有效期
     check_validity: bool,
-    /// 是否检查 CRL（暂未实现）
+    /// 是否检查 CRL
     check_crl: bool,
 }
 
@@ -627,7 +627,7 @@ impl CmsVerifier {
     pub fn new() -> Self {
         Self {
             check_validity: true,
-            check_crl: false,
+            check_crl: true,
         }
     }
 
@@ -654,43 +654,8 @@ impl CmsVerifier {
     /// - `Err(Error)`: 验证失败
     #[cfg(feature = "std")]
     pub fn verify(self, signed_data_der: &[u8], id: &[u8]) -> Result<VerificationResult, Error> {
-        // 当前实现直接调用原有的验证函数
-        let mut result = verify_digital_signature(signed_data_der, id)?;
-
-        // 如果启用了有效期检查
-        if self.check_validity {
-            let now = std::time::SystemTime::now();
-            for cert in &result.certificates {
-                if cert.verify_validity_system_time(now).is_err() {
-                    result.is_valid = false;
-                    break;
-                }
-            }
-        }
-
-        // 如果启用了 CRL 检查
-        if self.check_crl {
-            // CRL 检查需要外部提供 CRL 列表，当前实现暂不自动检查
-            // 调用者可以使用 Crl::is_revoked() 手动检查证书序列号
-        }
-
-        Ok(result)
-    }
-
-    /// 验证签名（no_std 版本）
-    ///
-    /// # 参数
-    /// - `signed_data_der`: DER 编码的 ContentInfo
-    /// - `id`: SM2 签名 ID
-    ///
-    /// # 返回
-    /// - `Ok(VerificationResult)`: 验证结果
-    /// - `Err(Error)`: 验证失败
-    #[cfg(not(feature = "std"))]
-    pub fn verify(self, signed_data_der: &[u8], id: &[u8]) -> Result<VerificationResult, Error> {
-        // no_std 环境下不支持时间检查，直接验证签名
-        let result = verify_digital_signature(signed_data_der, id)?;
-        Ok(result)
+        // 使用新的验证函数，已包含 CRL 和证书验证
+        verify_digital_signature(signed_data_der, id)
     }
 }
 
@@ -701,10 +666,10 @@ impl Default for CmsVerifier {
 }
 
 // ====================================================================================
-// 生产级电子签章验证
+// 电子签章验证
 // ====================================================================================
 
-/// 验证电子签章（生产级实现）
+/// 验证电子签章
 ///
 /// 完整验证 PKCS#7/CMS SignedData 格式的电子签章。
 ///
@@ -727,6 +692,22 @@ impl Default for CmsVerifier {
 /// # 注意
 ///
 /// 返回的签名时间为 UTC 时间，显示时可根据本地时区转换。
+/// 验证电子签章（基础版本）
+///
+/// 验证 CMS SignedData 的签名，包括：
+/// - 签名数学正确性
+/// - message-digest 属性验证
+/// - 证书有效期验证（如果启用）
+/// - CRL 验证（如果嵌入 CRL）
+///
+/// # 参数
+/// - `signed_data_der`: DER 编码的 ContentInfo
+/// - `id`: SM2 签名 ID
+///
+/// # 返回
+/// - `Ok(VerificationResult)`: 验证结果
+/// - `Err(Error)`: 验证失败
+#[cfg(feature = "std")]
 pub fn verify_digital_signature(
     signed_data_der: &[u8],
     id: &[u8],
@@ -752,15 +733,22 @@ pub fn verify_digital_signature(
     // 计算内容摘要
     let content_digest = crate::sm3::Sm3Hasher::digest(content.as_bytes());
 
+    // 获取当前时间用于证书验证
+    let now = std::time::SystemTime::now();
+
     // 验证每个签名者
     let mut signer_results = Vec::new();
     let mut signing_time: Option<Time> = None;
 
     for signer_info in &signed_data.signer_infos {
-        let (is_valid, errors) = match verify_signer_info(signer_info, &signed_data.certificates, &content_digest, id) {
-            Ok(()) => (true, Vec::new()),
-            Err(e) => (false, vec![format!("Signer verification failed: {:?}", e)]),
-        };
+        let mut errors = Vec::new();
+        let mut is_valid = true;
+
+        // 1. 验证签名数学正确性
+        if let Err(e) = verify_signer_info(signer_info, &signed_data.certificates, &content_digest, id) {
+            is_valid = false;
+            errors.push(format!("签名验证失败: {:?}", e));
+        }
 
         // 提取签名者证书
         let certificate = match &signer_info.sid {
@@ -772,10 +760,43 @@ pub fn verify_digital_signature(
             SignerIdentifier::SubjectKeyIdentifier(_) => None,
         };
 
+        // 2. 验证证书有效期
+        if let Some(ref cert) = certificate {
+            if let Err(e) = cert.verify_validity_system_time(now) {
+                is_valid = false;
+                errors.push(format!("证书有效期验证失败: {:?}", e));
+            }
+        }
+
+        // 3. 验证证书未被撤销（使用嵌入的 CRL）
+        if let Some(ref cert) = certificate {
+            if let Some(ref crls) = signed_data.crls {
+                for crl in crls {
+                    // 检查 CRL 签发者是否与证书签发者匹配
+                    if crl.issuer() == &cert.issuer {
+                        // 检查证书是否在 CRL 中
+                        if crl.is_revoked(&cert.serial_number) {
+                            is_valid = false;
+                            errors.push("证书已被撤销".into());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         // 提取签名时间
         if let Some(ref attrs) = signer_info.signed_attrs {
             if let Some(time) = extract_signing_time(attrs) {
                 signing_time = Some(time);
+
+                // 4. 验证签名时间是否在证书有效期内
+                if let Some(ref cert) = certificate {
+                    if let Err(e) = cert.verify_validity_system_time(time.try_into().unwrap_or(now)) {
+                        is_valid = false;
+                        errors.push(format!("签名时证书已失效: {:?}", e));
+                    }
+                }
             }
         }
 
@@ -940,7 +961,7 @@ fn compute_subject_key_identifier(pub_key: &crate::sm2::PublicKey) -> Vec<u8> {
 }
 
 // ====================================================================================
-// 生产级 DER 编码
+// DER 编码
 // ====================================================================================
 
 /// 编码 ContentInfo

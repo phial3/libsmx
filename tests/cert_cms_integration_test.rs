@@ -63,6 +63,23 @@ fn create_test_cert(priv_key: &PrivateKey, rng: &mut StdRng) -> GmCertificate {
     ).expect("Failed to generate test certificate")
 }
 
+/// 创建测试用的国密证书（指定序列号）
+fn create_test_cert_with_serial(priv_key: &PrivateKey, serial: u64, rng: &mut StdRng) -> GmCertificate {
+    let subject = create_test_name("Test Subject");
+    let serial = SerialNumber::from(serial);
+    let validity = generate_test_validity();
+
+    generate_self_signed_cert(
+        priv_key,
+        &subject,
+        &validity,
+        &serial,
+        DEFAULT_ID,
+        None,
+        rng,
+    ).expect("Failed to generate test certificate")
+}
+
 /// 创建测试用的证书和密钥对（使用 Builder 模式）
 fn create_test_cert_and_key(
     rng: &mut StdRng,
@@ -897,8 +914,8 @@ fn test_crl_generation_and_verification() {
 
     println!("\n=== CRL 生成和验证测试 ===");
 
-    let revoked_serial_1 = 1001u64;
-    let revoked_serial_2 = 1002u64;
+    let revoked_serial_1 = SerialNumber::from(1001u64);
+    let revoked_serial_2 = SerialNumber::from(1002u64);
 
     let issuer_name = build_x500_name(&[
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
@@ -920,10 +937,10 @@ fn test_crl_generation_and_verification() {
         .expect("CRL signature verification should succeed");
     println!("✅ CRL 签名验证通过");
 
-    assert!(crl.is_revoked(revoked_serial_1), "Serial 1001 should be revoked");
-    assert!(crl.is_revoked(revoked_serial_2), "Serial 1002 should be revoked");
+    assert!(crl.is_revoked(&revoked_serial_1), "Serial 1001 should be revoked");
+    assert!(crl.is_revoked(&revoked_serial_2), "Serial 1002 should be revoked");
     
-    assert!(!crl.is_revoked(9999u64), "Serial 9999 should not be revoked");
+    assert!(!crl.is_revoked(&SerialNumber::from(9999u64)), "Serial 9999 should not be revoked");
     println!("✅ 证书撤销状态检查正确");
 
     let crl_der = crl.to_der();
@@ -931,13 +948,13 @@ fn test_crl_generation_and_verification() {
     
     let decoded_crl = Crl::from_der(&crl_der)
         .expect("CRL decoding should succeed");
-    assert!(decoded_crl.is_revoked(revoked_serial_1));
+    assert!(decoded_crl.is_revoked(&revoked_serial_1));
     println!("✅ CRL DER 编码/解码成功");
 
     let crl_pem = crl.to_pem().expect("PEM encoding should succeed");
     let decoded_crl_pem = Crl::from_pem(crl_pem.as_bytes())
         .expect("CRL PEM decoding should succeed");
-    assert!(decoded_crl_pem.is_revoked(revoked_serial_2));
+    assert!(decoded_crl_pem.is_revoked(&revoked_serial_2));
     println!("✅ CRL PEM 编码/解码成功");
 
     // 验证 CRL 有效期
@@ -957,7 +974,7 @@ fn test_cms_with_crl_embedding() {
 
     let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
 
-    let revoked_serial = 3001u64;
+    let revoked_serial = SerialNumber::from(3001u64);
     let issuer_name = build_x500_name(&[
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
         X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
@@ -1006,7 +1023,6 @@ fn test_complete_workflow_cert_crl() {
     println!("步骤 1: 创建 CA 和签署者密钥对");
 
     let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
-    let cert_serial = signer_cert.serial_number.clone().to_string().parse().unwrap();
 
     println!("步骤 2: 签发签署者证书");
 
@@ -1032,7 +1048,7 @@ fn test_complete_workflow_cert_crl() {
         .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
         .expect("CRL signing should succeed");
 
-    assert!(!crl.is_revoked(cert_serial), "Certificate should not be revoked");
+    assert!(!crl.is_revoked(&signer_cert.serial_number.clone()), "Certificate should not be revoked");
     println!("步骤 4: 创建 CRL 成功，证书未被撤销");
 
     let cms_result = verify_digital_signature(&cms_signed, DEFAULT_ID)
@@ -1095,4 +1111,216 @@ fn test_edge_cases_crl() {
 
     assert!(!cms_with_multiple_crls.is_empty());
     println!("✅ CMS 嵌入多个 CRL 成功");
+}
+
+/// 测试完整的电子签章操作流程：签名 → 验证 → 撤销 → 验证失败
+///
+/// 这个测试模拟真实的业务场景：
+/// 1. CA 签发证书给签名者
+/// 2. 签名者使用证书签署文档
+/// 3. 验证签名（应该成功）
+/// 4. CA 撤销证书（如私钥泄露）
+/// 5. 生成包含 CRL 的新签名
+/// 6. 验证签名（应该失败，因为证书已被撤销）
+#[test]
+fn test_complete_signing_workflow_with_crl() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    println!("\n=== 完整电子签章操作流程测试 ===");
+
+    // 步骤 1：CA 签发证书给签名者
+    println!("\n--- 步骤 1：CA 签发证书 ---");
+    let (signer_priv_key, signer_pub_key) = generate_keypair(&mut rng);
+    let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
+    println!("✅ 签名者证书已签发");
+    println!("   证书序列号: {:?}", signer_cert.serial_number);
+    println!("   证书签发者: {:?}", signer_cert.issuer);
+    println!("   证书主体: {:?}", signer_cert.subject);
+
+    // 步骤 2：签名者签署文档（不包含 CRL）
+    println!("\n--- 步骤 2：签署文档（无 CRL） ---");
+    let content = "这是一份重要的合同文档".as_bytes();
+    let cms_without_crl = CmsSignerBuilder::new()
+        .content(content)
+        .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("CMS signing should succeed");
+    println!("✅ 文档签名成功（无 CRL），长度：{} 字节", cms_without_crl.len());
+
+    // 步骤 3：验证签名（应该成功，因为证书有效且未被撤销）
+    println!("\n--- 步骤 3：验证签名（无 CRL） ---");
+    let result = verify_digital_signature(&cms_without_crl, DEFAULT_ID)
+        .expect("CMS verification should complete");
+    assert!(result.is_valid, "签名应该有效");
+    assert_eq!(result.content, content);
+    println!("✅ 签名验证通过（无 CRL）");
+    println!("   内容匹配: {}", result.content == content);
+    println!("   有效签名者: {}/{}", result.valid_signers_count(), result.total_signers_count());
+
+    // 步骤 4：CA 撤销证书（模拟私钥泄露场景）
+    println!("\n--- 步骤 4：CA 撤销证书 ---");
+    
+    // 使用与证书相同的签发者名称（自签名证书的 issuer == subject）
+    let ca_name = signer_cert.issuer.clone();
+
+    let signer_serial_u64 = signer_cert.serial_number.clone();
+    println!("   被撤销的证书序列号: {}", signer_serial_u64.to_string());
+    println!("   CRL 签发者: {:?}", ca_name);
+
+    let crl = CrlBuilder::new()
+        .issuer(&ca_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600))
+        .add_revoked(
+            signer_serial_u64.clone(),
+            std::time::SystemTime::now(),
+            Some(1), // keyCompromise
+            None,
+        )
+        .sign(&signer_priv_key, DEFAULT_ID, &mut rng)
+        .expect("CRL signing should succeed");
+    println!("✅ CRL 已签发，包含 1 个被撤销的证书");
+
+    // 验证 CRL 签名
+    crl.verify_signature(&signer_pub_key, DEFAULT_ID)
+        .expect("CRL signature should be valid");
+    println!("✅ CRL 签名验证通过");
+
+    // 确认证书在 CRL 中
+    assert!(crl.is_revoked(&signer_serial_u64), "证书应该在 CRL 中");
+    println!("✅ 确认证书已被撤销");
+
+    // 步骤 5：签名者签署文档（包含 CRL）
+    println!("\n--- 步骤 5：签署文档（包含 CRL） ---");
+    let cms_with_crl = CmsSignerBuilder::new()
+        .content(content)
+        .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
+        .add_crl(crl.clone())
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("CMS signing with CRL should succeed");
+    println!("✅ 文档签名成功（包含 CRL），长度：{} 字节", cms_with_crl.len());
+
+    // 步骤 6：验证签名（应该失败，因为证书已被撤销）
+    println!("\n--- 步骤 6：验证签名（包含 CRL） ---");
+    let result_with_crl = verify_digital_signature(&cms_with_crl, DEFAULT_ID)
+        .expect("CMS verification should complete");
+    
+    // 验证应该失败，因为证书在 CRL 中
+    assert!(!result_with_crl.is_valid, "签名应该无效（证书已撤销）");
+    println!("✅ 签名验证失败（预期行为）");
+    println!("   验证失败原因:");
+    for signer_result in &result_with_crl.signer_results {
+        for error in &signer_result.errors {
+            println!("     - {}", error);
+        }
+    }
+
+    // 步骤 7：使用未撤销的证书签名（应该成功）
+    println!("\n--- 步骤 7：使用未撤销的证书签名 ---");
+    let (other_priv_key, _) = generate_keypair(&mut rng);
+    let other_cert = create_test_cert_with_serial(&other_priv_key, 999, &mut rng);
+    let other_serial = other_cert.serial_number.clone();
+    println!("   新证书序列号: {}", other_serial);
+
+    // 确认新证书不在 CRL 中
+    assert!(!crl.is_revoked(&other_serial.clone()), "新证书不应该在 CRL 中");
+
+    let cms_other = CmsSignerBuilder::new()
+        .content(content)
+        .add_signer(&other_priv_key, &other_cert, DEFAULT_ID)
+        .add_crl(crl)
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("CMS signing with other cert should succeed");
+
+    let result_other = verify_digital_signature(&cms_other, DEFAULT_ID)
+        .expect("CMS verification should complete");
+    assert!(result_other.is_valid, "使用未撤销证书的签名应该有效");
+    println!("✅ 使用未撤销证书的签名验证通过");
+
+    println!("\n=== 完整电子签章操作流程测试完成 ===");
+}
+
+/// 测试多签名者场景下的 CRL 验证
+///
+/// 场景：
+/// - 3 个签名者签署同一文档
+/// - 其中 1 个证书被撤销
+/// - 验证结果应该显示部分签名有效，部分无效
+#[test]
+fn test_multiple_signers_with_crl() {
+    let mut rng = StdRng::seed_from_u64(789012);
+    println!("\n=== 多签名者 CRL 验证测试 ===");
+
+    // 创建 3 个签名者证书（使用不同的序列号）
+    let (priv1, _) = generate_keypair(&mut rng);
+    let cert1 = create_test_cert_with_serial(&priv1, 1001, &mut rng);
+
+    let (priv2, _) = generate_keypair(&mut rng);
+    let cert2 = create_test_cert_with_serial(&priv2, 1002, &mut rng);
+
+    let (priv3, _) = generate_keypair(&mut rng);
+    let cert3 = create_test_cert_with_serial(&priv3, 1003, &mut rng);
+
+    println!("✅ 创建 3 个签名者证书");
+    println!("   证书 1 序列号: {}", cert1.serial_number.to_string());
+    println!("   证书 2 序列号: {}", cert2.serial_number.to_string());
+    println!("   证书 3 序列号: {}", cert3.serial_number.to_string());
+
+    // 撤销证书 2
+    // 使用与证书相同的签发者名称（自签名证书的 issuer == subject）
+    let ca_name = cert2.issuer.clone();
+
+    let crl = CrlBuilder::new()
+        .issuer(&ca_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(3600))
+        .add_revoked(cert2.serial_number.clone(), std::time::SystemTime::now(), Some(1), None)
+        .sign(&priv2, DEFAULT_ID, &mut rng)
+        .expect("CRL signing should succeed");
+
+    crl.verify_signature(&cert2.extract_sm2_public_key().unwrap(), DEFAULT_ID)
+        .expect("CRL signature should be valid");
+    println!("✅ CRL 已签发，撤销证书 2");
+
+    // 3 个签名者签署文档
+    let content = "多方签署的合同".as_bytes();
+    let cms = CmsSignerBuilder::new()
+        .content(content)
+        .add_signer(&priv1, &cert1, DEFAULT_ID)
+        .add_signer(&priv2, &cert2, DEFAULT_ID) // 这个证书已被撤销
+        .add_signer(&priv3, &cert3, DEFAULT_ID)
+        .add_crl(crl)
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("CMS signing should succeed");
+
+    println!("✅ 3 个签名者签署文档完成");
+
+    // 验证签名
+    let result = verify_digital_signature(&cms, DEFAULT_ID)
+        .expect("CMS verification should complete");
+
+    // 整体应该无效（因为有签名者证书被撤销）
+    assert!(!result.is_valid, "整体签名应该无效");
+    println!("\n✅ 整体签名验证结果: 无效（预期）");
+
+    // 检查每个签名者的状态
+    println!("\n各签名者验证状态:");
+    for (i, signer_result) in result.signer_results.iter().enumerate() {
+        println!("  签名者 {}: 有效={}", i + 1, signer_result.is_valid);
+        if !signer_result.errors.is_empty() {
+            for error in &signer_result.errors {
+                println!("    错误: {}", error);
+            }
+        }
+    }
+
+    // 签名者 1 和 3 应该有效，签名者 2 应该无效
+    assert!(result.signer_results[0].is_valid, "签名者 1 应该有效");
+    assert!(!result.signer_results[1].is_valid, "签名者 2 应该无效（证书已撤销）");
+    assert!(result.signer_results[2].is_valid, "签名者 3 应该有效");
+
+    println!("\n✅ 多签名者 CRL 验证测试完成");
 }
