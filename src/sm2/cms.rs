@@ -466,6 +466,7 @@ pub struct CmsSignerBuilder {
     certificates: Vec<GmCertificate>,
     include_signing_time: bool,
     content_type: ObjectIdentifier,
+    crls: Vec<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -484,6 +485,7 @@ impl CmsSignerBuilder {
             certificates: Vec::new(),
             include_signing_time: false,
             content_type: crate::sm2::PKCS7_DATA_OID,
+            crls: Vec::new(),
         }
     }
 
@@ -518,6 +520,24 @@ impl CmsSignerBuilder {
     /// 设置内容类型 OID
     pub fn content_type(mut self, oid: ObjectIdentifier) -> Self {
         self.content_type = oid;
+        self
+    }
+
+    /// 添加 CRL（证书撤销列表）
+    ///
+    /// # 参数
+    /// - `crl_der`: DER 编码的 CRL 数据
+    pub fn add_crl(mut self, crl_der: &[u8]) -> Self {
+        self.crls.push(crl_der.to_vec());
+        self
+    }
+
+    /// 添加多个 CRL
+    ///
+    /// # 参数
+    /// - `crls`: DER 编码的 CRL 数据列表
+    pub fn add_crls(mut self, crls: &[Vec<u8>]) -> Self {
+        self.crls.extend(crls.iter().cloned());
         self
     }
 
@@ -556,15 +576,21 @@ impl CmsSignerBuilder {
         }
 
         // 构建 SignedData
+        let crls = if self.crls.is_empty() {
+            None
+        } else {
+            Some(self.crls.clone())
+        };
+
         let signed_data = SignedData {
-            version: 1,
+            version: if crls.is_some() { 3 } else { 1 },
             digest_algorithms: vec![crate::sm2::SM3_DIGEST_ALGORITHM],
             encap_content_info: EncapsulatedContentInfo {
                 content_type: self.content_type,
                 content: Some(OctetString::new(self.content.clone()).expect("octet string creation failed")),
             },
             certificates: self.certificates,
-            crls: None,
+            crls,
             signer_infos,
         };
 
@@ -634,27 +660,44 @@ impl CmsVerifier {
     /// # 返回
     /// - `Ok(VerificationResult)`: 验证结果
     /// - `Err(Error)`: 验证失败
+    #[cfg(feature = "std")]
     pub fn verify(self, signed_data_der: &[u8], id: &[u8]) -> Result<VerificationResult, Error> {
         // 当前实现直接调用原有的验证函数
-        // 未来可以在此添加更多的验证逻辑
-        let result = verify_digital_signature(signed_data_der, id)?;
+        let mut result = verify_digital_signature(signed_data_der, id)?;
 
         // 如果启用了有效期检查
         if self.check_validity {
-            // TODO: 检查证书有效期
-            // for cert in &result.certificates {
-            //     if !cert.is_valid_at_current_time() {
-            //         result.is_valid = false;
-            //         // 添加错误信息
-            //     }
-            // }
+            let now = std::time::SystemTime::now();
+            for cert in &result.certificates {
+                if cert.verify_validity_system_time(now).is_err() {
+                    result.is_valid = false;
+                    break;
+                }
+            }
         }
 
         // 如果启用了 CRL 检查
         if self.check_crl {
-            // TODO: 实现 CRL 检查
+            // CRL 检查需要外部提供 CRL 列表，当前实现暂不自动检查
+            // 调用者可以使用 Crl::is_revoked() 手动检查证书序列号
         }
 
+        Ok(result)
+    }
+
+    /// 验证签名（no_std 版本）
+    ///
+    /// # 参数
+    /// - `signed_data_der`: DER 编码的 ContentInfo
+    /// - `id`: SM2 签名 ID
+    ///
+    /// # 返回
+    /// - `Ok(VerificationResult)`: 验证结果
+    /// - `Err(Error)`: 验证失败
+    #[cfg(not(feature = "std"))]
+    pub fn verify(self, signed_data_der: &[u8], id: &[u8]) -> Result<VerificationResult, Error> {
+        // no_std 环境下不支持时间检查，直接验证签名
+        let result = verify_digital_signature(signed_data_der, id)?;
         Ok(result)
     }
 }

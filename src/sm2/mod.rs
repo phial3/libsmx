@@ -22,6 +22,9 @@ pub mod cert;
 pub mod cms;
 
 #[cfg(feature = "alloc")]
+pub mod crl;
+
+#[cfg(feature = "alloc")]
 pub use der::{
     private_key_from_pkcs8_der,
     private_key_from_sec1_der,
@@ -159,6 +162,16 @@ pub mod oids {
     ///
     /// 主体密钥标识符扩展
     pub const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.14");
+
+    /// id-ce-cRLReasons OID (2.5.29.21)
+    ///
+    /// CRL 撤销原因扩展
+    pub const ID_CE_CRL_REASONS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.21");
+
+    /// id-ce-invalidityDate OID (2.5.29.24)
+    ///
+    /// CRL 无效日期扩展
+    pub const ID_CE_INVALIDITY_DATE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.24");
 
     /// anyExtendedKeyUsage OID (2.5.29.37.0)
     ///
@@ -891,10 +904,140 @@ pub fn decrypt(pri_key: &PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, Error
     Ok(m)
 }
 
+// ── 密钥封装机制 KEM（GB/T 32918.4-2016 §8）──────────────────────────────────
+
+/// SM2 密钥封装（KEM 封装）
+///
+/// 根据 GB/T 32918.4-2016 §8.1 实现密钥封装机制。
+/// 封装一个随机密钥，返回（密文，共享密钥）对。
+///
+/// # 参数
+/// - `pub_key`: 接收方的公钥
+/// - `key_len`: 期望的共享密钥长度（字节）
+/// - `rng`: 随机数生成器
+///
+/// # 返回
+/// - `(密文, 共享密钥)`: 密文为 C1||C2 格式，共享密钥为派生的密钥材料
+///
+/// # 标准
+/// - GB/T 32918.4-2016 §8.1（KEM 封装）
+#[cfg(feature = "alloc")]
+pub fn kem_encrypt<R: Rng>(
+    pub_key: &PublicKey,
+    key_len: usize,
+    rng: &mut R,
+) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    if key_len == 0 {
+        return Err(Error::InvalidInputLength);
+    }
+
+    let pa = AffinePoint::from_bytes(pub_key.as_bytes())?;
+
+    loop {
+        // A1：生成随机 k ∈ [1, n-1]
+        let mut k_bytes = [0u8; 32];
+        rng.fill_bytes(&mut k_bytes);
+        let k = U256::from_be_slice(&k_bytes);
+        k_bytes.zeroize();
+        if bool::from(k.is_zero()) || k >= GROUP_ORDER {
+            continue;
+        }
+
+        // A2：C1 = k·G
+        let c1_aff = match JacobianPoint::scalar_mul_g(&k).to_affine() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let c1 = c1_aff.to_bytes();
+
+        // A3：计算 k·PA
+        let pa_jac = JacobianPoint::from_affine(&pa);
+        let kpa_aff = match JacobianPoint::scalar_mul(&k, &pa_jac).to_affine() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let x2 = fp_to_bytes(&kpa_aff.x);
+        let y2 = fp_to_bytes(&kpa_aff.y);
+
+        // A4：K = KDF(x2||y2, klen)
+        let mut z_input = [0u8; 64];
+        z_input[..32].copy_from_slice(&x2);
+        z_input[32..].copy_from_slice(&y2);
+        let k_key = crate::kdf::kdf(&z_input, key_len);
+
+        // K 全零时重新选 k
+        if k_key.iter().all(|&b| b == 0) {
+            continue;
+        }
+
+        // 输出 C1（65 字节）作为封装密文
+        let ciphertext = c1.to_vec();
+
+        return Ok((ciphertext, k_key));
+    }
+}
+
+/// SM2 密钥解封（KEM 解封）
+///
+/// 根据 GB/T 32918.4-2016 §8.2 实现密钥解封机制。
+/// 从密文中解封出共享密钥。
+///
+/// # 参数
+/// - `pri_key`: 接收方的私钥
+/// - `ciphertext`: 封装密文（C1 格式，65 字节）
+/// - `key_len`: 期望的共享密钥长度（字节）
+///
+/// # 返回
+/// - `共享密钥`: 派生的密钥材料
+///
+/// # 标准
+/// - GB/T 32918.4-2016 §8.2（KEM 解封）
+#[cfg(feature = "alloc")]
+pub fn kem_decrypt(
+    pri_key: &PrivateKey,
+    ciphertext: &[u8],
+    key_len: usize,
+) -> Result<Vec<u8>, Error> {
+    if key_len == 0 {
+        return Err(Error::InvalidInputLength);
+    }
+
+    // 密文应为 C1（65 字节）
+    if ciphertext.len() != 65 {
+        return Err(Error::InvalidInputLength);
+    }
+
+    let d = U256::from_be_slice(pri_key.as_bytes());
+
+    // 解析 C1
+    let c1_bytes: [u8; 65] = ciphertext[0..65].try_into().unwrap();
+    let c1 = AffinePoint::from_bytes(&c1_bytes)?;
+
+    // 计算 d·C1
+    let c1_jac = JacobianPoint::from_affine(&c1);
+    let dc1_aff = JacobianPoint::scalar_mul(&d, &c1_jac).to_affine()?;
+    let x2 = fp_to_bytes(&dc1_aff.x);
+    let y2 = fp_to_bytes(&dc1_aff.y);
+
+    // K = KDF(x2||y2, klen)
+    let mut z_input = [0u8; 64];
+    z_input[..32].copy_from_slice(&x2);
+    z_input[32..].copy_from_slice(&y2);
+    let k_key = crate::kdf::kdf(&z_input, key_len);
+
+    // K 全零时解封失败
+    if k_key.iter().all(|&b| b == 0) {
+        return Err(Error::DecryptFailed);
+    }
+
+    Ok(k_key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     struct FakeRng([u8; 32]);
     impl rand_core::TryRng for FakeRng {
         type Error = core::convert::Infallible;

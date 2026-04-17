@@ -83,6 +83,14 @@ pub enum Error {
     /// 证书吊销
     CertificateRevoked,
 
+    // ── CRL 错误 ────────────────────────────────────────────────────────────
+    /// 无效的 CRL（格式错误）
+    InvalidCrl,
+    /// CRL 已过期
+    ExpiredCrl,
+    /// 不支持的算法
+    UnsupportedAlgorithm,
+
     // ── CMS/电子签章错误 ────────────────────────────────────────────────────
     /// CMS 解析错误
     CmsParseError {
@@ -170,6 +178,11 @@ impl fmt::Display for Error {
                 write!(f, "certificate chain error at index {}: {}", index, reason)
             }
             Error::CertificateRevoked => write!(f, "certificate has been revoked"),
+            
+            // CRL 错误
+            Error::InvalidCrl => write!(f, "invalid CRL"),
+            Error::ExpiredCrl => write!(f, "CRL has expired"),
+            Error::UnsupportedAlgorithm => write!(f, "unsupported algorithm"),
             
             // CMS 错误
             Error::CmsParseError { field, reason } => {

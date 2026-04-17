@@ -882,3 +882,219 @@ fn test_real_world_document_integrity() {
     assert!(result_archived.is_valid, "Archived document should still be valid");
     println!("✅ 归档文档验证通过 - 支持长期保存");
 }
+
+// ====================================================================================
+// CRL 集成测试
+// ====================================================================================
+
+use libsmx::sm2::crl::{Crl, CrlBuilder};
+
+/// 测试 CRL 生成和验证
+#[test]
+fn test_crl_generation_and_verification() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    let (ca_priv_key, ca_pub_key) = generate_keypair(&mut rng);
+
+    println!("\n=== CRL 生成和验证测试 ===");
+
+    let revoked_serial_1 = SerialNumber::from(1001u32);
+    let revoked_serial_2 = SerialNumber::from(1002u32);
+
+    let issuer_name = build_x500_name(&[
+        X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+        X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
+    ]);
+
+    let crl = CrlBuilder::new()
+        .issuer(&issuer_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600))
+        .add_revoked(revoked_serial_1.clone(), std::time::SystemTime::now() - Duration::from_secs(86400), None, None)
+        .add_revoked(revoked_serial_2.clone(), std::time::SystemTime::now(), Some(1), None)
+        .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
+        .expect("CRL signing should succeed");
+
+    println!("✅ CRL 签发成功");
+
+    crl.verify_signature(&ca_pub_key, DEFAULT_ID)
+        .expect("CRL signature verification should succeed");
+    println!("✅ CRL 签名验证通过");
+
+    assert!(crl.is_revoked(&revoked_serial_1), "Serial 1001 should be revoked");
+    assert!(crl.is_revoked(&revoked_serial_2), "Serial 1002 should be revoked");
+    
+    let valid_serial = SerialNumber::from(9999u32);
+    assert!(!crl.is_revoked(&valid_serial), "Serial 9999 should not be revoked");
+    println!("✅ 证书撤销状态检查正确");
+
+    let crl_der = crl.to_der();
+    assert!(!crl_der.is_empty());
+    
+    let decoded_crl = Crl::from_der(&crl_der)
+        .expect("CRL decoding should succeed");
+    assert!(decoded_crl.is_revoked(&revoked_serial_1));
+    println!("✅ CRL DER 编码/解码成功");
+
+    let crl_pem = crl.to_pem().expect("PEM encoding should succeed");
+    let decoded_crl_pem = Crl::from_pem(&crl_pem)
+        .expect("CRL PEM decoding should succeed");
+    assert!(decoded_crl_pem.is_revoked(&revoked_serial_2));
+    println!("✅ CRL PEM 编码/解码成功");
+
+    // 验证 CRL 有效期
+    crl.verify_validity(std::time::SystemTime::now())
+        .expect("CRL should be within validity period");
+    println!("✅ CRL 有效期验证通过");
+}
+
+/// 测试 CMS 中嵌入 CRL
+#[test]
+fn test_cms_with_crl_embedding() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
+    let (signer_priv_key, _signer_pub_key) = generate_keypair(&mut rng);
+
+    println!("\n=== CMS 嵌入 CRL 测试 ===");
+
+    let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
+
+    let revoked_serial = SerialNumber::from(3001u32);
+    let issuer_name = build_x500_name(&[
+        X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+        X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
+    ]);
+    
+    let crl = CrlBuilder::new()
+        .issuer(&issuer_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600))
+        .add_revoked(revoked_serial, std::time::SystemTime::now(), None, None)
+        .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
+        .expect("CRL signing should succeed");
+
+    println!("✅ CRL 创建成功");
+
+    let content = b"Test content with CRL embedding";
+    let crl_der = crl.to_der();
+
+    let cms_signed = CmsSignerBuilder::new()
+        .content(content)
+        .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
+        .add_crl(&crl_der)
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("CMS signing with CRL should succeed");
+
+    println!("✅ CMS 签名成功（包含 CRL），长度：{} 字节", cms_signed.len());
+
+    let result = verify_digital_signature(&cms_signed, DEFAULT_ID)
+        .expect("CMS verification should succeed");
+
+    assert!(result.is_valid, "CMS signature should be valid");
+    assert_eq!(result.content, content);
+    println!("✅ CMS 签名验证通过");
+}
+
+/// 测试完整的工作流程：证书 + CRL
+#[test]
+fn test_complete_workflow_cert_crl() {
+    let mut rng = StdRng::seed_from_u64(123456);
+
+    println!("\n=== 完整工作流程测试 ===");
+
+    let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
+    let (signer_priv_key, _signer_pub_key) = generate_keypair(&mut rng);
+
+    println!("步骤 1: 创建 CA 和签署者密钥对");
+
+    let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
+    let cert_serial = signer_cert.serial_number.clone();
+
+    println!("步骤 2: 签发签署者证书");
+
+    let document = b"Important legal document";
+    let cms_signed = CmsSignerBuilder::new()
+        .content(document)
+        .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
+        .include_signing_time(true)
+        .sign(&mut rng)
+        .expect("Document signing should succeed");
+
+    println!("步骤 3: 签署文档成功");
+
+    let issuer_name = build_x500_name(&[
+        X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+        X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
+    ]);
+    
+    let crl = CrlBuilder::new()
+        .issuer(&issuer_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600))
+        .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
+        .expect("CRL signing should succeed");
+
+    assert!(!crl.is_revoked(&cert_serial), "Certificate should not be revoked");
+    println!("步骤 4: 创建 CRL 成功，证书未被撤销");
+
+    let cms_result = verify_digital_signature(&cms_signed, DEFAULT_ID)
+        .expect("CMS verification should succeed");
+    assert!(cms_result.is_valid);
+
+    println!("步骤 5: 所有验证通过");
+    println!("✅ 完整工作流程测试成功");
+}
+
+/// 测试边界条件：空 CRL 等
+#[test]
+fn test_edge_cases_crl() {
+    let mut rng = StdRng::seed_from_u64(123456);
+    let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
+
+    println!("\n=== 边界条件测试 ===");
+
+    let issuer_name = build_x500_name(&[
+        X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+        X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
+    ]);
+
+    let empty_crl = CrlBuilder::new()
+        .issuer(&issuer_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(24 * 3600))
+        .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
+        .expect("Empty CRL signing should succeed");
+
+    assert!(empty_crl.revoked_certificates().map_or(true, |r| r.is_empty()));
+    println!("✅ 空 CRL 创建成功");
+
+    let (signer_priv_key, _) = generate_keypair(&mut rng);
+    let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
+
+    let ca1_name = build_x500_name(&[X500Attribute::new(X500AttributeType::CommonName, "CA 1")]);
+    let crl1 = CrlBuilder::new()
+        .issuer(&ca1_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(3600))
+        .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
+        .unwrap();
+
+    let ca2_name = build_x500_name(&[X500Attribute::new(X500AttributeType::CommonName, "CA 2")]);
+    let crl2 = CrlBuilder::new()
+        .issuer(&ca2_name)
+        .this_update(std::time::SystemTime::now())
+        .next_update(std::time::SystemTime::now() + Duration::from_secs(3600))
+        .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
+        .unwrap();
+
+    let cms_with_multiple_crls = CmsSignerBuilder::new()
+        .content(b"Test with multiple CRLs")
+        .add_signer(&signer_priv_key, &signer_cert, DEFAULT_ID)
+        .add_crl(&crl1.to_der())
+        .add_crl(&crl2.to_der())
+        .sign(&mut rng)
+        .expect("CMS with multiple CRLs should succeed");
+
+    assert!(!cms_with_multiple_crls.is_empty());
+    println!("✅ CMS 嵌入多个 CRL 成功");
+}
