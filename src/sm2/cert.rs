@@ -49,8 +49,8 @@ use crate::sm2::{sign, verify, PrivateKey, PublicKey};
 use rand_core::Rng;
 use x509_cert::attr::AttributeTypeAndValue;
 use x509_cert::der::asn1::{BitString, OctetString, Utf8StringRef};
-use x509_cert::der::pem::{decode_vec, encode_string};
-use x509_cert::der::{Any, Decode, Encode};
+use x509_cert::der::pem::{decode_vec, LineEnding};
+use x509_cert::der::{Any, Decode, Encode, EncodePem};
 use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages};
 use x509_cert::ext::Extension;
 use x509_cert::name::Name;
@@ -1581,8 +1581,8 @@ pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
 /// - `Ok(Vec<u8>)`: PEM 编码的证书数据
 /// - `Err(Error::InvalidCertificate)`: 编码失败
 pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<String, Error> {
-    let der = generate_gm_certificate_der(cert);
-    encode_string("CERTIFICATE", Default::default(), &der).map_err(|_| Error::InvalidCertificate)
+    let x509 = gm_to_x509_certificate(cert)?;
+    x509.to_pem(LineEnding::LF).map_err(|_| Error::InvalidCertificate)
 }
 
 // ====================================================================================

@@ -39,9 +39,11 @@ use crate::error::Error;
 use crate::sm2::{sign, verify, PrivateKey, PublicKey};
 
 use alloc::vec::Vec;
+use alloc::string::String;
+
 use x509_cert::crl::{CertificateList, RevokedCert, TbsCertList};
-use x509_cert::der::pem::{decode_vec, encode_string};
-use x509_cert::der::{Decode, Encode};
+use x509_cert::der::pem::{decode_vec, LineEnding};
+use x509_cert::der::{Decode, Encode, EncodePem};
 use x509_cert::ext::Extension;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
@@ -132,9 +134,7 @@ impl Crl {
     /// # 返回
     /// DER 编码的 CRL 字节数组
     pub fn to_der(&self) -> Vec<u8> {
-        self.cert_list
-            .to_der()
-            .expect("CRL encoding should not fail")
+        self.cert_list.to_der().expect("CRL encoding should not fail")
     }
 
     /// 将 CRL 编码为 PEM 格式
@@ -142,11 +142,8 @@ impl Crl {
     /// # 返回
     /// - `Ok(Vec<u8>)`: PEM 编码的 CRL 数据
     /// - `Err(Error::InvalidCrl)`: 编码失败
-    pub fn to_pem(&self) -> Result<Vec<u8>, Error> {
-        let der = self.to_der();
-        encode_string("X509 CRL", Default::default(), &der)
-            .map(|s| s.into_bytes())
-            .map_err(|_| Error::InvalidCrl)
+    pub fn to_pem(&self) -> Result<String, Error> {
+        self.cert_list.to_pem(LineEnding::LF).map_err(|_| Error::InvalidCrl)
     }
 
     /// 获取签发者名称

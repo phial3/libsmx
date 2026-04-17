@@ -935,7 +935,7 @@ fn test_crl_generation_and_verification() {
     println!("✅ CRL DER 编码/解码成功");
 
     let crl_pem = crl.to_pem().expect("PEM encoding should succeed");
-    let decoded_crl_pem = Crl::from_pem(&crl_pem)
+    let decoded_crl_pem = Crl::from_pem(crl_pem.as_bytes())
         .expect("CRL PEM decoding should succeed");
     assert!(decoded_crl_pem.is_revoked(revoked_serial_2));
     println!("✅ CRL PEM 编码/解码成功");
