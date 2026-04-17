@@ -36,15 +36,14 @@
 #![cfg(feature = "alloc")]
 
 use alloc::vec::Vec;
-
 use x509_cert::crl::{CertificateList, RevokedCert, TbsCertList};
-use x509_cert::der::{Decode, Encode};
 use x509_cert::der::pem::{decode_vec, encode_string};
+use x509_cert::der::{Decode, Encode};
 use x509_cert::ext::Extensions;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
-use x509_cert::spki::AlgorithmIdentifier;
 use x509_cert::time::Time;
+use x509_cert::AlgorithmIdentifier;
 
 use crate::error::Error;
 use crate::sm2::{sign, verify, PrivateKey, PublicKey};
@@ -87,7 +86,7 @@ pub struct RevokedCertificate {
 #[derive(Debug, Clone)]
 pub struct Crl {
     /// 原始 CertificateList 结构
-    pub certificate_list: CertificateList,
+    pub cert_list: CertificateList,
 }
 
 impl Crl {
@@ -109,9 +108,10 @@ impl Crl {
     /// let crl = Crl::from_der(&der_bytes).expect("Valid CRL");
     /// ```
     pub fn from_der(der: &[u8]) -> Result<Self, Error> {
-        let certificate_list = CertificateList::from_der(der)
-            .map_err(|_| Error::InvalidCrl)?;
-        Ok(Crl { certificate_list })
+        let certificate_list = CertificateList::from_der(der).map_err(|_| Error::InvalidCrl)?;
+        Ok(Crl {
+            cert_list: certificate_list,
+        })
     }
 
     /// 从 PEM 编码解析 CRL
@@ -123,8 +123,7 @@ impl Crl {
     /// - `Ok(Crl)`: 解析成功的 CRL
     /// - `Err(Error::InvalidCrl)`: 解析失败
     pub fn from_pem(pem: &[u8]) -> Result<Self, Error> {
-        let (_label, der) = decode_vec(pem)
-            .map_err(|_| Error::InvalidCrl)?;
+        let (_label, der) = decode_vec(pem).map_err(|_| Error::InvalidCrl)?;
         Self::from_der(&der)
     }
 
@@ -133,7 +132,8 @@ impl Crl {
     /// # 返回
     /// DER 编码的 CRL 字节数组
     pub fn to_der(&self) -> Vec<u8> {
-        self.certificate_list.to_der()
+        self.cert_list
+            .to_der()
             .expect("CRL encoding should not fail")
     }
 
@@ -151,27 +151,27 @@ impl Crl {
 
     /// 获取签发者名称
     pub fn issuer(&self) -> &Name {
-        &self.certificate_list.tbs_cert_list.issuer
+        &self.cert_list.tbs_cert_list.issuer
     }
 
     /// 获取本次更新时间
     pub fn this_update(&self) -> &Time {
-        &self.certificate_list.tbs_cert_list.this_update
+        &self.cert_list.tbs_cert_list.this_update
     }
 
     /// 获取下次更新时间（可选）
     pub fn next_update(&self) -> Option<&Time> {
-        self.certificate_list.tbs_cert_list.next_update.as_ref()
+        self.cert_list.tbs_cert_list.next_update.as_ref()
     }
 
     /// 获取被撤销的证书列表
     pub fn revoked_certificates(&self) -> Option<&[RevokedCert]> {
-        self.certificate_list.tbs_cert_list.revoked_certificates.as_deref()
+        self.cert_list.tbs_cert_list.revoked_certificates.as_deref()
     }
 
     /// 获取 CRL 扩展
     pub fn extensions(&self) -> Option<&Extensions> {
-        self.certificate_list.tbs_cert_list.crl_extensions.as_ref()
+        self.cert_list.tbs_cert_list.crl_extensions.as_ref()
     }
 
     /// 检查指定序列号的证书是否被撤销
@@ -182,9 +182,10 @@ impl Crl {
     /// # 返回
     /// - `true`: 证书已被撤销
     /// - `false`: 证书未被撤销
-    pub fn is_revoked(&self, serial: &SerialNumber) -> bool {
+    pub fn is_revoked(&self, serial: u64) -> bool {
+        let serial = SerialNumber::from(serial);
         if let Some(revoked) = self.revoked_certificates() {
-            revoked.iter().any(|cert| cert.serial_number == *serial)
+            revoked.iter().any(|cert| cert.serial_number == serial)
         } else {
             false
         }
@@ -201,21 +202,20 @@ impl Crl {
     /// # 返回
     /// - `Ok(())`: 签名验证通过
     /// - `Err(Error::InvalidSignature)`: 签名验证失败
-    pub fn verify_signature(
-        &self,
-        issuer_pub_key: &PublicKey,
-        id: &[u8],
-    ) -> Result<(), Error> {
+    pub fn verify_signature(&self, issuer_pub_key: &PublicKey, id: &[u8]) -> Result<(), Error> {
         // 获取签名算法 OID
-        let sig_alg_oid = self.certificate_list.tbs_cert_list.signature.oid;
-        
+        let sig_alg_oid = self.cert_list.tbs_cert_list.signature.oid;
+
         // 确保是 SM2 签名算法
         if sig_alg_oid != crate::sm2::SM2_SIGNATURE_OID {
             return Err(Error::UnsupportedAlgorithm);
         }
 
         // 获取 TBSCertList 的 DER 编码
-        let tbs_der = self.certificate_list.tbs_cert_list.to_der()
+        let tbs_der = self
+            .cert_list
+            .tbs_cert_list
+            .to_der()
             .map_err(|_| Error::InvalidCrl)?;
 
         // 计算消息摘要（SM3）
@@ -223,7 +223,7 @@ impl Crl {
         let e = crate::sm2::get_e(&z, &tbs_der);
 
         // 获取签名值
-        let sig_bytes = self.certificate_list.signature.raw_bytes();
+        let sig_bytes = self.cert_list.signature.raw_bytes();
         if sig_bytes.len() != 64 {
             return Err(Error::InvalidSignature);
         }
@@ -277,10 +277,10 @@ impl Crl {
     ) -> Result<(), Error> {
         // 验证签名
         self.verify_signature(issuer_pub_key, id)?;
-        
+
         // 验证有效期
         self.verify_validity(now)?;
-        
+
         Ok(())
     }
 
@@ -293,9 +293,8 @@ impl Crl {
     /// - `Some(RevokedCert)`: 撤销信息
     /// - `None`: 证书未被撤销
     pub fn get_revocation_info(&self, serial: &SerialNumber) -> Option<&RevokedCert> {
-        self.revoked_certificates().and_then(|revoked| {
-            revoked.iter().find(|r| r.serial_number == *serial)
-        })
+        self.revoked_certificates()
+            .and_then(|revoked| revoked.iter().find(|r| r.serial_number == *serial))
     }
 }
 
@@ -389,25 +388,24 @@ impl CrlBuilder {
     /// - RFC 5280 §5.3.2 Invalidity Date
     pub fn add_revoked(
         mut self,
-        serial: SerialNumber,
+        serial: u64,
         revocation_time: std::time::SystemTime,
         reason_code: Option<u8>,
         invalidity_date: Option<std::time::SystemTime>,
     ) -> Self {
-        let revocation_date = Time::try_from(revocation_time)
-            .expect("Valid system time");
-        
+        let revocation_date = Time::try_from(revocation_time).expect("Valid system time");
+
         // 根据 RFC 5280 §5.3 构建 CRL 条目扩展
         let crl_entry_extensions = if reason_code.is_some() || invalidity_date.is_some() {
-            // 扩展将通过 sign 方法构建
-            // 这里仅标记需要扩展
+            // 扩展将通过 sign 方法构建, 这里仅标记需要扩展
             Some(Extensions::default())
         } else {
             None
         };
-        
+
+        let serial_number = SerialNumber::from(serial);
         self.revoked_certs.push(RevokedCertificate {
-            serial_number: serial,
+            serial_number,
             revocation_date,
             reason_code,
             invalidity_date: invalidity_date.map(|t| Time::try_from(t).expect("Valid system time")),
@@ -445,9 +443,9 @@ impl CrlBuilder {
     ) -> Result<Crl, Error> {
         let issuer = self.issuer.ok_or(Error::InvalidCrl)?;
         let this_update = self.this_update.ok_or(Error::InvalidCrl)?;
-        let this_update_time = Time::try_from(this_update)
-            .map_err(|_| Error::InvalidCrl)?;
-        let next_update_time = self.next_update
+        let this_update_time = Time::try_from(this_update).map_err(|_| Error::InvalidCrl)?;
+        let next_update_time = self
+            .next_update
             .map(|t| Time::try_from(t).map_err(|_| Error::InvalidCrl))
             .transpose()?;
 
@@ -455,15 +453,14 @@ impl CrlBuilder {
         let revoked_certs = if self.revoked_certs.is_empty() {
             None
         } else {
-            let revoked: Vec<RevokedCert> = self.revoked_certs
+            let revoked: Vec<RevokedCert> = self
+                .revoked_certs
                 .iter()
                 .map(|rc| {
                     // 根据 RFC 5280 §5.3 构建 CRL 条目扩展
-                    let entry_extensions = build_crl_entry_extensions(
-                        rc.reason_code,
-                        rc.invalidity_date.as_ref(),
-                    );
-                    
+                    let entry_extensions =
+                        build_crl_entry_extensions(rc.reason_code, rc.invalidity_date.as_ref());
+
                     RevokedCert {
                         serial_number: rc.serial_number.clone(),
                         revocation_date: rc.revocation_date.clone(),
@@ -474,13 +471,15 @@ impl CrlBuilder {
             Some(revoked)
         };
 
+        let signature_algorithm = AlgorithmIdentifier {
+            oid: crate::sm2::SM2_SIGNATURE_OID,
+            parameters: None,
+        };
+
         // 构建 TBSCertList
         let tbs_cert_list = TbsCertList {
             version: x509_cert::certificate::Version::V2,
-            signature: AlgorithmIdentifier {
-                oid: crate::sm2::SM2_SIGNATURE_OID,
-                parameters: None,
-            },
+            signature: signature_algorithm.clone(),
             issuer,
             this_update: this_update_time,
             next_update: next_update_time,
@@ -489,8 +488,7 @@ impl CrlBuilder {
         };
 
         // 计算 TBSCertList 的 DER 编码
-        let tbs_der = tbs_cert_list.to_der()
-            .map_err(|_| Error::InvalidCrl)?;
+        let tbs_der = tbs_cert_list.to_der().map_err(|_| Error::InvalidCrl)?;
 
         // 计算消息摘要
         let pub_key = ca_priv_key.public_key();
@@ -503,15 +501,13 @@ impl CrlBuilder {
         // 构建完整的 CertificateList
         let certificate_list = CertificateList {
             tbs_cert_list,
-            signature_algorithm: AlgorithmIdentifier {
-                oid: crate::sm2::SM2_SIGNATURE_OID,
-                parameters: None,
-            },
-            signature: x509_cert::der::asn1::BitString::new(0, &sig)
-                .map_err(|_| Error::InvalidCrl)?,
+            signature_algorithm,
+            signature: x509_cert::der::asn1::BitString::new(0, &sig).unwrap(),
         };
 
-        Ok(Crl { certificate_list })
+        Ok(Crl {
+            cert_list: certificate_list,
+        })
     }
 }
 
@@ -539,7 +535,7 @@ fn build_crl_entry_extensions(
 
     // 注意：x509_cert 库的 Extensions 类型是 Vec<Extension>
     // 我们需要手动构建扩展条目
-    let mut extensions = alloc::vec::Vec::new();
+    let mut extensions = Vec::new();
 
     // CRLReason 扩展 (OID: 2.5.29.21)
     if let Some(reason) = reason_code {
@@ -573,9 +569,8 @@ fn build_crl_entry_extensions(
     // Invalidity Date 扩展 (OID: 2.5.29.24)
     if let Some(inv_date) = invalidity_date {
         // Invalidity Date 是 GeneralizedTime 类型
-        let inv_date_der = inv_date.to_der()
-            .expect("Valid Time encoding");
-        
+        let inv_date_der = inv_date.to_der().expect("Valid Time encoding");
+
         extensions.push(x509_cert::ext::Extension {
             extn_id: crate::sm2::ID_CE_INVALIDITY_DATE,
             critical: false, // Invalidity Date 不是关键扩展
@@ -610,14 +605,13 @@ mod tests {
             X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
         ]);
 
-        let revoked_serial = SerialNumber::from(100u32);
         let revocation_time = SystemTime::now() - Duration::from_secs(3600);
 
         let crl = CrlBuilder::new()
             .issuer(&issuer)
             .this_update(SystemTime::now() - Duration::from_secs(60))
             .next_update(SystemTime::now() + Duration::from_secs(86400))
-            .add_revoked(revoked_serial.clone(), revocation_time, Some(1), None)
+            .add_revoked(100u64, revocation_time, Some(1), None)
             .sign(&ca_priv_key, b"1234567812345678", &mut rng)
             .expect("CRL signing should succeed");
 
@@ -630,11 +624,10 @@ mod tests {
             .expect("CRL should be valid");
 
         // 检查被撤销的证书
-        assert!(crl.is_revoked(&revoked_serial));
+        assert!(crl.is_revoked(100u64));
 
         // 检查未被撤销的证书
-        let other_serial = SerialNumber::from(200u32);
-        assert!(!crl.is_revoked(&other_serial));
+        assert!(!crl.is_revoked(200u64));
     }
 
     #[test]
@@ -642,9 +635,10 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(12345);
         let (ca_priv_key, _) = generate_keypair(&mut rng);
 
-        let issuer = build_x500_name(&[
-            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
-        ]);
+        let issuer = build_x500_name(&[X500Attribute::new(
+            X500AttributeType::Organization,
+            "Test CA",
+        )]);
 
         let crl = CrlBuilder::new()
             .issuer(&issuer)
@@ -655,8 +649,7 @@ mod tests {
 
         // DER 编码/解码往返
         let der = crl.to_der();
-        let parsed = Crl::from_der(&der)
-            .expect("CRL parsing should succeed");
+        let parsed = Crl::from_der(&der).expect("CRL parsing should succeed");
 
         assert_eq!(parsed.issuer(), crl.issuer());
         assert_eq!(parsed.this_update(), crl.this_update());
@@ -667,9 +660,10 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(12345);
         let (ca_priv_key, _) = generate_keypair(&mut rng);
 
-        let issuer = build_x500_name(&[
-            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
-        ]);
+        let issuer = build_x500_name(&[X500Attribute::new(
+            X500AttributeType::Organization,
+            "Test CA",
+        )]);
 
         let crl = CrlBuilder::new()
             .issuer(&issuer)

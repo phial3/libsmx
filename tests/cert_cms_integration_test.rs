@@ -67,7 +67,7 @@ fn create_test_cert(priv_key: &PrivateKey, rng: &mut StdRng) -> GmCertificate {
 fn create_test_cert_and_key(
     rng: &mut StdRng,
     common_name: &str,
-    serial: u32,
+    serial: u64,
 ) -> (GmCertificate, PrivateKey) {
     let (priv_key, pub_key) = generate_keypair(rng);
     let now = std::time::SystemTime::now();
@@ -897,8 +897,8 @@ fn test_crl_generation_and_verification() {
 
     println!("\n=== CRL 生成和验证测试 ===");
 
-    let revoked_serial_1 = SerialNumber::from(1001u32);
-    let revoked_serial_2 = SerialNumber::from(1002u32);
+    let revoked_serial_1 = 1001u64;
+    let revoked_serial_2 = 1002u64;
 
     let issuer_name = build_x500_name(&[
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
@@ -920,11 +920,10 @@ fn test_crl_generation_and_verification() {
         .expect("CRL signature verification should succeed");
     println!("✅ CRL 签名验证通过");
 
-    assert!(crl.is_revoked(&revoked_serial_1), "Serial 1001 should be revoked");
-    assert!(crl.is_revoked(&revoked_serial_2), "Serial 1002 should be revoked");
+    assert!(crl.is_revoked(revoked_serial_1), "Serial 1001 should be revoked");
+    assert!(crl.is_revoked(revoked_serial_2), "Serial 1002 should be revoked");
     
-    let valid_serial = SerialNumber::from(9999u32);
-    assert!(!crl.is_revoked(&valid_serial), "Serial 9999 should not be revoked");
+    assert!(!crl.is_revoked(9999u64), "Serial 9999 should not be revoked");
     println!("✅ 证书撤销状态检查正确");
 
     let crl_der = crl.to_der();
@@ -932,13 +931,13 @@ fn test_crl_generation_and_verification() {
     
     let decoded_crl = Crl::from_der(&crl_der)
         .expect("CRL decoding should succeed");
-    assert!(decoded_crl.is_revoked(&revoked_serial_1));
+    assert!(decoded_crl.is_revoked(revoked_serial_1));
     println!("✅ CRL DER 编码/解码成功");
 
     let crl_pem = crl.to_pem().expect("PEM encoding should succeed");
     let decoded_crl_pem = Crl::from_pem(&crl_pem)
         .expect("CRL PEM decoding should succeed");
-    assert!(decoded_crl_pem.is_revoked(&revoked_serial_2));
+    assert!(decoded_crl_pem.is_revoked(revoked_serial_2));
     println!("✅ CRL PEM 编码/解码成功");
 
     // 验证 CRL 有效期
@@ -958,7 +957,7 @@ fn test_cms_with_crl_embedding() {
 
     let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
 
-    let revoked_serial = SerialNumber::from(3001u32);
+    let revoked_serial = 3001u64;
     let issuer_name = build_x500_name(&[
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
         X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
@@ -1008,7 +1007,7 @@ fn test_complete_workflow_cert_crl() {
     println!("步骤 1: 创建 CA 和签署者密钥对");
 
     let signer_cert = create_test_cert(&signer_priv_key, &mut rng);
-    let cert_serial = signer_cert.serial_number.clone();
+    let cert_serial = signer_cert.serial_number.clone().to_string().parse().unwrap();
 
     println!("步骤 2: 签发签署者证书");
 
@@ -1034,7 +1033,7 @@ fn test_complete_workflow_cert_crl() {
         .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
         .expect("CRL signing should succeed");
 
-    assert!(!crl.is_revoked(&cert_serial), "Certificate should not be revoked");
+    assert!(!crl.is_revoked(cert_serial), "Certificate should not be revoked");
     println!("步骤 4: 创建 CRL 成功，证书未被撤销");
 
     let cms_result = verify_digital_signature(&cms_signed, DEFAULT_ID)

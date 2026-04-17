@@ -454,7 +454,7 @@ impl GmCertificate {
     ///         X500Attribute::new(X500AttributeType::Country, "CN"),
     ///         X500Attribute::new(X500AttributeType::Organization, "Example Corp"),
     ///     ])
-    ///     .serial_number(1u32)
+    ///     .serial_number(1u64)
     ///     .validity_period(
     ///         SystemTime::now(),
     ///         SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
@@ -1285,7 +1285,7 @@ fn parse_date_str_to_timestamp(date_str: &str) -> Result<u64, Error> {
 ///         X500Attribute::new(X500AttributeType::Country, "CN"),
 ///         X500Attribute::new(X500AttributeType::Organization, "Example Corp"),
 ///     ])
-///     .serial_number(1u32)
+///     .serial_number(1u64)
 ///     .validity_period(
 ///         SystemTime::now(),
 ///         SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
@@ -1348,7 +1348,7 @@ impl CertificateBuilder {
     ///
     /// # 返回
     /// 自引用
-    pub fn serial_number(mut self, serial: impl Into<u32>) -> Self {
+    pub fn serial_number(mut self, serial: impl Into<u64>) -> Self {
         self.serial_number = SerialNumber::from(serial.into());
         self
     }
@@ -2802,7 +2802,7 @@ mod tests {
                 X500AttributeType::CommonName,
                 "Test Issuer",
             )])
-            .serial_number(42u32)
+            .serial_number(42u64)
             .validity_period(
                 std::time::SystemTime::now(),
                 std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
