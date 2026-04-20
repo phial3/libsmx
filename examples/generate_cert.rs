@@ -288,13 +288,13 @@ fn main() {
     assert_eq!(ca_cert.serial_number, parsed_ca_cert.serial_number);
     println!("   ✅ CA 证书 PEM 编解码验证通过");
 
-    let parsed_server_cert =
-        parse_gm_certificate_pem(&server_cert_pem.as_bytes()).expect("Failed to parse server cert PEM");
+    let parsed_server_cert = parse_gm_certificate_pem(&server_cert_pem.as_bytes())
+        .expect("Failed to parse server cert PEM");
     assert_eq!(server_cert.serial_number, parsed_server_cert.serial_number);
     println!("   ✅ 服务器证书 PEM 编解码验证通过");
 
-    let parsed_client_cert =
-        parse_gm_certificate_pem(&client_cert_pem.as_bytes()).expect("Failed to parse client cert PEM");
+    let parsed_client_cert = parse_gm_certificate_pem(&client_cert_pem.as_bytes())
+        .expect("Failed to parse client cert PEM");
     assert_eq!(client_cert.serial_number, parsed_client_cert.serial_number);
     println!("   ✅ 客户端证书 PEM 编解码验证通过");
 

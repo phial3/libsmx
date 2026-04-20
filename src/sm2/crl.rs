@@ -38,8 +38,8 @@
 use crate::error::Error;
 use crate::sm2::{sign, verify, PrivateKey, PublicKey};
 
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use x509_cert::crl::{CertificateList, RevokedCert, TbsCertList};
 use x509_cert::der::pem::{decode_vec, LineEnding};
@@ -134,7 +134,9 @@ impl Crl {
     /// # 返回
     /// DER 编码的 CRL 字节数组
     pub fn to_der(&self) -> Vec<u8> {
-        self.cert_list.to_der().expect("CRL encoding should not fail")
+        self.cert_list
+            .to_der()
+            .expect("CRL encoding should not fail")
     }
 
     /// 将 CRL 编码为 PEM 格式
@@ -143,7 +145,9 @@ impl Crl {
     /// - `Ok(Vec<u8>)`: PEM 编码的 CRL 数据
     /// - `Err(Error::InvalidCrl)`: 编码失败
     pub fn to_pem(&self) -> Result<String, Error> {
-        self.cert_list.to_pem(LineEnding::LF).map_err(|_| Error::InvalidCrl)
+        self.cert_list
+            .to_pem(LineEnding::LF)
+            .map_err(|_| Error::InvalidCrl)
     }
 
     /// 获取签发者名称
@@ -241,12 +245,12 @@ impl Crl {
     #[cfg(feature = "std")]
     pub fn verify_validity(&self, now: std::time::SystemTime) -> Result<(), Error> {
         let this_update = self.this_update();
-        if now < (*this_update).try_into().map_err(|_| Error::InvalidCrl)? {
+        if now < (*this_update).into() {
             return Err(Error::InvalidCrl);
         }
 
         if let Some(next_update) = self.next_update() {
-            if now > (*next_update).try_into().map_err(|_| Error::InvalidCrl)? {
+            if now > (*next_update).into() {
                 return Err(Error::ExpiredCrl);
             }
         }
@@ -458,7 +462,7 @@ impl CrlBuilder {
 
                     RevokedCert {
                         serial_number: rc.serial_number.clone(),
-                        revocation_date: rc.revocation_date.clone(),
+                        revocation_date: rc.revocation_date,
                         crl_entry_extensions: entry_extensions,
                     }
                 })
@@ -497,7 +501,7 @@ impl CrlBuilder {
         let certificate_list = CertificateList {
             tbs_cert_list,
             signature_algorithm,
-            signature: x509_cert::der::asn1::BitString::new(0, &sig).unwrap(),
+            signature: x509_cert::der::asn1::BitString::new(0, sig).unwrap(),
         };
 
         Ok(Crl {
@@ -505,6 +509,12 @@ impl CrlBuilder {
         })
     }
 }
+
+impl Default for CrlBuilder {
+    fn default() -> Self {
+        Self::new()
+     }
+ }
 
 /// 构建 CRL 条目扩展（RFC 5280 §5.3）
 ///

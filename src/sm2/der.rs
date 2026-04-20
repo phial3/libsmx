@@ -455,7 +455,7 @@ pub fn public_key_from_spki_der(der: &[u8]) -> Result<[u8; 65], Error> {
 // ── DER 编码辅助函数 ─────────────────────────────────────────────────────
 
 /// 编码 INTEGER（单字节）
-/// 
+///
 /// 直接使用手写的 DER 编码，避免临时值问题
 #[cfg(feature = "alloc")]
 pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
@@ -464,7 +464,7 @@ pub fn encode_integer(val: u8) -> Result<Vec<u8>, Error> {
 }
 
 /// 包装为 SEQUENCE
-/// 
+///
 /// 直接将内容字节包装为 SEQUENCE（tag 0x30 + length + content）
 /// 注意：此函数假设 content 已经是有效的 DER 编码内容
 #[cfg(feature = "alloc")]
@@ -486,7 +486,7 @@ pub fn wrap_sequence(content: Vec<u8>) -> Vec<u8> {
 }
 
 /// 包装为 SET
-/// 
+///
 /// 直接将内容字节包装为 SET（tag 0x31 + length + content）
 /// 注意：此函数假设 content 已经是有效的 DER 编码内容
 #[cfg(feature = "alloc")]
@@ -508,13 +508,13 @@ pub fn wrap_set(content: Vec<u8>) -> Vec<u8> {
 }
 
 /// 包装为显式标签（Context-specific constructed）
-/// 
+///
 /// 用于包装 [n] EXPLICIT 类型的字段
-/// 
+///
 /// # 参数
 /// - `tag`: 标签号（0-30）
 /// - `content`: 标签内的内容字节（必须是有效的 DER 编码）
-/// 
+///
 /// # 返回
 /// DER 编码的显式标签（tag 0xA0+n + length + content）
 #[cfg(feature = "alloc")]
@@ -546,7 +546,7 @@ pub fn wrap_implicit_tag(tag: u8, content: &[u8]) -> Vec<u8> {
 }
 
 /// DER 长度编码（支持短形式和长形式）
-/// 
+///
 /// 这是内部辅助函数，用于 `wrap_explicit_tag` 和 cms 模块
 #[cfg(feature = "alloc")]
 pub fn encode_length(out: &mut Vec<u8>, len: usize) -> Result<(), Error> {

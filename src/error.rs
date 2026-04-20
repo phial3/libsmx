@@ -161,7 +161,7 @@ impl fmt::Display for Error {
             Error::Sm9DecryptFailed => write!(f, "SM9 decryption failed"),
             Error::Sm9VerifyFailed => write!(f, "SM9 signature verification failed"),
             Error::InvalidInput => write!(f, "invalid input"),
-            
+
             // 证书错误
             Error::InvalidCertificate => write!(f, "invalid certificate"),
             Error::CertificateParseError { field, reason } => {
@@ -178,12 +178,12 @@ impl fmt::Display for Error {
                 write!(f, "certificate chain error at index {}: {}", index, reason)
             }
             Error::CertificateRevoked => write!(f, "certificate has been revoked"),
-            
+
             // CRL 错误
             Error::InvalidCrl => write!(f, "invalid CRL"),
             Error::ExpiredCrl => write!(f, "CRL has expired"),
             Error::UnsupportedAlgorithm => write!(f, "unsupported algorithm"),
-            
+
             // CMS 错误
             Error::CmsParseError { field, reason } => {
                 write!(f, "CMS parse error in {}: {}", field, reason)
@@ -196,7 +196,7 @@ impl fmt::Display for Error {
             Error::SignedAttrsError { attr_type, reason } => {
                 write!(f, "signed attributes error for {}: {}", attr_type, reason)
             }
-            
+
             // DER 错误
             Error::DerEncodeError { field, reason } => {
                 write!(f, "DER encode error in {}: {}", field, reason)

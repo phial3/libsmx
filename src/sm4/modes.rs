@@ -910,13 +910,13 @@ pub fn sm4_encrypt_ocb(
     // L_* = ENCIPHER(K, zeros(128))
     let mut l_star = [0u8; 16];
     sm4.encrypt_block(&mut l_star);
-    
+
     // L_$ = double(L_*)
     let l_dollar = gf128_mul_u(&l_star);
-    
+
     // L_0 = double(L_$)
     let l_0 = gf128_mul_u(&l_dollar);
-    
+
     // L_i = double(L_{i-1}) for i > 0
     // 预计算 L_i 序列（最多需要到 i=127）
     let mut l = [[0u8; 16]; 128];
@@ -933,14 +933,14 @@ pub fn sm4_encrypt_ocb(
     let hash = {
         let mut sum = [0u8; 16];
         let mut offset = [0u8; 16];
-        
+
         // 处理完整块
         for i in 0..m {
             let ntz_i = ntz(i + 1);
             if ntz_i < 128 {
                 xor_blocks(&mut offset, &l[ntz_i]);
             }
-            
+
             let mut block = [0u8; 16];
             let start = i * 16;
             let end = start + 16;
@@ -949,11 +949,11 @@ pub fn sm4_encrypt_ocb(
             sm4.encrypt_block(&mut block);
             xor_blocks(&mut sum, &block);
         }
-        
+
         // 处理最后一个不完整块
         if aad_star_len > 0 {
             xor_blocks(&mut offset, &l_star);
-            
+
             let mut block = [0u8; 16];
             let start = m * 16;
             block[..aad_star_len].copy_from_slice(&aad[start..]);
@@ -962,7 +962,7 @@ pub fn sm4_encrypt_ocb(
             sm4.encrypt_block(&mut block);
             xor_blocks(&mut sum, &block);
         }
-        
+
         sum
     };
 
@@ -975,45 +975,49 @@ pub fn sm4_encrypt_ocb(
     // Nonce = num2str(TAGLEN mod 128, 7) || zeros(120 - bitlen(N)) || 1 || N
     // RFC 7253: Nonce 格式化为 16 字节块
     let mut nonce_block = [0u8; 16];
-    
+
     // 第一个字节：TAGLEN mod 128（左移 1 位，因为最低位留给后面的 1）
     nonce_block[0] = ((TAGLEN % 128) << 1) as u8;
-    
+
     // 复制 nonce 到末尾
     let nonce_end = 16;
     let nonce_start = nonce_end - nonce.len();
     nonce_block[nonce_start..nonce_end].copy_from_slice(nonce);
-    
+
     // 在 nonce 前面设置 1 bit
     nonce_block[nonce_start - 1] = 0x01;
-    
+
     // bottom = last 6 bits of nonce (Nonce[123..128])
     let bottom = (nonce_block[15] & 0x3F) as usize;
-    
+
     // Ktop = ENCIPHER(K, Nonce with last 6 bits zeroed)
     nonce_block[15] &= 0xC0;
     let mut ktop = nonce_block;
     sm4.encrypt_block(&mut ktop);
-    
+
     // Stretch = Ktop || (Ktop[1..64] xor Ktop[9..72])
     let mut stretch = [0u8; 24];
     stretch[..16].copy_from_slice(&ktop);
     for i in 0..8 {
         stretch[16 + i] = ktop[i] ^ ktop[i + 1];
     }
-    
+
     // Offset_0 = Stretch[1+bottom..128+bottom] (bit indexing, 1-based)
     // 转换为 0-based 字节索引：从第 bottom 位开始
     let mut offset = [0u8; 16];
     let start_byte = bottom / 8;
     let start_bit = bottom % 8;
-    
+
     if start_bit == 0 {
         offset.copy_from_slice(&stretch[start_byte..start_byte + 16]);
     } else {
         for i in 0..16 {
             let b0 = stretch[start_byte + i];
-            let b1 = if start_byte + i + 1 < 24 { stretch[start_byte + i + 1] } else { 0 };
+            let b1 = if start_byte + i + 1 < 24 {
+                stretch[start_byte + i + 1]
+            } else {
+                0
+            };
             offset[i] = (b0 << start_bit) | (b1 >> (8 - start_bit));
         }
     }
@@ -1028,7 +1032,7 @@ pub fn sm4_encrypt_ocb(
         if ntz_i < 128 {
             xor_blocks(&mut offset, &l[ntz_i]);
         }
-        
+
         // C_i = Offset_i xor ENCIPHER(K, P_i xor Offset_i)
         let mut block = [0u8; 16];
         let start = i * 16;
@@ -1036,34 +1040,37 @@ pub fn sm4_encrypt_ocb(
         xor_blocks(&mut block, &offset);
         sm4.encrypt_block(&mut block);
         xor_blocks(&mut block, &offset);
-        
+
         ciphertext.extend_from_slice(&block);
-        
+
         // Checksum_i = Checksum_{i-1} xor P_i
-        xor_blocks(&mut checksum, &plaintext[start..start + 16].try_into().unwrap());
+        xor_blocks(
+            &mut checksum,
+            &plaintext[start..start + 16].try_into().unwrap(),
+        );
     }
 
     // 处理最后一个不完整块
     let tag = if p_star_len > 0 {
         // Offset_* = Offset_m xor L_*
         xor_blocks(&mut offset, &l_star);
-        
+
         // Pad = ENCIPHER(K, Offset_*)
         let mut pad = offset;
         sm4.encrypt_block(&mut pad);
-        
+
         // C_* = P_* xor Pad[1..bitlen(P_*)]
         let start = m_p * 16;
         for i in 0..p_star_len {
             ciphertext.push(plaintext[start + i] ^ pad[i]);
         }
-        
+
         // Checksum_* = Checksum_m xor (P_* || 1 || zeros(127-bitlen(P_*)))
         for i in 0..p_star_len {
             checksum[i] ^= plaintext[start + i];
         }
         checksum[p_star_len] ^= 0x80;
-        
+
         // Tag = ENCIPHER(K, Checksum_* xor Offset_* xor L_$) xor HASH(K,A)
         let mut tag_input = checksum;
         xor_blocks(&mut tag_input, &offset);
@@ -1111,7 +1118,7 @@ pub fn sm4_decrypt_ocb(
     sm4.encrypt_block(&mut l_star);
     let l_dollar = gf128_mul_u(&l_star);
     let l_0 = gf128_mul_u(&l_dollar);
-    
+
     let mut l = [[0u8; 16]; 128];
     l[0] = l_0;
     for i in 1..128 {
@@ -1121,17 +1128,17 @@ pub fn sm4_decrypt_ocb(
     // HASH(K, A)
     let m = if aad.is_empty() { 0 } else { aad.len() / 16 };
     let aad_star_len = if aad.is_empty() { 0 } else { aad.len() % 16 };
-    
+
     let hash = {
         let mut sum = [0u8; 16];
         let mut offset = [0u8; 16];
-        
+
         for i in 0..m {
             let ntz_i = ntz(i + 1);
             if ntz_i < 128 {
                 xor_blocks(&mut offset, &l[ntz_i]);
             }
-            
+
             let mut block = [0u8; 16];
             let start = i * 16;
             let end = start + 16;
@@ -1140,10 +1147,10 @@ pub fn sm4_decrypt_ocb(
             sm4.encrypt_block(&mut block);
             xor_blocks(&mut sum, &block);
         }
-        
+
         if aad_star_len > 0 {
             xor_blocks(&mut offset, &l_star);
-            
+
             let mut block = [0u8; 16];
             let start = m * 16;
             block[..aad_star_len].copy_from_slice(&aad[start..]);
@@ -1152,7 +1159,7 @@ pub fn sm4_decrypt_ocb(
             sm4.encrypt_block(&mut block);
             xor_blocks(&mut sum, &block);
         }
-        
+
         sum
     };
 
@@ -1164,34 +1171,38 @@ pub fn sm4_decrypt_ocb(
     // Nonce 处理（与加密相同）
     let mut nonce_block = [0u8; 16];
     nonce_block[0] = ((TAGLEN % 128) << 1) as u8;
-    
+
     let nonce_end = 16;
     let nonce_start = nonce_end - nonce.len();
     nonce_block[nonce_start..nonce_end].copy_from_slice(nonce);
     nonce_block[nonce_start - 1] = 0x01;
-    
+
     let bottom = (nonce_block[15] & 0x3F) as usize;
-    
+
     nonce_block[15] &= 0xC0;
     let mut ktop = nonce_block;
     sm4.encrypt_block(&mut ktop);
-    
+
     let mut stretch = [0u8; 24];
     stretch[..16].copy_from_slice(&ktop);
     for i in 0..8 {
         stretch[16 + i] = ktop[i] ^ ktop[i + 1];
     }
-    
+
     let mut offset = [0u8; 16];
     let start_byte = bottom / 8;
     let start_bit = bottom % 8;
-    
+
     if start_bit == 0 {
         offset.copy_from_slice(&stretch[start_byte..start_byte + 16]);
     } else {
         for i in 0..16 {
             let b0 = stretch[start_byte + i];
-            let b1 = if start_byte + i + 1 < 24 { stretch[start_byte + i + 1] } else { 0 };
+            let b1 = if start_byte + i + 1 < 24 {
+                stretch[start_byte + i + 1]
+            } else {
+                0
+            };
             offset[i] = (b0 << start_bit) | (b1 >> (8 - start_bit));
         }
     }
@@ -1205,14 +1216,14 @@ pub fn sm4_decrypt_ocb(
         if ntz_i < 128 {
             xor_blocks(&mut offset, &l[ntz_i]);
         }
-        
+
         let mut block = [0u8; 16];
         let start = i * 16;
         block.copy_from_slice(&ciphertext[start..start + 16]);
         xor_blocks(&mut block, &offset);
         sm4.decrypt_block(&mut block);
         xor_blocks(&mut block, &offset);
-        
+
         plaintext.extend_from_slice(&block);
         xor_blocks(&mut checksum, &block);
     }
@@ -1220,20 +1231,20 @@ pub fn sm4_decrypt_ocb(
     // 处理最后一个不完整块并验证 tag
     let expected_tag = if c_star_len > 0 {
         xor_blocks(&mut offset, &l_star);
-        
+
         let mut pad = offset;
         sm4.encrypt_block(&mut pad);
-        
+
         let start = m_c * 16;
         for i in 0..c_star_len {
             plaintext.push(ciphertext[start + i] ^ pad[i]);
         }
-        
+
         for i in 0..c_star_len {
             checksum[i] ^= plaintext[start + i];
         }
         checksum[c_star_len] ^= 0x80;
-        
+
         let mut tag_input = checksum;
         xor_blocks(&mut tag_input, &offset);
         xor_blocks(&mut tag_input, &l_dollar);
@@ -1291,7 +1302,6 @@ fn gf128_mul_u(block: &[u8; 16]) -> [u8; 16] {
 
     result
 }
-
 
 // ── SIV 模式（确定性 AEAD）───────────────────────────────────────────────────
 
@@ -1383,7 +1393,7 @@ fn compute_s2v(
     // 2. 对于每个字符串 S_i（AAD、nonce、plaintext）：
     //    D = CMAC_K(D XOR S_i)
     // 3. 最后：D = 2*D XOR bitlen(plaintext) || CMAC_K(final)
-    
+
     // Step 1: D = CMAC(0^128) = E(0^128)
     let mut d = [0u8; 16];
     sm4.encrypt_block(&mut d);
@@ -1401,19 +1411,19 @@ fn compute_s2v(
     // Step 4: 处理最后一个字符串（plaintext/ciphertext）
     // 特殊处理：先 XOR 长度，再加密
     let data_len_bits = (data.len() as u64) * 8;
-    
+
     // XOR 数据长度（bit）到 D 的最后 8 字节
     let len_bytes = data_len_bits.to_be_bytes();
     for i in 0..8 {
         d[8 + i] ^= len_bytes[i];
     }
-    
+
     // 如果数据为空，直接加密
     if data.is_empty() {
         sm4.encrypt_block(&mut d);
         return Ok(d);
     }
-    
+
     // XOR 数据（如果数据长度小于 16，需要特殊处理）
     if data.len() >= 16 {
         // XOR 最后 16 字节
@@ -1422,7 +1432,7 @@ fn compute_s2v(
             d[i] ^= last_block[i];
         }
         sm4.encrypt_block(&mut d);
-        
+
         // 处理前面的数据块
         for chunk in data[..data.len() - 16].chunks(16) {
             for (i, &byte) in chunk.iter().enumerate() {
@@ -1445,12 +1455,12 @@ fn compute_s2v(
 #[cfg(feature = "alloc")]
 fn xor_and_cmac(sm4: &Sm4Key, state: &[u8; 16], data: &[u8]) -> [u8; 16] {
     let mut result = *state;
-    
+
     if data.is_empty() {
         sm4.encrypt_block(&mut result);
         return result;
     }
-    
+
     // XOR 数据
     if data.len() >= 16 {
         // XOR 最后 16 字节
@@ -1459,7 +1469,7 @@ fn xor_and_cmac(sm4: &Sm4Key, state: &[u8; 16], data: &[u8]) -> [u8; 16] {
             result[i] ^= last_block[i];
         }
         sm4.encrypt_block(&mut result);
-        
+
         // 处理前面的数据块
         for chunk in data[..data.len() - 16].chunks(16) {
             for (i, &byte) in chunk.iter().enumerate() {
@@ -1474,7 +1484,7 @@ fn xor_and_cmac(sm4: &Sm4Key, state: &[u8; 16], data: &[u8]) -> [u8; 16] {
         }
         sm4.encrypt_block(&mut result);
     }
-    
+
     result
 }
 
@@ -1600,15 +1610,15 @@ fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
     // Step 1: 计算 L = E(0^128)
     let mut l = [0u8; 16];
     sm4.encrypt_block(&mut l);
-    
+
     // Step 2: 计算子密钥 K1 = double(L), K2 = double(double(L))
     let k1 = gf128_mul_u(&l);
     let k2 = gf128_mul_u(&k1);
-    
+
     // Step 3: 处理数据
     let mut state = [0u8; 16];
     let data_len = data.len();
-    
+
     if data_len == 0 {
         // 空数据：XOR K2
         for i in 0..16 {
@@ -1617,10 +1627,10 @@ fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
         sm4.encrypt_block(&mut state);
         return state;
     }
-    
+
     let num_blocks = data_len / 16;
     let remaining = data_len % 16;
-    
+
     // 处理完整块
     for i in 0..num_blocks {
         let start = i * 16;
@@ -1629,7 +1639,7 @@ fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
         }
         sm4.encrypt_block(&mut state);
     }
-    
+
     // 处理最后一块
     let last_start = num_blocks * 16;
     if remaining == 0 {
@@ -1642,7 +1652,7 @@ fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
         let mut last_block = [0u8; 16];
         last_block[..remaining].copy_from_slice(&data[last_start..(last_start + remaining)]);
         last_block[remaining] = 0x80; // padding
-        
+
         for i in 0..16 {
             state[i] ^= last_block[i];
         }
@@ -1650,7 +1660,7 @@ fn omac(sm4: &Sm4Key, _key: &[u8; 16], data: &[u8]) -> [u8; 16] {
             state[i] ^= k2[i];
         }
     }
-    
+
     sm4.encrypt_block(&mut state);
     state
 }
@@ -2045,8 +2055,8 @@ mod tests {
         let aad = b"additional data";
         let plaintext = b"Hello OCB world!";
 
-        let (ciphertext, tag) = sm4_encrypt_ocb(&key, nonce, aad, plaintext)
-            .expect("OCB encryption should succeed");
+        let (ciphertext, tag) =
+            sm4_encrypt_ocb(&key, nonce, aad, plaintext).expect("OCB encryption should succeed");
         let decrypted = sm4_decrypt_ocb(&key, nonce, aad, &ciphertext, &tag)
             .expect("OCB decryption should succeed");
 
@@ -2099,8 +2109,8 @@ mod tests {
         let aad: &[&[u8]] = &[b"additional", b"data"];
         let plaintext = b"Hello SIV world!";
 
-        let (ciphertext, siv) = sm4_encrypt_siv(&key, nonce, aad, plaintext)
-            .expect("SIV encryption should succeed");
+        let (ciphertext, siv) =
+            sm4_encrypt_siv(&key, nonce, aad, plaintext).expect("SIV encryption should succeed");
         let decrypted = sm4_decrypt_siv(&key, nonce, aad, &ciphertext, &siv)
             .expect("SIV decryption should succeed");
 
@@ -2148,8 +2158,8 @@ mod tests {
         let aad = b"additional data";
         let plaintext = b"Hello EAX world!";
 
-        let (ciphertext, tag) = sm4_encrypt_eax(&key, nonce, aad, plaintext)
-            .expect("EAX encryption should succeed");
+        let (ciphertext, tag) =
+            sm4_encrypt_eax(&key, nonce, aad, plaintext).expect("EAX encryption should succeed");
         let decrypted = sm4_decrypt_eax(&key, nonce, aad, &ciphertext, &tag)
             .expect("EAX decryption should succeed");
 

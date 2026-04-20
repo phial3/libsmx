@@ -29,7 +29,9 @@ fn bench_sm2_verify(c: &mut Criterion) {
     let e = get_e(&z, msg);
     let sig = sign(&e, &pri_key, &mut rng);
 
-    c.bench_function("SM2/verify", |b| b.iter(|| verify(&e, &pub_key.as_bytes(), &sig)));
+    c.bench_function("SM2/verify", |b| {
+        b.iter(|| verify(&e, &pub_key.as_bytes(), &sig))
+    });
 }
 
 fn bench_sm2_encrypt(c: &mut Criterion) {

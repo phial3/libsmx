@@ -214,46 +214,49 @@ pub fn create_basic_constraints_extension(is_ca: bool, path_len: Option<u8>) -> 
 /// # 返回
 /// x509-cert 的 Extension 类型
 pub fn create_crl_distribution_points_extension(crl_urls: &[&str]) -> Extension {
-    use x509_cert::ext::pkix::crl::CrlDistributionPoints;
-    use x509_cert::ext::pkix::crl::dp::DistributionPoint;
-    use x509_cert::ext::pkix::name::{DistributionPointName, GeneralName};
-    use x509_cert::der::asn1::Ia5String;
     use alloc::string::ToString;
-    
+    use x509_cert::der::asn1::Ia5String;
+    use x509_cert::ext::pkix::crl::dp::DistributionPoint;
+    use x509_cert::ext::pkix::crl::CrlDistributionPoints;
+    use x509_cert::ext::pkix::name::{DistributionPointName, GeneralName};
+
     // 创建 DistributionPoint 列表
     let mut distribution_points = Vec::new();
-    
+
     for url in crl_urls {
         // 创建 URI 类型的 GeneralName
-        let uri = Ia5String::try_from(url.to_string())
-            .expect("Failed to create Ia5String from URL");
+        let uri =
+            Ia5String::try_from(url.to_string()).expect("Failed to create Ia5String from URL");
         let general_name = GeneralName::UniformResourceIdentifier(uri);
 
         // 创建 GeneralNames
         let names = vec![general_name];
         // 创建 DistributionPointName::FullName
         let dp_name = DistributionPointName::FullName(names);
-        
+
         // 创建 DistributionPoint
         let dp = DistributionPoint {
             distribution_point: Some(dp_name),
             reasons: None,
             crl_issuer: None,
         };
-        
+
         distribution_points.push(dp);
     }
-    
+
     // 创建 CrlDistributionPoints
     let crl_dps = CrlDistributionPoints(distribution_points);
-    
+
     // 编码为 Extension
     Extension {
         extn_id: crate::sm2::ID_CE_CRL_DISTRIBUTION_POINTS,
         critical: false,
         extn_value: OctetString::new(
-            crl_dps.to_der().expect("Failed to encode CrlDistributionPoints")
-        ).expect("Failed to create OctetString"),
+            crl_dps
+                .to_der()
+                .expect("Failed to encode CrlDistributionPoints"),
+        )
+        .expect("Failed to create OctetString"),
     }
 }
 
@@ -267,7 +270,7 @@ pub fn create_crl_distribution_points_extension(crl_urls: &[&str]) -> Extension 
 pub fn create_subject_key_identifier_extension(pub_key: &PublicKey) -> Extension {
     // 使用公钥指纹作为 SKI
     let ski = pub_key.fingerprint();
-    
+
     Extension {
         extn_id: crate::sm2::ID_CE_SUBJECT_KEY_IDENTIFIER,
         critical: false,
@@ -307,7 +310,9 @@ pub fn create_authority_key_identifier_extension(ca_cert: &GmCertificate) -> Ext
 ///
 /// # 返回
 /// x509-cert 的 Extension 类型
-pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::name::GeneralName]) -> Extension {
+pub fn create_subject_alternative_name_extension(
+    names: &[x509_cert::ext::pkix::name::GeneralName],
+) -> Extension {
     use x509_cert::ext::pkix::name::GeneralName;
 
     // SAN 是一个 SEQUENCE OF GeneralName
@@ -340,7 +345,7 @@ pub fn create_subject_alternative_name_extension(names: &[x509_cert::ext::pkix::
 
     // 包装为 SEQUENCE
     let san_seq = der::wrap_sequence(san_content);
-    
+
     Extension {
         extn_id: crate::sm2::ID_CE_SUBJECT_ALT_NAME,
         critical: false,
@@ -690,17 +695,30 @@ impl GmCertificate {
 
         // 版本（v3 及以上需要显式编码）
         if self.version > 0 {
-            let version_int = der::encode_integer(self.version as u8).expect("version encoding failed");
+            let version_int =
+                der::encode_integer(self.version as u8).expect("version encoding failed");
             tbs_bytes.extend(der::wrap_explicit_tag(0, &version_int));
         }
 
         // 序列号、签名算法、签发者、有效期、主体、主体公钥信息
-        self.serial_number.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-        self.signature_algorithm.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-        self.issuer.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-        self.validity.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-        self.subject.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-        self.subject_public_key_info.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+        self.serial_number
+            .encode_to_vec(&mut tbs_bytes)
+            .expect("DER encoding failed");
+        self.signature_algorithm
+            .encode_to_vec(&mut tbs_bytes)
+            .expect("DER encoding failed");
+        self.issuer
+            .encode_to_vec(&mut tbs_bytes)
+            .expect("DER encoding failed");
+        self.validity
+            .encode_to_vec(&mut tbs_bytes)
+            .expect("DER encoding failed");
+        self.subject
+            .encode_to_vec(&mut tbs_bytes)
+            .expect("DER encoding failed");
+        self.subject_public_key_info
+            .encode_to_vec(&mut tbs_bytes)
+            .expect("DER encoding failed");
 
         // 扩展（如果存在）
         if let Some(extensions) = &self.extensions {
@@ -892,12 +910,24 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     }
 
     // 序列号、签名算法、签发者、有效期、主体、主体公钥信息
-    cert.serial_number.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-    cert.signature_algorithm.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-    cert.issuer.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-    cert.validity.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-    cert.subject.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
-    cert.subject_public_key_info.encode_to_vec(&mut tbs_bytes).expect("DER encoding failed");
+    cert.serial_number
+        .encode_to_vec(&mut tbs_bytes)
+        .expect("DER encoding failed");
+    cert.signature_algorithm
+        .encode_to_vec(&mut tbs_bytes)
+        .expect("DER encoding failed");
+    cert.issuer
+        .encode_to_vec(&mut tbs_bytes)
+        .expect("DER encoding failed");
+    cert.validity
+        .encode_to_vec(&mut tbs_bytes)
+        .expect("DER encoding failed");
+    cert.subject
+        .encode_to_vec(&mut tbs_bytes)
+        .expect("DER encoding failed");
+    cert.subject_public_key_info
+        .encode_to_vec(&mut tbs_bytes)
+        .expect("DER encoding failed");
 
     // 扩展（如果存在）
     if let Some(extensions) = &cert.extensions {
@@ -922,10 +952,14 @@ pub fn generate_gm_certificate_der(cert: &GmCertificate) -> Vec<u8> {
     cert_bytes.extend(der::wrap_sequence(tbs_bytes));
 
     // 签名算法（再次编码）
-    cert.signature_algorithm.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
+    cert.signature_algorithm
+        .encode_to_vec(&mut cert_bytes)
+        .expect("DER encoding failed");
 
     // 签名值
-    cert.signature.encode_to_vec(&mut cert_bytes).expect("DER encoding failed");
+    cert.signature
+        .encode_to_vec(&mut cert_bytes)
+        .expect("DER encoding failed");
 
     // 包装为外层 SEQUENCE
     der::wrap_sequence(cert_bytes)
@@ -1150,7 +1184,8 @@ impl X500Attribute {
     /// SET { SEQUENCE { OID, UTF8String } }
     fn to_der(&self) -> Vec<u8> {
         let attr = self.to_attribute_type_and_value();
-        attr.to_der().expect("Failed to encode AttributeTypeAndValue")
+        attr.to_der()
+            .expect("Failed to encode AttributeTypeAndValue")
     }
 }
 
@@ -1408,7 +1443,8 @@ impl CertificateBuilder {
     /// # 返回
     /// 自引用
     pub fn add_basic_constraints(mut self, is_ca: bool, path_len: Option<u8>) -> Self {
-        self.extensions.push(create_basic_constraints_extension(is_ca, path_len));
+        self.extensions
+            .push(create_basic_constraints_extension(is_ca, path_len));
         self
     }
 
@@ -1432,7 +1468,8 @@ impl CertificateBuilder {
     /// # 返回
     /// 自引用
     pub fn add_extended_key_usage(mut self, usages: &[ObjectIdentifier]) -> Self {
-        self.extensions.push(create_extended_key_usage_extension(usages));
+        self.extensions
+            .push(create_extended_key_usage_extension(usages));
         self
     }
 
@@ -1467,7 +1504,8 @@ impl CertificateBuilder {
         let not_before_time = Time::try_from(not_before).map_err(|_| Error::InvalidCertificate)?;
         let not_after_time = Time::try_from(not_after).map_err(|_| Error::InvalidCertificate)?;
 
-        let validity = Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time);
+        let validity =
+            Validity::<x509_cert::certificate::Rfc5280>::new(not_before_time, not_after_time);
 
         // 构建 SPKI
         let spki = pub_key.to_spki();
@@ -1582,7 +1620,8 @@ pub fn parse_gm_certificate_pem(pem: &[u8]) -> Result<GmCertificate, Error> {
 /// - `Err(Error::InvalidCertificate)`: 编码失败
 pub fn generate_gm_certificate_pem(cert: &GmCertificate) -> Result<String, Error> {
     let x509 = gm_to_x509_certificate(cert)?;
-    x509.to_pem(LineEnding::LF).map_err(|_| Error::InvalidCertificate)
+    x509.to_pem(LineEnding::LF)
+        .map_err(|_| Error::InvalidCertificate)
 }
 
 // ====================================================================================
@@ -1859,7 +1898,15 @@ pub fn generate_self_signed_cert<R: Rng>(
 ) -> Result<GmCertificate, Error> {
     let pub_key = priv_key.public_key();
     build_and_sign_cert(
-        subject, subject, &pub_key, validity, serial_number, extensions, priv_key, id, rng
+        subject,
+        subject,
+        &pub_key,
+        validity,
+        serial_number,
+        extensions,
+        priv_key,
+        id,
+        rng,
     )
 }
 
@@ -1925,8 +1972,15 @@ pub fn issue_certificate<R: Rng>(
     rng: &mut R,
 ) -> Result<GmCertificate, Error> {
     build_and_sign_cert(
-        &ca_cert.subject, subject, subject_pub_key, validity, serial_number, 
-        extensions, ca_priv_key, ca_id, rng
+        &ca_cert.subject,
+        subject,
+        subject_pub_key,
+        validity,
+        serial_number,
+        extensions,
+        ca_priv_key,
+        ca_id,
+        rng,
     )
 }
 
@@ -1959,7 +2013,6 @@ mod tests {
             X500Attribute::new(X500AttributeType::CommonName, common_name),
         ])
     }
-
 
     /// 构建测试用的 X.500 主体名称
     ///
@@ -2225,8 +2278,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(123456);
         let (_, pub_key) = generate_keypair(&mut rng);
 
-        let compressed =  pub_key.to_compressed().unwrap();
-        let decompressed = PublicKey::from_compressed(&compressed).expect("Decompression should succeed");
+        let compressed = pub_key.to_compressed().unwrap();
+        let decompressed =
+            PublicKey::from_compressed(&compressed).expect("Decompression should succeed");
 
         assert_eq!(pub_key.as_bytes(), decompressed.as_bytes());
     }
@@ -2239,7 +2293,9 @@ mod tests {
         let (_, pub_key) = generate_keypair(&mut rng);
 
         // 编码为 PEM
-        let pem = pub_key.to_public_key_pem(LineEnding::LF).expect("PEM encoding should succeed");
+        let pem = pub_key
+            .to_public_key_pem(LineEnding::LF)
+            .expect("PEM encoding should succeed");
         assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----"));
         assert!(pem.ends_with("-----END PUBLIC KEY-----\n"));
 
@@ -2880,4 +2936,3 @@ mod tests {
         assert_eq!(parsed.signature, cert.signature);
     }
 }
-

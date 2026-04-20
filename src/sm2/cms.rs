@@ -44,14 +44,14 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use rand_core::Rng;
 use x509_cert::attr::{Attribute, Attributes};
-use x509_cert::der::{Decode, Encode, Tag, Tagged};
 use x509_cert::der::asn1::{Any, OctetString, SetOfVec};
+use x509_cert::der::{Decode, Encode, Tag, Tagged};
 use x509_cert::name::Name;
-use x509_cert::time::Time;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{AlgorithmIdentifier, ObjectIdentifier};
-use rand_core::Rng;
+use x509_cert::time::Time;
 
 use crate::error::Error;
 use crate::sm2::cert::GmCertificate;
@@ -276,41 +276,53 @@ pub fn create_digital_signature<R: Rng>(
 /// 返回的编码使用 [0] IMPLICIT 标签，这是 RFC 5652 的要求。
 fn build_signed_attrs(digest: &[u8; 32], include_time: bool) -> Result<Attributes, Error> {
     use x509_cert::der::asn1::OctetStringRef;
-    
+
     let mut attrs = SetOfVec::<Attribute>::new();
-    
+
     // 1. content-type 属性
     let content_type_oid = crate::sm2::CONTENT_TYPE_OID;
     let content_type_value = Any::from(crate::sm2::PKCS7_DATA_OID);
     let mut content_type_values = SetOfVec::<Any>::new();
-    content_type_values.insert(content_type_value).map_err(|_| Error::InvalidSignature)?;
+    content_type_values
+        .insert(content_type_value)
+        .map_err(|_| Error::InvalidSignature)?;
     let content_type_attr = Attribute {
         oid: content_type_oid,
         values: content_type_values,
     };
-    attrs.insert(content_type_attr).map_err(|_| Error::InvalidSignature)?;
-    
+    attrs
+        .insert(content_type_attr)
+        .map_err(|_| Error::InvalidSignature)?;
+
     // 2. message-digest 属性
     let message_digest_oid = crate::sm2::MESSAGE_DIGEST_OID;
-    let digest_octet_string = OctetStringRef::new(digest.as_slice()).map_err(|_| Error::InvalidSignature)?;
+    let digest_octet_string =
+        OctetStringRef::new(digest.as_slice()).map_err(|_| Error::InvalidSignature)?;
     let digest_any = Any::from(digest_octet_string);
     let mut message_digest_values = SetOfVec::<Any>::new();
-    message_digest_values.insert(digest_any).map_err(|_| Error::InvalidSignature)?;
+    message_digest_values
+        .insert(digest_any)
+        .map_err(|_| Error::InvalidSignature)?;
     let message_digest_attr = Attribute {
         oid: message_digest_oid,
         values: message_digest_values,
     };
-    attrs.insert(message_digest_attr).map_err(|_| Error::InvalidSignature)?;
-    
+    attrs
+        .insert(message_digest_attr)
+        .map_err(|_| Error::InvalidSignature)?;
+
     // 3. signing-time 属性（可选）
     if include_time {
         // 使用原来的辅助函数编码 signing-time，因为时间处理比较复杂
         let signing_time_attr_bytes = encode_signing_time_attr()?;
         // 解析为 Attribute
-        let signing_time_attr = Attribute::from_der(&signing_time_attr_bytes).map_err(|_| Error::InvalidSignature)?;
-        attrs.insert(signing_time_attr).map_err(|_| Error::InvalidSignature)?;
+        let signing_time_attr =
+            Attribute::from_der(&signing_time_attr_bytes).map_err(|_| Error::InvalidSignature)?;
+        attrs
+            .insert(signing_time_attr)
+            .map_err(|_| Error::InvalidSignature)?;
     }
-    
+
     Ok(attrs)
 }
 
@@ -366,7 +378,6 @@ fn encode_unsigned_attrs(attrs: &Attributes) -> Result<Vec<u8>, Error> {
 
     Ok(result)
 }
-
 
 /// 编码 signing-time 属性
 ///
@@ -497,12 +508,7 @@ impl CmsSignerBuilder {
     }
 
     /// 添加签名者
-    pub fn add_signer(
-        mut self,
-        priv_key: &PrivateKey,
-        cert: &GmCertificate,
-        id: &[u8],
-    ) -> Self {
+    pub fn add_signer(mut self, priv_key: &PrivateKey, cert: &GmCertificate, id: &[u8]) -> Self {
         self.signers.push(SignerConfig {
             private_key: priv_key.clone(),
             certificate: cert.clone(),
@@ -563,7 +569,8 @@ impl CmsSignerBuilder {
             let signature = sign(&e, &signer_config.private_key, rng);
 
             // 构建 SignerInfo
-            let signer_info = create_signer_info(signed_attrs, &signature, &signer_config.certificate);
+            let signer_info =
+                create_signer_info(signed_attrs, &signature, &signer_config.certificate);
             signer_infos.push(signer_info);
         }
 
@@ -579,7 +586,9 @@ impl CmsSignerBuilder {
             digest_algorithms: vec![crate::sm2::SM3_DIGEST_ALGORITHM],
             encap_content_info: EncapsulatedContentInfo {
                 content_type: self.content_type,
-                content: Some(OctetString::new(self.content.clone()).expect("octet string creation failed")),
+                content: Some(
+                    OctetString::new(self.content.clone()).expect("octet string creation failed"),
+                ),
             },
             certificates: self.certificates,
             crls,
@@ -745,18 +754,23 @@ pub fn verify_digital_signature(
         let mut is_valid = true;
 
         // 1. 验证签名数学正确性
-        if let Err(e) = verify_signer_info(signer_info, &signed_data.certificates, &content_digest, id) {
+        if let Err(e) =
+            verify_signer_info(signer_info, &signed_data.certificates, &content_digest, id)
+        {
             is_valid = false;
             errors.push(format!("签名验证失败: {:?}", e));
         }
 
         // 提取签名者证书
         let certificate = match &signer_info.sid {
-            SignerIdentifier::IssuerAndSerialNumber { issuer, serial_number } => {
-                signed_data.certificates.iter().find(|cert| {
-                    cert.issuer == *issuer && cert.serial_number == *serial_number
-                }).cloned()
-            }
+            SignerIdentifier::IssuerAndSerialNumber {
+                issuer,
+                serial_number,
+            } => signed_data
+                .certificates
+                .iter()
+                .find(|cert| cert.issuer == *issuer && cert.serial_number == *serial_number)
+                .cloned(),
             SignerIdentifier::SubjectKeyIdentifier(_) => None,
         };
 
@@ -792,7 +806,8 @@ pub fn verify_digital_signature(
 
                 // 4. 验证签名时间是否在证书有效期内
                 if let Some(ref cert) = certificate {
-                    if let Err(e) = cert.verify_validity_system_time(time.try_into().unwrap_or(now)) {
+                    if let Err(e) = cert.verify_validity_system_time(time.to_system_time())
+                    {
                         is_valid = false;
                         errors.push(format!("签名时证书已失效: {:?}", e));
                     }
@@ -888,8 +903,8 @@ fn verify_signer_info(
         .ok_or(Error::InvalidSignature)?;
 
     // 解析签名属性并验证 message-digest
-    let message_digest = extract_message_digest(signed_attrs)
-        .map_err(|_| Error::InvalidSignature)?;
+    let message_digest =
+        extract_message_digest(signed_attrs).map_err(|_| Error::InvalidSignature)?;
     if &message_digest != content_digest {
         return Err(Error::VerifyFailed);
     }
@@ -1190,7 +1205,7 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
     if rest.is_empty() {
         return Err(Error::InvalidSignature);
     }
-    
+
     let (signer_infos_tlv, _) = der::parse_tlv(rest, 0x31).ok_or_else(err)?;
     let signer_infos = parse_signer_infos(signer_infos_tlv)?;
 
@@ -1205,7 +1220,9 @@ fn parse_signed_data_from_der(data: &[u8]) -> Result<SignedData, Error> {
 }
 
 /// 解析摘要算法列表
-fn parse_digest_algorithms(data: &[u8]) -> Result<Vec<AlgorithmIdentifier<ObjectIdentifier>>, Error> {
+fn parse_digest_algorithms(
+    data: &[u8],
+) -> Result<Vec<AlgorithmIdentifier<ObjectIdentifier>>, Error> {
     let mut result = Vec::<AlgorithmIdentifier<ObjectIdentifier>>::new();
     let mut rest = data;
 
@@ -1237,7 +1254,7 @@ fn parse_encap_content_info(data: &[u8]) -> Result<EncapsulatedContentInfo, Erro
         content = Some(OctetString::from_der(content_tlv).map_err(|_| err())?);
         #[allow(unused_assignments)]
         {
-            rest = r2;  // 更新 rest，即使后面不使用也保持代码一致性
+            rest = r2; // 更新 rest，即使后面不使用也保持代码一致性
         }
     }
     // 注意：如果 content 不存在，rest 保持不变，这是正确的
@@ -1413,7 +1430,10 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
     // issuer (Name)
     let (issuer_der, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
     rest = r;
-    let issuer = Name::from_der(issuer_der).map_err(|_| Error::DerDecodeError { field: "issuer", reason: "decoding failed" })?;
+    let issuer = Name::from_der(issuer_der).map_err(|_| Error::DerDecodeError {
+        field: "issuer",
+        reason: "decoding failed",
+    })?;
 
     // serialNumber - 解析 INTEGER 为 SerialNumber
     let (serial_der, r) = der::parse_tlv_any_full(rest).ok_or_else(err)?;
@@ -1421,7 +1441,10 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
     {
         rest = r;
     }
-    let serial_number = SerialNumber::from_der(serial_der).map_err(|_| Error::DerDecodeError { field: "serial_number", reason: "decoding failed" })?;
+    let serial_number = SerialNumber::from_der(serial_der).map_err(|_| Error::DerDecodeError {
+        field: "serial_number",
+        reason: "decoding failed",
+    })?;
 
     Ok(SignerIdentifier::IssuerAndSerialNumber {
         issuer,
@@ -1430,7 +1453,9 @@ fn parse_issuer_and_serial_number(data: &[u8]) -> Result<SignerIdentifier, Error
 }
 
 /// 解析算法标识符
-fn parse_algorithm_identifier(der_data: &[u8]) -> Result<AlgorithmIdentifier<ObjectIdentifier>, Error> {
+fn parse_algorithm_identifier(
+    der_data: &[u8],
+) -> Result<AlgorithmIdentifier<ObjectIdentifier>, Error> {
     AlgorithmIdentifier::from_der(der_data).map_err(|_| Error::DerDecodeError {
         field: "algorithm",
         reason: "decoding failed",
@@ -1496,45 +1521,60 @@ mod tests {
                 .expect("Signature creation should succeed");
 
         // 解析 SignedData 以获取 SignerInfo
-        let content_info = parse_content_info_from_der(&signed_data).expect("Parse ContentInfo should succeed");
-        let signed_data_parsed = parse_signed_data_from_der(&content_info.content).expect("Parse SignedData should succeed");
-        
+        let content_info =
+            parse_content_info_from_der(&signed_data).expect("Parse ContentInfo should succeed");
+        let signed_data_parsed = parse_signed_data_from_der(&content_info.content)
+            .expect("Parse SignedData should succeed");
+
         // 获取 SignerInfo
         assert_eq!(signed_data_parsed.signer_infos.len(), 1);
         let signer_info = &signed_data_parsed.signer_infos[0];
-        
+
         // 验证 signed_attrs 存在
         assert!(signer_info.signed_attrs.is_some());
         let signed_attrs = signer_info.signed_attrs.as_ref().unwrap();
-        
+
         // 验证 signed_attrs 包含 2 个属性（content-type + message-digest）
         assert_eq!(signed_attrs.len(), 2);
-        
+
         // 编码 signed_attrs 用于验证
-        let signed_attrs_encoded = encode_signed_attrs_for_sign(signed_attrs).expect("Encode should succeed");
-        
+        let signed_attrs_encoded =
+            encode_signed_attrs_for_sign(signed_attrs).expect("Encode should succeed");
+
         // 计算 content digest
         let content_digest = crate::sm3::Sm3Hasher::digest(data);
-        
+
         // 提取 message-digest
-        let extracted_digest = extract_message_digest(signed_attrs).expect("Extract should succeed");
+        let extracted_digest =
+            extract_message_digest(signed_attrs).expect("Extract should succeed");
         assert_eq!(&extracted_digest, &content_digest);
-        
+
         // 计算 e
-        let pub_key_cert = cert.extract_sm2_public_key().expect("Extract public key should succeed");
+        let pub_key_cert = cert
+            .extract_sm2_public_key()
+            .expect("Extract public key should succeed");
         let z = crate::sm2::get_z(DEFAULT_ID, &pub_key_cert.as_bytes());
         let e = crate::sm2::get_e(&z, &signed_attrs_encoded);
 
         // 验证签名
-        let sig_array: [u8; 64] = signer_info.signature.as_bytes().try_into().expect("Signature should be 64 bytes");
-        verify(&e, &pub_key_cert.as_bytes(), &sig_array).expect("Signature verification should succeed");
+        let sig_array: [u8; 64] = signer_info
+            .signature
+            .as_bytes()
+            .try_into()
+            .expect("Signature should be 64 bytes");
+        verify(&e, &pub_key_cert.as_bytes(), &sig_array)
+            .expect("Signature verification should succeed");
 
         // 验证签章
         let result = verify_digital_signature(&signed_data, DEFAULT_ID);
-        
-        assert!(result.is_ok(), "Verification should succeed: {:?}", result.err());
+
+        assert!(
+            result.is_ok(),
+            "Verification should succeed: {:?}",
+            result.err()
+        );
         let result = result.unwrap();
-        
+
         assert!(result.is_valid, "Signature should be valid");
         assert_eq!(result.content, data.as_slice());
         assert_eq!(result.total_signers_count(), 1);
@@ -1770,10 +1810,9 @@ mod tests {
         let data = b"Test message for verification details";
 
         // 创建签名
-        let signed_data = create_digital_signature(
-            data, &priv_key, &cert, DEFAULT_ID, &mut rng, false,
-        )
-        .expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Signature creation should succeed");
 
         // 验证并检查结果详情
         let result = verify_digital_signature(&signed_data, DEFAULT_ID)
@@ -1808,10 +1847,9 @@ mod tests {
         let data = b"Test message with signing time";
 
         // 创建包含 signing-time 的签名
-        let signed_data = create_digital_signature(
-            data, &priv_key, &cert, DEFAULT_ID, &mut rng, true,
-        )
-        .expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, true)
+                .expect("Signature creation should succeed");
 
         // 验证签名
         let result = verify_digital_signature(&signed_data, DEFAULT_ID)
@@ -1819,7 +1857,7 @@ mod tests {
 
         assert!(result.is_valid);
         assert_eq!(result.content, data.as_slice());
-        
+
         // 检查签名者结果中包含签名时间
         assert_eq!(result.signer_results.len(), 1);
         assert!(result.signer_results[0].signing_time.is_some());
@@ -1842,14 +1880,13 @@ mod tests {
         let data = b"Test message with CRL support";
 
         // 创建签名
-        let signed_data = create_digital_signature(
-            data, &priv_key, &cert, DEFAULT_ID, &mut rng, false,
-        )
-        .expect("Signature creation should succeed");
+        let signed_data =
+            create_digital_signature(data, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Signature creation should succeed");
 
         // 解析 ContentInfo
-        let content_info = parse_content_info_from_der(&signed_data)
-            .expect("Parse ContentInfo should succeed");
+        let content_info =
+            parse_content_info_from_der(&signed_data).expect("Parse ContentInfo should succeed");
 
         // 解析 SignedData
         let signed_data_parsed = parse_signed_data_from_der(&content_info.content)
@@ -1863,6 +1900,13 @@ mod tests {
         assert!(!signed_data_parsed.certificates.is_empty());
 
         // crls 字段应该存在（即使为空）
-        assert!(signed_data_parsed.crls.is_none() || signed_data_parsed.crls.as_ref().map(|c| c.is_empty()).unwrap_or(true));
+        assert!(
+            signed_data_parsed.crls.is_none()
+                || signed_data_parsed
+                    .crls
+                    .as_ref()
+                    .map(|c| c.is_empty())
+                    .unwrap_or(true)
+        );
     }
 }

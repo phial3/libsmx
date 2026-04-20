@@ -15,7 +15,7 @@ fn test_sm3_gb_t_a1_abc() {
     let msg = b"abc";
     let expected =
         hex::decode("66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0").unwrap();
-    
+
     let digest = Sm3Hasher::digest(msg);
     assert_eq!(
         digest.as_slice(),
@@ -30,7 +30,7 @@ fn test_sm3_gb_t_a1_64bytes() {
     let msg = b"abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd";
     let expected =
         hex::decode("debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732").unwrap();
-    
+
     let digest = Sm3Hasher::digest(msg);
     assert_eq!(
         digest.as_slice(),
@@ -45,13 +45,9 @@ fn test_sm3_gb_t_a1_empty() {
     let msg = b"";
     let expected =
         hex::decode("1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b").unwrap();
-    
+
     let digest = Sm3Hasher::digest(msg);
-    assert_eq!(
-        digest.as_slice(),
-        expected.as_slice(),
-        "SM3 空消息测试失败"
-    );
+    assert_eq!(digest.as_slice(), expected.as_slice(), "SM3 空消息测试失败");
 }
 
 // ============================================================================

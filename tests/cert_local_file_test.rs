@@ -120,10 +120,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
         &subject_der[..16.min(subject_der.len())]
     );
     let spki_der = cert.subject_public_key_info.to_der().unwrap();
-    println!(
-        "   公钥信息长度：{} 字节",
-        spki_der.len()
-    );
+    println!("   公钥信息长度：{} 字节", spki_der.len());
 
     // 2. 验证证书和私钥匹配
     println!("\n[2/4] 验证证书和私钥匹配...");
@@ -137,10 +134,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             println!("   错误类型：{:?}", e);
             println!("\n   诊断信息:");
             let spki_der = cert.subject_public_key_info.to_der().unwrap();
-            println!(
-                "   - 公钥数据长度：{} 字节",
-                spki_der.len()
-            );
+            println!("   - 公钥数据长度：{} 字节", spki_der.len());
             println!(
                 "   - 公钥数据：{:02x?}",
                 &spki_der[..32.min(spki_der.len())]
@@ -175,7 +169,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
 
     // 2.5. 国密证书与 X509 证书互转测试
     println!("\n[2.5/4] 测试国密证书与 X509 证书互转...");
-    
+
     // 将国密证书转换为 X509 证书
     println!("将国密证书转换为 X509 证书...");
     let x509_cert = match cert::gm_to_x509_certificate(&cert) {
@@ -225,14 +219,14 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
 
     // 验证往返转换后证书信息一致
     println!("验证往返转换后证书信息一致性...");
-    
+
     // 生成国密证书的 DER 编码
     let gm_cert_der = libsmx::sm2::cert::generate_gm_certificate_der(&cert);
     // 生成 X509 证书的 DER 编码（从转换后的 X509 证书生成）
     let x509_cert_der = x509_cert.to_der().unwrap();
     // 生成往返转换后的国密证书的 DER 编码
     let gm_cert_back_der = libsmx::sm2::cert::generate_gm_certificate_der(&gm_cert_back);
-    
+
     if cert.serial_number == gm_cert_back.serial_number
         && cert.issuer == gm_cert_back.issuer
         && cert.subject == gm_cert_back.subject
@@ -269,20 +263,35 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             println!("   - 签名值：不匹配");
             println!("     原始签名长度：{} 字节", orig_sig_bytes.len());
             println!("     往返后签名长度：{} 字节", back_sig_bytes.len());
-            println!("     原始签名 (前 32 字节): {:02x?}", &orig_sig_bytes[..32.min(orig_sig_bytes.len())]);
-            println!("     往返后签名 (前 32 字节): {:02x?}", &back_sig_bytes[..32.min(back_sig_bytes.len())]);
+            println!(
+                "     原始签名 (前 32 字节): {:02x?}",
+                &orig_sig_bytes[..32.min(orig_sig_bytes.len())]
+            );
+            println!(
+                "     往返后签名 (前 32 字节): {:02x?}",
+                &back_sig_bytes[..32.min(back_sig_bytes.len())]
+            );
         }
         if gm_cert_der != x509_cert_der {
             println!("   - 国密证书与 X509 证书 DER 编码：不匹配");
             println!("     国密证书 DER 长度：{} 字节", gm_cert_der.len());
             println!("     X509 证书 DER 长度：{} 字节", x509_cert_der.len());
-            println!("     国密证书 DER (前 50 字节): {:02x?}", &gm_cert_der[..50.min(gm_cert_der.len())]);
-            println!("     X509 证书 DER (前 50 字节): {:02x?}", &x509_cert_der[..50.min(x509_cert_der.len())]);
+            println!(
+                "     国密证书 DER (前 50 字节): {:02x?}",
+                &gm_cert_der[..50.min(gm_cert_der.len())]
+            );
+            println!(
+                "     X509 证书 DER (前 50 字节): {:02x?}",
+                &x509_cert_der[..50.min(x509_cert_der.len())]
+            );
         }
         if gm_cert_der != gm_cert_back_der {
             println!("   - 往返转换后 DER 编码：不匹配");
             println!("     原始国密证书 DER 长度：{} 字节", gm_cert_der.len());
-            println!("     往返后国密证书 DER 长度：{} 字节", gm_cert_back_der.len());
+            println!(
+                "     往返后国密证书 DER 长度：{} 字节",
+                gm_cert_back_der.len()
+            );
         }
         println!("\n⚠️  证书 {} 测试失败 - 证书往返转换信息不一致", name);
         return false;
@@ -346,10 +355,7 @@ fn test_certificate(name: &str, cert_path: &str, key_path: &str, key_format: &st
             println!("\n   诊断信息:");
             println!("   - 签名长度：{} 字节", signature.len());
             let spki_der = cert.subject_public_key_info.to_der().unwrap();
-            println!(
-                "   - 证书公钥信息长度：{} 字节",
-                spki_der.len()
-            );
+            println!("   - 证书公钥信息长度：{} 字节", spki_der.len());
             println!("\n   可能原因:");
             println!("   - 证书使用的是非 SM2 曲线（如 P-256）");
             println!("   - 签名算法与证书曲线不匹配");

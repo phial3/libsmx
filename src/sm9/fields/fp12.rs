@@ -720,12 +720,10 @@ mod tests {
         use crate::sm9::fields::fp2::fp2_mul;
         // 计算 u^{(p-1)/3} 其中 u = (0, 1) ∈ Fp2
         let pm1 = FIELD_MODULUS.wrapping_sub(&U256::ONE);
-        let (pm1_div3, rem) =
-            pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(3u32)).unwrap());
+        let (pm1_div3, rem) = pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(3u32)).unwrap());
         assert_eq!(rem, U256::ZERO, "(p-1) 应被 3 整除");
 
-        let (pm1_div6, _) =
-            pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(6u32)).unwrap());
+        let (pm1_div6, _) = pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(6u32)).unwrap());
 
         fn fp2_pow_exp(base: &Fp2, exp: &U256) -> Fp2 {
             let mut result = Fp2::ONE;
@@ -800,8 +798,7 @@ mod g2_frob_tests {
         let pm1_div2 = pm1.wrapping_shr(1);
         let u_pm1_div2 = fp2_pow_exp(&u, &pm1_div2);
 
-        let (pm1_div3, _) =
-            pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(3u32)).unwrap());
+        let (pm1_div3, _) = pm1.div_rem(&crypto_bigint::NonZero::new(U256::from(3u32)).unwrap());
         let u_pm1_div3 = fp2_pow_exp(&u, &pm1_div3);
 
         let pp1 = p.wrapping_add(&U256::ONE);

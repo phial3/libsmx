@@ -698,10 +698,10 @@ mod tests {
         let id = b"Bob";
         let de = generate_enc_user_key(&master_priv, id).expect("用户加密私钥应生成成功");
         let msg = b"hello sm9 encryption";
-        
+
         let ciphertext = sm9_encrypt(id, msg, &pub_key, &mut rng).expect("加密应成功");
         let plaintext = sm9_decrypt(id, &ciphertext, &de).expect("解密应成功");
-        
+
         assert_eq!(plaintext, msg, "加密解密往返不一致");
     }
 
@@ -714,12 +714,15 @@ mod tests {
         let id = b"Bob";
         let de = generate_enc_user_key(&master_priv, id).expect("用户加密私钥应生成成功");
         let msg = b"test message";
-        
+
         let mut ciphertext = sm9_encrypt(id, msg, &pub_key, &mut rng).unwrap();
         // 篡改密文（C1部分）
         ciphertext[10] ^= 0xFF;
-        
-        assert!(sm9_decrypt(id, &ciphertext, &de).is_err(), "篡改的密文应解密失败");
+
+        assert!(
+            sm9_decrypt(id, &ciphertext, &de).is_err(),
+            "篡改的密文应解密失败"
+        );
     }
 
     #[cfg(feature = "alloc")]
@@ -731,18 +734,22 @@ mod tests {
         let id_bob = b"Bob";
         let id_alice = b"Alice";
         let de_bob = generate_enc_user_key(&master_priv, id_bob).expect("Bob 的加密私钥应生成成功");
-        let de_alice = generate_enc_user_key(&master_priv, id_alice).expect("Alice 的加密私钥应生成成功");
+        let de_alice =
+            generate_enc_user_key(&master_priv, id_alice).expect("Alice 的加密私钥应生成成功");
         let msg = b"hello sm9 encryption";
-        
+
         // 使用 Bob 的 ID 加密
         let ciphertext = sm9_encrypt(id_bob, msg, &pub_key, &mut rng).expect("加密应成功");
-        
+
         // 使用 Bob 的密钥解密应成功
         let plaintext_bob = sm9_decrypt(id_bob, &ciphertext, &de_bob).expect("Bob 解密应成功");
         assert_eq!(plaintext_bob, msg, "Bob 解密结果不一致");
-        
+
         // 使用 Alice 的密钥解密应失败
-        assert!(sm9_decrypt(id_bob, &ciphertext, &de_alice).is_err(), "Alice 不应能解密 Bob 的密文");
+        assert!(
+            sm9_decrypt(id_bob, &ciphertext, &de_alice).is_err(),
+            "Alice 不应能解密 Bob 的密文"
+        );
     }
 }
 

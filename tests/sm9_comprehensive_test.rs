@@ -76,14 +76,14 @@ fn test_sign_verify_different_ids() {
     let message = b"Hello, SM9 signature!";
 
     // 使用 Alice 的密钥签名
-    let (h, s) = sm9_sign(message,  &sign_key_alice, &sign_master_pub, &mut rng).unwrap();
+    let (h, s) = sm9_sign(message, &sign_key_alice, &sign_master_pub, &mut rng).unwrap();
 
     // 使用 Alice 的 ID 验签应成功
     let result1 = sm9_verify(message, &h, &s, b"Alice", &sign_master_pub);
     assert!(result1.is_ok());
 
     // 使用 Bob 的 ID 验签应失败
-    let result2 = sm9_verify(message,  &h, &s, b"Bob", &sign_master_pub);
+    let result2 = sm9_verify(message, &h, &s, b"Bob", &sign_master_pub);
     assert!(result2.is_err());
 }
 
@@ -130,7 +130,7 @@ fn test_sign_verify_stability() {
 
     // 多次签名验签
     for i in 0..100 {
-        let (h, s) = sm9_sign(message,  &sign_user_key, &sign_master_pub, &mut rng).unwrap();
+        let (h, s) = sm9_sign(message, &sign_user_key, &sign_master_pub, &mut rng).unwrap();
         let result = sm9_verify(message, &h, &s, b"Alice", &sign_master_pub);
         assert!(result.is_ok(), "Failed at iteration {}", i);
     }

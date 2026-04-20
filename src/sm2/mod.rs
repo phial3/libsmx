@@ -25,10 +25,11 @@ pub mod cms;
 pub mod crl;
 
 #[cfg(feature = "alloc")]
+pub mod csr;
+
+#[cfg(feature = "alloc")]
 pub use der::{
-    private_key_from_pkcs8_der,
-    private_key_from_sec1_der,
-    private_key_to_pkcs8_der,
+    private_key_from_pkcs8_der, private_key_from_sec1_der, private_key_to_pkcs8_der,
     private_key_to_sec1_der,
 };
 
@@ -41,7 +42,7 @@ use alloc::string::String;
 #[cfg(feature = "alloc")]
 use x509_cert::{
     der::{pem, Decode, Encode},
-    spki::{SubjectPublicKeyInfo, ObjectIdentifier},
+    spki::{ObjectIdentifier, SubjectPublicKeyInfo},
 };
 
 use crypto_bigint::U256;
@@ -81,7 +82,8 @@ pub mod oids {
     /// SM2 签名算法 OID (1.2.156.10197.1.501)
     ///
     /// SM2withSM3 签名算法标识符，用于 X.509 证书签名算法
-    pub const SM2_SIGNATURE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
+    pub const SM2_SIGNATURE_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.156.10197.1.501");
 
     /// SM3 哈希算法 OID (1.2.156.10197.1.401)
     pub const SM3_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.156.10197.1.401");
@@ -94,27 +96,32 @@ pub mod oids {
     /// PKCS#7/CMS SignedData OID (1.2.840.113549.1.7.2)
     ///
     /// 用于 PKCS#7/CMS 签名数据内容类型
-    pub const PKCS7_SIGNED_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
-    
+    pub const PKCS7_SIGNED_DATA_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
+
     /// PKCS#7/CMS Data OID (1.2.840.113549.1.7.1)
     ///
     /// 用于 PKCS#7/CMS 数据内容类型
-    pub const PKCS7_DATA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
+    pub const PKCS7_DATA_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
 
     /// content-type 属性 OID (1.2.840.113549.1.9.3)
     ///
     /// 用于 CMS 签名属性 content-type
-    pub const CONTENT_TYPE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
+    pub const CONTENT_TYPE_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
 
     /// message-digest 属性 OID (1.2.840.113549.1.9.4)
     ///
     /// 用于 CMS 签名属性 message-digest
-    pub const MESSAGE_DIGEST_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4");
+    pub const MESSAGE_DIGEST_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4");
 
     /// signing-time 属性 OID (1.2.840.113549.1.9.5)
     ///
     /// 用于 CMS 签名属性 signing-time
-    pub const SIGNING_TIME_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.5");
+    pub const SIGNING_TIME_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.5");
 
     // 证书扩展 OID (X.509 v3 Extensions)
 
@@ -146,22 +153,26 @@ pub mod oids {
     /// id-ce-certificatePolicies OID (2.5.29.32)
     ///
     /// 证书策略扩展
-    pub const ID_CE_CERTIFICATE_POLICIES: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.32");
+    pub const ID_CE_CERTIFICATE_POLICIES: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.5.29.32");
 
     /// id-ce-cRLDistributionPoints OID (2.5.29.31)
     ///
     /// CRL 分发点扩展
-    pub const ID_CE_CRL_DISTRIBUTION_POINTS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.31");
+    pub const ID_CE_CRL_DISTRIBUTION_POINTS: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.5.29.31");
 
     /// id-ce-authorityKeyIdentifier OID (2.5.29.35)
     ///
     /// 机构密钥标识符扩展
-    pub const ID_CE_AUTHORITY_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.35");
+    pub const ID_CE_AUTHORITY_KEY_IDENTIFIER: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.5.29.35");
 
     /// id-ce-subjectKeyIdentifier OID (2.5.29.14)
     ///
     /// 主体密钥标识符扩展
-    pub const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.14");
+    pub const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.5.29.14");
 
     /// id-ce-cRLReasons OID (2.5.29.21)
     ///
@@ -176,27 +187,32 @@ pub mod oids {
     /// anyExtendedKeyUsage OID (2.5.29.37.0)
     ///
     /// 任何扩展密钥用途
-    pub const ANY_EXTENDED_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37.0");
+    pub const ANY_EXTENDED_KEY_USAGE: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.5.29.37.0");
 
     /// id-kp-serverAuth OID (1.3.6.1.5.5.7.3.1)
     ///
     /// 服务器认证密钥用途
-    pub const ID_KP_SERVER_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.1");
+    pub const ID_KP_SERVER_AUTH: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.1");
 
     /// id-kp-clientAuth OID (1.3.6.1.5.5.7.3.2)
     ///
     /// 客户端认证密钥用途
-    pub const ID_KP_CLIENT_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.2");
+    pub const ID_KP_CLIENT_AUTH: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.2");
 
     /// id-kp-codeSigning OID (1.3.6.1.5.5.7.3.3)
     ///
     /// 代码签名密钥用途
-    pub const ID_KP_CODE_SIGNING: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.3");
+    pub const ID_KP_CODE_SIGNING: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.3");
 
     /// id-kp-emailProtection OID (1.3.6.1.5.5.7.3.4)
     ///
     /// 电子邮件保护密钥用途
-    pub const ID_KP_EMAIL_PROTECTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.4");
+    pub const ID_KP_EMAIL_PROTECTION: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.4");
 
     /// SM2 公钥算法标识符（用于 SubjectPublicKeyInfo）
     ///
@@ -210,10 +226,11 @@ pub mod oids {
     ///
     /// 完整的 AlgorithmIdentifier for SM2withSM3
     /// 注意：国密标准中 SM2withSM3 算法标识符不包含 parameters
-    pub const SM2_SIGNATURE_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> = AlgorithmIdentifier {
-        oid: SM2_SIGNATURE_OID,
-        parameters: None,
-    };
+    pub const SM2_SIGNATURE_ALGORITHM: AlgorithmIdentifier<ObjectIdentifier> =
+        AlgorithmIdentifier {
+            oid: SM2_SIGNATURE_OID,
+            parameters: None,
+        };
 
     /// SM3 摘要算法标识符（用于 CMS digestAlgorithms）
     ///
@@ -283,7 +300,8 @@ impl PrivateKey {
     #[cfg(feature = "alloc")]
     pub fn to_sec1_pem(&self) -> Result<String, Error> {
         let der = private_key_to_sec1_der(self);
-        pem::encode_string("EC PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
+        pem::encode_string("EC PRIVATE KEY", Default::default(), &der)
+            .map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 将私钥编码为 PKCS#8 PEM 格式
@@ -292,7 +310,8 @@ impl PrivateKey {
     #[cfg(feature = "alloc")]
     pub fn to_pkcs8_pem(&self) -> Result<String, Error> {
         let der = private_key_to_pkcs8_der(self);
-        pem::encode_string("PRIVATE KEY", Default::default(), &der).map_err(|_| Error::InvalidPrivateKey)
+        pem::encode_string("PRIVATE KEY", Default::default(), &der)
+            .map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// 从 SEC1 DER 解析私钥
@@ -492,16 +511,23 @@ impl PublicKey {
 
     /// 将公钥转换为 SPKI 格式
     #[cfg(feature = "alloc")]
-    pub fn to_spki(&self) ->  SubjectPublicKeyInfo<ObjectIdentifier, x509_cert::der::asn1::BitString> {
+    pub fn to_spki(
+        &self,
+    ) -> SubjectPublicKeyInfo<ObjectIdentifier, x509_cert::der::asn1::BitString> {
         use x509_cert::spki::EncodePublicKey;
         let document = &self.to_public_key_der().unwrap();
         let der_bytes = document.to_der().unwrap();
-        SubjectPublicKeyInfo::<ObjectIdentifier, x509_cert::der::asn1::BitString>::from_der(&der_bytes).unwrap()
+        SubjectPublicKeyInfo::<ObjectIdentifier, x509_cert::der::asn1::BitString>::from_der(
+            &der_bytes,
+        )
+        .unwrap()
     }
 
     /// 将 SPKI 格式的公钥转换为 SM2 公钥
     #[cfg(feature = "alloc")]
-    pub fn from_spki(spki: &SubjectPublicKeyInfo<ObjectIdentifier, x509_cert::der::asn1::BitString>) -> Self {
+    pub fn from_spki(
+        spki: &SubjectPublicKeyInfo<ObjectIdentifier, x509_cert::der::asn1::BitString>,
+    ) -> Self {
         use x509_cert::spki::DecodePublicKey;
         Self::from_public_key_der(&spki.to_der().unwrap()).unwrap()
     }
@@ -512,8 +538,8 @@ impl x509_cert::spki::EncodePublicKey for PublicKey {
     fn to_public_key_der(&self) -> x509_cert::spki::Result<x509_cert::der::Document> {
         use x509_cert::der::asn1::BitString;
         // 创建 BIT STRING（公钥数据）
-        let subject_public_key = BitString::new(0, self.as_bytes())
-            .map_err(|_| x509_cert::spki::Error::KeyMalformed)?;
+        let subject_public_key =
+            BitString::new(0, self.as_bytes()).map_err(|_| x509_cert::spki::Error::KeyMalformed)?;
 
         let spki = SubjectPublicKeyInfo {
             algorithm: SM2_SPKI_ALGORITHM,
@@ -532,11 +558,15 @@ impl x509_cert::spki::DecodePublicKey for PublicKey {
         use x509_cert::der::asn1::BitString;
         // 解析 SPKI
         let spki: SubjectPublicKeyInfo<ObjectIdentifier, BitString> =
-            SubjectPublicKeyInfo::from_der(bytes).map_err(|_| Error::InvalidPublicKey).unwrap();
+            SubjectPublicKeyInfo::from_der(bytes)
+                .map_err(|_| Error::InvalidPublicKey)
+                .unwrap();
 
         // 验证算法 OID（id-ecPublicKey）
         if spki.algorithm.oid != EC_PUBKEY_OID {
-            return Err(x509_cert::spki::Error::OidUnknown {oid: spki.algorithm.oid});
+            return Err(x509_cert::spki::Error::OidUnknown {
+                oid: spki.algorithm.oid,
+            });
         }
 
         // 验证参数 OID（SM2 曲线）

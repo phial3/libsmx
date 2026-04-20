@@ -13,16 +13,21 @@
 
 #![cfg(feature = "std")]
 
-use libsmx::sm2::cert::{self, build_x500_name, generate_self_signed_cert, GmCertificate, X500Attribute, X500AttributeType};
-use libsmx::sm2::cms::{self, CmsSignerBuilder, create_digital_signature, verify_digital_signature};
+use libsmx::sm2::cert::{
+    self, build_x500_name, generate_self_signed_cert, GmCertificate, X500Attribute,
+    X500AttributeType,
+};
+use libsmx::sm2::cms::{
+    self, create_digital_signature, verify_digital_signature, CmsSignerBuilder,
+};
 use libsmx::sm2::{generate_keypair, PrivateKey, DEFAULT_ID};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
-use x509_cert::der::Encode;
 use x509_cert::der::pem::LineEnding;
+use x509_cert::der::Encode;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::EncodePublicKey;
 use x509_cert::time::{Time, Validity};
@@ -42,7 +47,9 @@ fn create_test_name(common_name: &str) -> x509_cert::name::Name {
 /// 生成测试用的有效期
 fn generate_test_validity() -> Validity {
     let not_before = Time::try_from(std::time::SystemTime::now()).unwrap();
-    let not_after = Time::try_from(std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600)).unwrap();
+    let not_after =
+        Time::try_from(std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 3600))
+            .unwrap();
     Validity::new(not_before, not_after)
 }
 
@@ -53,31 +60,25 @@ fn create_test_cert(priv_key: &PrivateKey, rng: &mut StdRng) -> GmCertificate {
     let validity = generate_test_validity();
 
     generate_self_signed_cert(
-        priv_key,
-        &subject,
-        &validity,
-        &serial,
-        DEFAULT_ID,
-        None,
-        rng,
-    ).expect("Failed to generate test certificate")
+        priv_key, &subject, &validity, &serial, DEFAULT_ID, None, rng,
+    )
+    .expect("Failed to generate test certificate")
 }
 
 /// 创建测试用的国密证书（指定序列号）
-fn create_test_cert_with_serial(priv_key: &PrivateKey, serial: u64, rng: &mut StdRng) -> GmCertificate {
+fn create_test_cert_with_serial(
+    priv_key: &PrivateKey,
+    serial: u64,
+    rng: &mut StdRng,
+) -> GmCertificate {
     let subject = create_test_name("Test Subject");
     let serial = SerialNumber::from(serial);
     let validity = generate_test_validity();
 
     generate_self_signed_cert(
-        priv_key,
-        &subject,
-        &validity,
-        &serial,
-        DEFAULT_ID,
-        None,
-        rng,
-    ).expect("Failed to generate test certificate")
+        priv_key, &subject, &validity, &serial, DEFAULT_ID, None, rng,
+    )
+    .expect("Failed to generate test certificate")
 }
 
 /// 创建测试用的证书和密钥对（使用 Builder 模式）
@@ -91,8 +92,14 @@ fn create_test_cert_and_key(
     let expiry = now + Duration::from_secs(365 * 24 * 3600);
 
     let cert = cert::GmCertificate::builder()
-        .subject(&[X500Attribute::new(X500AttributeType::CommonName, common_name)])
-        .issuer(&[X500Attribute::new(X500AttributeType::CommonName, common_name)])
+        .subject(&[X500Attribute::new(
+            X500AttributeType::CommonName,
+            common_name,
+        )])
+        .issuer(&[X500Attribute::new(
+            X500AttributeType::CommonName,
+            common_name,
+        )])
         .serial_number(serial)
         .validity_period(now, expiry)
         .build(&pub_key, &priv_key, DEFAULT_ID, rng)
@@ -187,7 +194,8 @@ fn test_certificate_files() {
     let parsed_cert = cert::parse_gm_certificate_der(&cert_der).expect("解析 DER 证书应成功");
     assert_eq!(parsed_cert.version, cert.version);
 
-    let parsed_from_pem = cert::parse_gm_certificate_pem(&cert_pem.as_bytes()).expect("解析 PEM 证书应成功");
+    let parsed_from_pem =
+        cert::parse_gm_certificate_pem(&cert_pem.as_bytes()).expect("解析 PEM 证书应成功");
     assert_eq!(parsed_from_pem.version, cert.version);
 
     let _ = fs::remove_file(cert_der_file);
@@ -243,7 +251,8 @@ fn test_private_key_sec1() {
     let sec1_pem = priv_key.to_sec1_pem().expect("SEC1 PEM 编码应成功");
     fs::write(priv_key_sec1_pem_file, &sec1_pem).expect("写入 SEC1 PEM 应成功");
 
-    let recovered_pem = PrivateKey::from_sec1_pem(&sec1_pem.as_bytes()).expect("SEC1 PEM 解析应成功");
+    let recovered_pem =
+        PrivateKey::from_sec1_pem(&sec1_pem.as_bytes()).expect("SEC1 PEM 解析应成功");
     assert_eq!(priv_key.as_bytes(), recovered_pem.as_bytes());
 
     let _ = fs::remove_file(priv_key_sec1_der_file);
@@ -271,7 +280,8 @@ fn test_private_key_pkcs8() {
     let pkcs8_pem = priv_key.to_pkcs8_pem().expect("PKCS#8 PEM 编码应成功");
     fs::write(priv_key_pkcs8_pem_file, &pkcs8_pem).expect("写入 PKCS#8 PEM 应成功");
 
-    let recovered_pem = PrivateKey::from_pkcs8_pem(&pkcs8_pem.as_bytes()).expect("PKCS#8 PEM 解析应成功");
+    let recovered_pem =
+        PrivateKey::from_pkcs8_pem(&pkcs8_pem.as_bytes()).expect("PKCS#8 PEM 解析应成功");
     assert_eq!(priv_key.as_bytes(), recovered_pem.as_bytes());
 
     let _ = fs::remove_file(priv_key_pkcs8_der_file);
@@ -286,61 +296,59 @@ fn test_private_key_pkcs8() {
 #[test]
 fn test_create_and_verify_signature() {
     let mut rng = StdRng::seed_from_u64(123456);
-    
+
     // 生成密钥对和证书
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
     let cert = create_test_cert(&priv_key, &mut rng);
-    
+
     // 测试数据
     let data = b"Hello, World!";
-    
+
     // 创建电子签章（包含时间戳）
     let signature = create_digital_signature(
-        data,
-        &priv_key,
-        &cert,
-        DEFAULT_ID,
-        &mut rng,
-        true, // 包含时间戳
-    ).expect("Failed to create signature");
-    
+        data, &priv_key, &cert, DEFAULT_ID, &mut rng, true, // 包含时间戳
+    )
+    .expect("Failed to create signature");
+
     // 验证电子签章
-    let result = verify_digital_signature(&signature, DEFAULT_ID)
-        .expect("Failed to verify signature");
-    
+    let result =
+        verify_digital_signature(&signature, DEFAULT_ID).expect("Failed to verify signature");
+
     assert!(result.is_valid, "Signature verification should succeed");
     assert_eq!(result.signer_results.len(), 1, "Should have one signer");
     assert_eq!(result.content, data.to_vec(), "Content should match");
-    assert!(result.signer_results[0].signing_time.is_some(), "Signing time should be present");
+    assert!(
+        result.signer_results[0].signing_time.is_some(),
+        "Signing time should be present"
+    );
 }
 
 /// 测试创建签名（不包含时间戳）
 #[test]
 fn test_signature_without_time() {
     let mut rng = StdRng::seed_from_u64(789012);
-    
+
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
     let cert = create_test_cert(&priv_key, &mut rng);
-    
+
     let data = b"Test data without timestamp";
-    
+
     // 创建电子签章（不包含时间戳）
     let signature = create_digital_signature(
-        data,
-        &priv_key,
-        &cert,
-        DEFAULT_ID,
-        &mut rng,
-        false, // 不包含时间戳
-    ).expect("Failed to create signature");
-    
+        data, &priv_key, &cert, DEFAULT_ID, &mut rng, false, // 不包含时间戳
+    )
+    .expect("Failed to create signature");
+
     // 验证电子签章
-    let result = verify_digital_signature(&signature, DEFAULT_ID)
-        .expect("Failed to verify signature");
-    
+    let result =
+        verify_digital_signature(&signature, DEFAULT_ID).expect("Failed to verify signature");
+
     assert!(result.is_valid, "Signature verification should succeed");
     assert_eq!(result.signer_results.len(), 1, "Should have one signer");
-    assert!(result.signer_results[0].signing_time.is_none(), "Signing time should not be present");
+    assert!(
+        result.signer_results[0].signing_time.is_none(),
+        "Signing time should not be present"
+    );
 }
 
 /// 测试签名时间提取功能
@@ -360,16 +368,19 @@ fn test_signing_time_feature() {
         .expect("Signature creation should succeed");
 
     // 验证签名
-    let result = verify_digital_signature(&signed_data, DEFAULT_ID)
-        .expect("Verification should succeed");
+    let result =
+        verify_digital_signature(&signed_data, DEFAULT_ID).expect("Verification should succeed");
 
     assert!(result.is_valid);
     assert_eq!(result.content, data.as_slice());
     assert_eq!(result.signer_results.len(), 1);
-    
+
     // 验证签名时间被正确提取
     let signer_result = &result.signer_results[0];
-    assert!(signer_result.signing_time.is_some(), "Signing time should be present");
+    assert!(
+        signer_result.signing_time.is_some(),
+        "Signing time should be present"
+    );
 }
 
 /// 测试签名篡改检测
@@ -470,10 +481,10 @@ fn test_digital_signature_empty_content() {
             .expect("Failed to create digital signature for empty content");
 
     assert!(!signed_data_der.is_empty());
-    
+
     // 验证空内容签名
-    let result = verify_digital_signature(&signed_data_der, DEFAULT_ID)
-        .expect("Failed to verify signature");
+    let result =
+        verify_digital_signature(&signed_data_der, DEFAULT_ID).expect("Failed to verify signature");
     assert!(result.is_valid);
     assert_eq!(result.content, b"".to_vec());
 }
@@ -484,25 +495,22 @@ fn test_digital_signature_large_content() {
     let mut rng = StdRng::seed_from_u64(901234);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
     let cert = create_test_cert(&priv_key, &mut rng);
-    
+
     // 测试大数据（10KB）
     let data: Vec<u8> = (0..10 * 1024).map(|i| (i % 256) as u8).collect();
-    
+
     // 创建电子签章
-    let signature = create_digital_signature(
-        &data,
-        &priv_key,
-        &cert,
-        DEFAULT_ID,
-        &mut rng,
-        true,
-    ).expect("Failed to create signature");
-    
+    let signature = create_digital_signature(&data, &priv_key, &cert, DEFAULT_ID, &mut rng, true)
+        .expect("Failed to create signature");
+
     // 验证电子签章
-    let result = verify_digital_signature(&signature, DEFAULT_ID)
-        .expect("Failed to verify signature");
-    
-    assert!(result.is_valid, "Signature verification should succeed for large data");
+    let result =
+        verify_digital_signature(&signature, DEFAULT_ID).expect("Failed to verify signature");
+
+    assert!(
+        result.is_valid,
+        "Signature verification should succeed for large data"
+    );
     assert_eq!(result.signer_results.len(), 1, "Should have one signer");
     assert_eq!(result.content, data, "Content should match");
 }
@@ -525,8 +533,8 @@ fn test_large_data_with_signing_time() {
         .expect("Signature creation should succeed");
 
     // 验证签名
-    let result = verify_digital_signature(&signed_data, DEFAULT_ID)
-        .expect("Verification should succeed");
+    let result =
+        verify_digital_signature(&signed_data, DEFAULT_ID).expect("Verification should succeed");
 
     assert!(result.is_valid);
     assert_eq!(result.content, data.as_slice());
@@ -546,9 +554,9 @@ fn test_crl_support() {
     let data = b"Test data with CRL support";
 
     // 创建签名
-    let signed_data_bytes = create_digital_signature(
-        &data[..], &priv_key, &cert, DEFAULT_ID, &mut rng, false
-    ).expect("Signature creation should succeed");
+    let signed_data_bytes =
+        create_digital_signature(&data[..], &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+            .expect("Signature creation should succeed");
 
     // 验证签名
     let result = verify_digital_signature(&signed_data_bytes, DEFAULT_ID)
@@ -556,7 +564,7 @@ fn test_crl_support() {
 
     assert!(result.is_valid);
     assert_eq!(result.content, data.as_slice());
-    
+
     // 验证结果中包含证书
     assert!(!result.certificates.is_empty());
 }
@@ -570,9 +578,9 @@ fn test_unsigned_attrs_encoding() {
     let data = b"Test data with unsigned attributes";
 
     // 创建签名
-    let signed_data_bytes = create_digital_signature(
-        &data[..], &priv_key, &cert, DEFAULT_ID, &mut rng, false
-    ).expect("Signature creation should succeed");
+    let signed_data_bytes =
+        create_digital_signature(&data[..], &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+            .expect("Signature creation should succeed");
 
     // 解析并验证签名
     let result = verify_digital_signature(&signed_data_bytes, DEFAULT_ID)
@@ -599,8 +607,8 @@ fn test_full_cms_roundtrip() {
         .expect("Signature creation should succeed");
 
     // 验证签名
-    let result = verify_digital_signature(&signed_data, DEFAULT_ID)
-        .expect("Verification should succeed");
+    let result =
+        verify_digital_signature(&signed_data, DEFAULT_ID).expect("Verification should succeed");
 
     assert!(result.is_valid);
     assert_eq!(result.content, data.as_slice());
@@ -612,7 +620,7 @@ fn test_full_cms_roundtrip() {
 #[test]
 fn test_multiple_signers() {
     let mut rng = StdRng::seed_from_u64(30006);
-    
+
     // 创建两个签名者
     let (cert1, priv_key1) = create_test_cert_and_key(&mut rng, "Signer 1", 30006);
     let (cert2, priv_key2) = create_test_cert_and_key(&mut rng, "Signer 2", 30007);
@@ -629,17 +637,20 @@ fn test_multiple_signers() {
         .expect("Signature creation should succeed");
 
     // 验证签名
-    let result = verify_digital_signature(&signed_data, DEFAULT_ID)
-        .expect("Verification should succeed");
+    let result =
+        verify_digital_signature(&signed_data, DEFAULT_ID).expect("Verification should succeed");
 
     assert!(result.is_valid);
     assert_eq!(result.content, data.as_slice());
     assert_eq!(result.signer_results.len(), 2);
-    
+
     // 两个签名者都应该有签名时间
     for (i, signer_result) in result.signer_results.iter().enumerate() {
-        assert!(signer_result.signing_time.is_some(), 
-            "Signer {} should have signing time", i);
+        assert!(
+            signer_result.signing_time.is_some(),
+            "Signer {} should have signing time",
+            i
+        );
     }
 }
 
@@ -660,11 +671,11 @@ fn test_message_digest_verification() {
         .expect("Signature creation should succeed");
 
     // 验证签名时会验证 message digest
-    let result = verify_digital_signature(&signed_data, DEFAULT_ID)
-        .expect("Verification should succeed");
+    let result =
+        verify_digital_signature(&signed_data, DEFAULT_ID).expect("Verification should succeed");
 
     assert!(result.is_valid);
-    
+
     // 验证结果中应该包含证书信息
     assert!(!result.certificates.is_empty());
 }
@@ -692,10 +703,9 @@ fn test_stability_multiple_signatures() {
 
     // 多次创建签章
     for i in 0..10 {
-        let signed_data_der = cms::create_digital_signature(
-            content, &priv_key, &cert, DEFAULT_ID, &mut rng, false,
-        )
-        .expect("Failed to create digital signature");
+        let signed_data_der =
+            cms::create_digital_signature(content, &priv_key, &cert, DEFAULT_ID, &mut rng, false)
+                .expect("Failed to create digital signature");
 
         assert!(!signed_data_der.is_empty());
 
@@ -704,7 +714,12 @@ fn test_stability_multiple_signatures() {
             .expect("Failed to verify signature");
 
         assert!(result.is_valid, "Signature {} should be valid", i);
-        assert_eq!(result.content, content.to_vec(), "Content should match for signature {}", i);
+        assert_eq!(
+            result.content,
+            content.to_vec(),
+            "Content should match for signature {}",
+            i
+        );
     }
 }
 
@@ -722,10 +737,11 @@ fn test_stability_multiple_signatures() {
 #[test]
 fn test_real_world_electronic_contract_signing() {
     let mut rng = StdRng::seed_from_u64(123456);
-    
+
     // 创建公司 A 的证书（模拟企业证书）
-    let (cert_a, priv_key_a) = create_test_cert_and_key(&mut rng, "Company A Legal Representative", 1001);
-    
+    let (cert_a, priv_key_a) =
+        create_test_cert_and_key(&mut rng, "Company A Legal Representative", 1001);
+
     // 合同内容（模拟真实业务数据）
     let contract_content = r#"{
         "contract_id": "HT-2024-001234",
@@ -738,11 +754,11 @@ fn test_real_world_electronic_contract_signing() {
         "effective_date": "2024-02-01",
         "terms": "详见合同附件"
     }"#;
-    
+
     println!("\n=== 电子合同签署场景 ===");
     println!("合同编号：HT-2024-001234");
     println!("签署方：{}", cert_a.subject.to_string());
-    
+
     // 创建电子签章（包含签名时间，具有法律效力）
     let contract_signature = create_digital_signature(
         contract_content.as_bytes(),
@@ -751,24 +767,42 @@ fn test_real_world_electronic_contract_signing() {
         DEFAULT_ID,
         &mut rng,
         true, // 包含签名时间
-    ).expect("Failed to sign contract");
-    
-    println!("✅ 合同签章创建成功，长度：{} 字节", contract_signature.len());
-    
+    )
+    .expect("Failed to sign contract");
+
+    println!(
+        "✅ 合同签章创建成功，长度：{} 字节",
+        contract_signature.len()
+    );
+
     // 验证合同签章
     let verification_result = verify_digital_signature(&contract_signature, DEFAULT_ID)
         .expect("Failed to verify contract signature");
-    
-    assert!(verification_result.is_valid, "Contract signature should be valid");
+
+    assert!(
+        verification_result.is_valid,
+        "Contract signature should be valid"
+    );
     assert_eq!(verification_result.content, contract_content.as_bytes());
-    
+
     // 验证签名时间（法律时效要求）
     assert_eq!(verification_result.signer_results.len(), 1);
     let signer_result = &verification_result.signer_results[0];
-    assert!(signer_result.signing_time.is_some(), "Contract must have signing time for legal validity");
-    
+    assert!(
+        signer_result.signing_time.is_some(),
+        "Contract must have signing time for legal validity"
+    );
+
     println!("✅ 合同验证通过");
-    println!("   - 签署者：{}", signer_result.certificate.as_ref().unwrap().subject.to_string());
+    println!(
+        "   - 签署者：{}",
+        signer_result
+            .certificate
+            .as_ref()
+            .unwrap()
+            .subject
+            .to_string()
+    );
     println!("   - 签名时间：{:?}", signer_result.signing_time);
     println!("   - 合同完整性：已验证");
 }
@@ -782,18 +816,18 @@ fn test_real_world_electronic_contract_signing() {
 #[test]
 fn test_real_world_multi_party_signing() {
     let mut rng = StdRng::seed_from_u64(123456);
-    
+
     // 创建三个签署者的证书（模拟董事会成员）
     let (cert_1, key_1) = create_test_cert_and_key(&mut rng, "Board Member 1", 2001);
     let (cert_2, key_2) = create_test_cert_and_key(&mut rng, "Board Member 2", 2002);
     let (cert_3, key_3) = create_test_cert_and_key(&mut rng, "Board Member 3", 2003);
-    
+
     // 董事会决议内容
     let resolution = b"Board Resolution 2024-001: Approve the annual budget and strategic plan.";
-    
+
     println!("\n=== 多方联合签署场景 ===");
     println!("决议内容：{}", String::from_utf8_lossy(resolution));
-    
+
     // 使用 Builder 模式创建包含多个签名的 CMS 数据
     let multi_signed_data = CmsSignerBuilder::new()
         .content(resolution)
@@ -803,28 +837,40 @@ fn test_real_world_multi_party_signing() {
         .include_signing_time(true)
         .sign(&mut rng)
         .expect("Failed to create multi-signature");
-    
-    println!("✅ 多方联合签章创建成功，长度：{} 字节", multi_signed_data.len());
-    
+
+    println!(
+        "✅ 多方联合签章创建成功，长度：{} 字节",
+        multi_signed_data.len()
+    );
+
     // 验证所有签名
     let result = verify_digital_signature(&multi_signed_data, DEFAULT_ID)
         .expect("Failed to verify multi-signature");
-    
+
     assert!(result.is_valid, "Multi-signature should be valid");
     assert_eq!(result.total_signers_count(), 3, "Should have 3 signers");
-    assert_eq!(result.valid_signers_count(), 3, "All 3 signatures should be valid");
-    
+    assert_eq!(
+        result.valid_signers_count(),
+        3,
+        "All 3 signatures should be valid"
+    );
+
     println!("✅ 所有签名验证通过");
     println!("   - 签署者数量：{}", result.total_signers_count());
     println!("   - 有效签名：{}", result.valid_signers_count());
-    
+
     // 验证每个签署者的签名时间
     for (i, signer) in result.signer_results.iter().enumerate() {
-        println!("   - 签署者 {}: {} (时间：{:?})", 
-            i + 1, 
+        println!(
+            "   - 签署者 {}: {} (时间：{:?})",
+            i + 1,
             signer.certificate.as_ref().unwrap().subject.to_string(),
-            signer.signing_time);
-        assert!(signer.signing_time.is_some(), "Each signer should have signing time");
+            signer.signing_time
+        );
+        assert!(
+            signer.signing_time.is_some(),
+            "Each signer should have signing time"
+        );
     }
 }
 
@@ -839,7 +885,7 @@ fn test_real_world_document_integrity() {
     let mut rng = StdRng::seed_from_u64(123456);
     let (priv_key, _pub_key) = generate_keypair(&mut rng);
     let cert = create_test_cert(&priv_key, &mut rng);
-    
+
     // 审计报告内容（模拟重要文档）
     let audit_report = r#"{
         "report_id": "SJ-2024-001",
@@ -849,10 +895,10 @@ fn test_real_world_document_integrity() {
         "auditor": "注册会计师事务所",
         "date": "2024-01-20"
     }"#;
-    
+
     println!("\n=== 文档完整性保护场景 ===");
     println!("报告编号：SJ-2024-001");
-    
+
     // 创建文档签章
     let original_signature = create_digital_signature(
         audit_report.as_bytes(),
@@ -861,16 +907,20 @@ fn test_real_world_document_integrity() {
         DEFAULT_ID,
         &mut rng,
         true,
-    ).expect("Failed to sign document");
-    
+    )
+    .expect("Failed to sign document");
+
     println!("✅ 文档签章已创建");
-    
+
     // 场景 1：验证原始文档（应该通过）
-    let result_original = verify_digital_signature(&original_signature, DEFAULT_ID)
-        .expect("Verification failed");
-    assert!(result_original.is_valid, "Original document should be valid");
+    let result_original =
+        verify_digital_signature(&original_signature, DEFAULT_ID).expect("Verification failed");
+    assert!(
+        result_original.is_valid,
+        "Original document should be valid"
+    );
     println!("✅ 原始文档验证通过");
-    
+
     // 场景 2：篡改文档内容（应该失败）
     let tampered_report = r#"{
         "report_id": "SJ-2024-001",
@@ -880,23 +930,29 @@ fn test_real_world_document_integrity() {
         "auditor": "注册会计师事务所",
         "date": "2024-01-20"
     }"#;
-    
+
     // 使用篡改的内容验证（签名是原始的，内容是篡改的）
     // 这种情况下验证会失败，因为 message-digest 不匹配
     let result_tampered = verify_digital_signature(&original_signature, DEFAULT_ID)
         .expect("Verification of tampered document failed");
-    
+
     // 验证会检测到内容不匹配
-    assert_ne!(result_tampered.content, tampered_report.as_bytes(), 
-        "Tampered content should not match original signature");
+    assert_ne!(
+        result_tampered.content,
+        tampered_report.as_bytes(),
+        "Tampered content should not match original signature"
+    );
     println!("✅ 文档篡改检测成功 - 签名保护了文档完整性");
-    
+
     // 场景 3：长期保存验证
     // 模拟文档保存一段时间后再次验证
     let saved_signature = original_signature.clone();
     let result_archived = verify_digital_signature(&saved_signature, DEFAULT_ID)
         .expect("Archived document verification failed");
-    assert!(result_archived.is_valid, "Archived document should still be valid");
+    assert!(
+        result_archived.is_valid,
+        "Archived document should still be valid"
+    );
     println!("✅ 归档文档验证通过 - 支持长期保存");
 }
 
@@ -926,8 +982,18 @@ fn test_crl_generation_and_verification() {
         .issuer(&issuer_name)
         .this_update(std::time::SystemTime::now())
         .next_update(std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600))
-        .add_revoked(revoked_serial_1.clone(), std::time::SystemTime::now() - Duration::from_secs(86400), None, None)
-        .add_revoked(revoked_serial_2.clone(), std::time::SystemTime::now(), Some(1), None)
+        .add_revoked(
+            revoked_serial_1.clone(),
+            std::time::SystemTime::now() - Duration::from_secs(86400),
+            None,
+            None,
+        )
+        .add_revoked(
+            revoked_serial_2.clone(),
+            std::time::SystemTime::now(),
+            Some(1),
+            None,
+        )
         .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
         .expect("CRL signing should succeed");
 
@@ -937,23 +1003,31 @@ fn test_crl_generation_and_verification() {
         .expect("CRL signature verification should succeed");
     println!("✅ CRL 签名验证通过");
 
-    assert!(crl.is_revoked(&revoked_serial_1), "Serial 1001 should be revoked");
-    assert!(crl.is_revoked(&revoked_serial_2), "Serial 1002 should be revoked");
-    
-    assert!(!crl.is_revoked(&SerialNumber::from(9999u64)), "Serial 9999 should not be revoked");
+    assert!(
+        crl.is_revoked(&revoked_serial_1),
+        "Serial 1001 should be revoked"
+    );
+    assert!(
+        crl.is_revoked(&revoked_serial_2),
+        "Serial 1002 should be revoked"
+    );
+
+    assert!(
+        !crl.is_revoked(&SerialNumber::from(9999u64)),
+        "Serial 9999 should not be revoked"
+    );
     println!("✅ 证书撤销状态检查正确");
 
     let crl_der = crl.to_der();
     assert!(!crl_der.is_empty());
-    
-    let decoded_crl = Crl::from_der(&crl_der)
-        .expect("CRL decoding should succeed");
+
+    let decoded_crl = Crl::from_der(&crl_der).expect("CRL decoding should succeed");
     assert!(decoded_crl.is_revoked(&revoked_serial_1));
     println!("✅ CRL DER 编码/解码成功");
 
     let crl_pem = crl.to_pem().expect("PEM encoding should succeed");
-    let decoded_crl_pem = Crl::from_pem(crl_pem.as_bytes())
-        .expect("CRL PEM decoding should succeed");
+    let decoded_crl_pem =
+        Crl::from_pem(crl_pem.as_bytes()).expect("CRL PEM decoding should succeed");
     assert!(decoded_crl_pem.is_revoked(&revoked_serial_2));
     println!("✅ CRL PEM 编码/解码成功");
 
@@ -979,7 +1053,7 @@ fn test_cms_with_crl_embedding() {
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
         X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
     ]);
-    
+
     let crl = CrlBuilder::new()
         .issuer(&issuer_name)
         .this_update(std::time::SystemTime::now())
@@ -1000,10 +1074,13 @@ fn test_cms_with_crl_embedding() {
         .sign(&mut rng)
         .expect("CMS signing with CRL should succeed");
 
-    println!("✅ CMS 签名成功（包含 CRL），长度：{} 字节", cms_signed.len());
+    println!(
+        "✅ CMS 签名成功（包含 CRL），长度：{} 字节",
+        cms_signed.len()
+    );
 
-    let result = verify_digital_signature(&cms_signed, DEFAULT_ID)
-        .expect("CMS verification should succeed");
+    let result =
+        verify_digital_signature(&cms_signed, DEFAULT_ID).expect("CMS verification should succeed");
 
     assert!(result.is_valid, "CMS signature should be valid");
     assert_eq!(result.content, content);
@@ -1040,7 +1117,7 @@ fn test_complete_workflow_cert_crl() {
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
         X500Attribute::new(X500AttributeType::CommonName, "Test CA Root"),
     ]);
-    
+
     let crl = CrlBuilder::new()
         .issuer(&issuer_name)
         .this_update(std::time::SystemTime::now())
@@ -1048,11 +1125,14 @@ fn test_complete_workflow_cert_crl() {
         .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
         .expect("CRL signing should succeed");
 
-    assert!(!crl.is_revoked(&signer_cert.serial_number.clone()), "Certificate should not be revoked");
+    assert!(
+        !crl.is_revoked(&signer_cert.serial_number.clone()),
+        "Certificate should not be revoked"
+    );
     println!("步骤 4: 创建 CRL 成功，证书未被撤销");
 
-    let cms_result = verify_digital_signature(&cms_signed, DEFAULT_ID)
-        .expect("CMS verification should succeed");
+    let cms_result =
+        verify_digital_signature(&cms_signed, DEFAULT_ID).expect("CMS verification should succeed");
     assert!(cms_result.is_valid);
 
     println!("步骤 5: 所有验证通过");
@@ -1079,7 +1159,9 @@ fn test_edge_cases_crl() {
         .sign(&ca_priv_key, DEFAULT_ID, &mut rng)
         .expect("Empty CRL signing should succeed");
 
-    assert!(empty_crl.revoked_certificates().map_or(true, |r| r.is_empty()));
+    assert!(empty_crl
+        .revoked_certificates()
+        .map_or(true, |r| r.is_empty()));
     println!("✅ 空 CRL 创建成功");
 
     let (signer_priv_key, _) = generate_keypair(&mut rng);
@@ -1145,7 +1227,10 @@ fn test_complete_signing_workflow_with_crl() {
         .include_signing_time(true)
         .sign(&mut rng)
         .expect("CMS signing should succeed");
-    println!("✅ 文档签名成功（无 CRL），长度：{} 字节", cms_without_crl.len());
+    println!(
+        "✅ 文档签名成功（无 CRL），长度：{} 字节",
+        cms_without_crl.len()
+    );
 
     // 步骤 3：验证签名（应该成功，因为证书有效且未被撤销）
     println!("\n--- 步骤 3：验证签名（无 CRL） ---");
@@ -1155,11 +1240,15 @@ fn test_complete_signing_workflow_with_crl() {
     assert_eq!(result.content, content);
     println!("✅ 签名验证通过（无 CRL）");
     println!("   内容匹配: {}", result.content == content);
-    println!("   有效签名者: {}/{}", result.valid_signers_count(), result.total_signers_count());
+    println!(
+        "   有效签名者: {}/{}",
+        result.valid_signers_count(),
+        result.total_signers_count()
+    );
 
     // 步骤 4：CA 撤销证书（模拟私钥泄露场景）
     println!("\n--- 步骤 4：CA 撤销证书 ---");
-    
+
     // 使用与证书相同的签发者名称（自签名证书的 issuer == subject）
     let ca_name = signer_cert.issuer.clone();
 
@@ -1199,13 +1288,16 @@ fn test_complete_signing_workflow_with_crl() {
         .include_signing_time(true)
         .sign(&mut rng)
         .expect("CMS signing with CRL should succeed");
-    println!("✅ 文档签名成功（包含 CRL），长度：{} 字节", cms_with_crl.len());
+    println!(
+        "✅ 文档签名成功（包含 CRL），长度：{} 字节",
+        cms_with_crl.len()
+    );
 
     // 步骤 6：验证签名（应该失败，因为证书已被撤销）
     println!("\n--- 步骤 6：验证签名（包含 CRL） ---");
     let result_with_crl = verify_digital_signature(&cms_with_crl, DEFAULT_ID)
         .expect("CMS verification should complete");
-    
+
     // 验证应该失败，因为证书在 CRL 中
     assert!(!result_with_crl.is_valid, "签名应该无效（证书已撤销）");
     println!("✅ 签名验证失败（预期行为）");
@@ -1224,7 +1316,10 @@ fn test_complete_signing_workflow_with_crl() {
     println!("   新证书序列号: {}", other_serial);
 
     // 确认新证书不在 CRL 中
-    assert!(!crl.is_revoked(&other_serial.clone()), "新证书不应该在 CRL 中");
+    assert!(
+        !crl.is_revoked(&other_serial.clone()),
+        "新证书不应该在 CRL 中"
+    );
 
     let cms_other = CmsSignerBuilder::new()
         .content(content)
@@ -1234,8 +1329,8 @@ fn test_complete_signing_workflow_with_crl() {
         .sign(&mut rng)
         .expect("CMS signing with other cert should succeed");
 
-    let result_other = verify_digital_signature(&cms_other, DEFAULT_ID)
-        .expect("CMS verification should complete");
+    let result_other =
+        verify_digital_signature(&cms_other, DEFAULT_ID).expect("CMS verification should complete");
     assert!(result_other.is_valid, "使用未撤销证书的签名应该有效");
     println!("✅ 使用未撤销证书的签名验证通过");
 
@@ -1276,7 +1371,12 @@ fn test_multiple_signers_with_crl() {
         .issuer(&ca_name)
         .this_update(std::time::SystemTime::now())
         .next_update(std::time::SystemTime::now() + Duration::from_secs(3600))
-        .add_revoked(cert2.serial_number.clone(), std::time::SystemTime::now(), Some(1), None)
+        .add_revoked(
+            cert2.serial_number.clone(),
+            std::time::SystemTime::now(),
+            Some(1),
+            None,
+        )
         .sign(&priv2, DEFAULT_ID, &mut rng)
         .expect("CRL signing should succeed");
 
@@ -1299,8 +1399,8 @@ fn test_multiple_signers_with_crl() {
     println!("✅ 3 个签名者签署文档完成");
 
     // 验证签名
-    let result = verify_digital_signature(&cms, DEFAULT_ID)
-        .expect("CMS verification should complete");
+    let result =
+        verify_digital_signature(&cms, DEFAULT_ID).expect("CMS verification should complete");
 
     // 整体应该无效（因为有签名者证书被撤销）
     assert!(!result.is_valid, "整体签名应该无效");
@@ -1319,7 +1419,10 @@ fn test_multiple_signers_with_crl() {
 
     // 签名者 1 和 3 应该有效，签名者 2 应该无效
     assert!(result.signer_results[0].is_valid, "签名者 1 应该有效");
-    assert!(!result.signer_results[1].is_valid, "签名者 2 应该无效（证书已撤销）");
+    assert!(
+        !result.signer_results[1].is_valid,
+        "签名者 2 应该无效（证书已撤销）"
+    );
     assert!(result.signer_results[2].is_valid, "签名者 3 应该有效");
 
     println!("\n✅ 多签名者 CRL 验证测试完成");

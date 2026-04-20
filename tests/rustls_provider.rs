@@ -18,10 +18,7 @@ use rustls::server::danger::SignatureVerificationInput;
 use rustls::{ClientConfig, ClientConnection, Connection, ServerConfig, ServerConnection};
 
 use libsmx::rustls_provider;
-use libsmx::sm2::{
-    der::sig_from_der,
-    generate_keypair, verify_message, DEFAULT_ID,
-};
+use libsmx::sm2::{der::sig_from_der, generate_keypair, verify_message, DEFAULT_ID};
 
 // ── 测试用 RNG ────────────────────────────────────────────────────────────────
 

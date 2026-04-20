@@ -85,7 +85,8 @@ fn test_sign_verify_message() {
     assert_eq!(signature.len(), 64);
 
     // 验签
-    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &signature).expect("Verification should succeed");
+    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &signature)
+        .expect("Verification should succeed");
 }
 
 /// 测试签名 - 相同消息不同签名（随机性）
@@ -106,8 +107,10 @@ fn test_sign_randomness() {
     );
 
     // 但都应能通过验签
-    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &sig1).expect("First signature should verify");
-    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &sig2).expect("Second signature should verify");
+    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &sig1)
+        .expect("First signature should verify");
+    verify_message(message, DEFAULT_ID, &pub_key.as_bytes(), &sig2)
+        .expect("Second signature should verify");
 }
 
 /// 测试验签失败 - 篡改消息
@@ -123,7 +126,12 @@ fn test_verify_failure_tampered_message() {
     let tampered_message = b"Tampered message";
 
     // 验签应失败
-    let result = verify_message(tampered_message, DEFAULT_ID, &pub_key.as_bytes(), &signature);
+    let result = verify_message(
+        tampered_message,
+        DEFAULT_ID,
+        &pub_key.as_bytes(),
+        &signature,
+    );
     assert!(
         result.is_err(),
         "Verification should fail for tampered message"
