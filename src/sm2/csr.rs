@@ -173,6 +173,58 @@ impl CertificateSigningRequest {
 }
 
 // ====================================================================================
+// CA 从 CSR 颁发证书
+// ====================================================================================
+
+/// 从 CSR 颁发证书
+///
+/// CA 使用 CSR 中的信息（主体名称、公钥）签发新证书。
+///
+/// # 参数
+/// - `csr`: 证书签名请求
+/// - `ca_cert`: CA 证书
+/// - `ca_priv_key`: CA 私钥
+/// - `validity`: 证书有效期
+/// - `serial_number`: 证书序列号
+/// - `ca_id`: CA 的 SM2 签名 ID
+/// - `extensions`: 证书扩展（可选）
+/// - `rng`: 随机数生成器
+///
+/// # 返回
+/// - `Ok(GmCertificate)`: 颁发的证书
+/// - `Err(Error)`: 颁发失败
+#[cfg(feature = "std")]
+pub fn issue_certificate_from_csr<R: rand_core::Rng>(
+    csr: &CertificateSigningRequest,
+    ca_cert: &GmCertificate,
+    ca_priv_key: &PrivateKey,
+    validity: &x509_cert::time::Validity,
+    serial_number: &x509_cert::serial_number::SerialNumber,
+    ca_id: &[u8],
+    extensions: Option<Vec<x509_cert::ext::Extension>>,
+    rng: &mut R,
+) -> Result<GmCertificate, Error> {
+    // 验证 CSR 签名
+    csr.verify()?;
+
+    // 从 CSR 获取公钥
+    let subject_pub_key = csr.public_key()?;
+
+    // 使用 CA 签发证书
+    crate::sm2::cert::issue_certificate(
+        ca_cert,
+        ca_priv_key,
+        &csr.info.subject,
+        &subject_pub_key,
+        validity,
+        serial_number,
+        ca_id,
+        extensions,
+        rng,
+    )
+}
+
+// ====================================================================================
 // 证书链验证
 // ====================================================================================
 
@@ -462,5 +514,384 @@ mod tests {
             "Certificate chain verification should succeed: {:?}",
             result.errors
         );
+    }
+
+    #[test]
+    fn test_csr_to_certificate_full_workflow() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // 步骤 1: 创建 CA
+        let (ca_priv_key, ca_pub_key) = generate_keypair(&mut rng);
+        let ca_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+            X500Attribute::new(X500AttributeType::CommonName, "Root CA"),
+        ]);
+        let ca_serial = SerialNumber::from(1u64);
+        let ca_validity = build_test_validity();
+        let ca_cert = generate_self_signed_cert(
+            &ca_priv_key,
+            &ca_subject,
+            &ca_validity,
+            &ca_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to generate CA certificate");
+
+        // 步骤 2: 申请者创建密钥对和 CSR
+        let (applicant_priv_key, applicant_pub_key) = generate_keypair(&mut rng);
+        let applicant_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test Org"),
+            X500Attribute::new(X500AttributeType::CommonName, "test.example.com"),
+        ]);
+
+        let csr = CertificateSigningRequest::create(
+            &applicant_priv_key,
+            &applicant_subject,
+            DEFAULT_ID,
+            &mut rng,
+        )
+        .expect("Failed to create CSR");
+
+        // 步骤 3: 验证 CSR 签名
+        csr.verify().expect("CSR signature verification failed");
+
+        // 步骤 4: CA 从 CSR 颁发证书
+        let cert_serial = SerialNumber::from(100u64);
+        let cert_validity = build_test_validity();
+        let issued_cert = issue_certificate_from_csr(
+            &csr,
+            &ca_cert,
+            &ca_priv_key,
+            &cert_validity,
+            &cert_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to issue certificate from CSR");
+
+        // 步骤 5: 验证颁发的证书
+        assert_eq!(issued_cert.subject, applicant_subject);
+        assert_eq!(issued_cert.issuer, ca_subject);
+        assert_eq!(issued_cert.serial_number, cert_serial);
+
+        // 步骤 6: 验证证书中的公钥与申请者公钥匹配
+        assert_eq!(issued_cert.subject_public_key_info.subject_public_key.raw_bytes(), applicant_pub_key.as_bytes());
+
+        // 步骤 7: 验证证书签名（使用 CA 公钥）
+        issued_cert
+            .verify_signature_with_ca(&ca_cert, DEFAULT_ID)
+            .expect("Certificate signature verification failed");
+
+        // 步骤 8: 证书链验证
+        let mut chain = CertificateChain::new();
+        chain.add_certificate(issued_cert);
+
+        let mut trust_anchors = Vec::new();
+        trust_anchors.push(ca_cert);
+
+        let result = chain.verify(&trust_anchors);
+        assert!(
+            result.is_valid,
+            "Certificate chain verification should succeed: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_csr_to_certificate_with_der_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // 创建 CA
+        let (ca_priv_key, _) = generate_keypair(&mut rng);
+        let ca_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+            X500Attribute::new(X500AttributeType::CommonName, "Root CA"),
+        ]);
+        let ca_serial = SerialNumber::from(1u64);
+        let ca_validity = build_test_validity();
+        let ca_cert = generate_self_signed_cert(
+            &ca_priv_key,
+            &ca_subject,
+            &ca_validity,
+            &ca_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to generate CA certificate");
+
+        // 申请者创建 CSR
+        let (applicant_priv_key, _) = generate_keypair(&mut rng);
+        let applicant_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::CommonName, "test.example.com"),
+        ]);
+
+        let csr = CertificateSigningRequest::create(
+            &applicant_priv_key,
+            &applicant_subject,
+            DEFAULT_ID,
+            &mut rng,
+        )
+        .expect("Failed to create CSR");
+
+        // CSR DER 编码/解码
+        let csr_der = csr.to_der().expect("Failed to encode CSR to DER");
+        let csr_decoded =
+            CertificateSigningRequest::from_der(&csr_der).expect("Failed to decode CSR from DER");
+
+        // 验证解码后的 CSR
+        csr_decoded
+            .verify()
+            .expect("Decoded CSR signature verification failed");
+
+        // CA 从解码后的 CSR 颁发证书
+        let cert_serial = SerialNumber::from(200u64);
+        let cert_validity = build_test_validity();
+        let issued_cert = issue_certificate_from_csr(
+            &csr_decoded,
+            &ca_cert,
+            &ca_priv_key,
+            &cert_validity,
+            &cert_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to issue certificate from decoded CSR");
+
+        // 验证颁发的证书
+        assert_eq!(issued_cert.subject, applicant_subject);
+        issued_cert
+            .verify_signature_with_ca(&ca_cert, DEFAULT_ID)
+            .expect("Certificate signature verification failed");
+    }
+
+    #[test]
+    fn test_csr_to_certificate_with_pem_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // 创建 CA
+        let (ca_priv_key, _) = generate_keypair(&mut rng);
+        let ca_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+            X500Attribute::new(X500AttributeType::CommonName, "Root CA"),
+        ]);
+        let ca_serial = SerialNumber::from(1u64);
+        let ca_validity = build_test_validity();
+        let ca_cert = generate_self_signed_cert(
+            &ca_priv_key,
+            &ca_subject,
+            &ca_validity,
+            &ca_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to generate CA certificate");
+
+        // 申请者创建 CSR
+        let (applicant_priv_key, _) = generate_keypair(&mut rng);
+        let applicant_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::CommonName, "test.example.com"),
+        ]);
+
+        let csr = CertificateSigningRequest::create(
+            &applicant_priv_key,
+            &applicant_subject,
+            DEFAULT_ID,
+            &mut rng,
+        )
+        .expect("Failed to create CSR");
+
+        // CSR PEM 编码/解码
+        let csr_pem = csr.to_pem().expect("Failed to encode CSR to PEM");
+        let csr_decoded =
+            CertificateSigningRequest::from_pem(&csr_pem).expect("Failed to decode CSR from PEM");
+
+        // 验证解码后的 CSR
+        csr_decoded
+            .verify()
+            .expect("Decoded CSR signature verification failed");
+
+        // CA 从解码后的 CSR 颁发证书
+        let cert_serial = SerialNumber::from(300u64);
+        let cert_validity = build_test_validity();
+        let issued_cert = issue_certificate_from_csr(
+            &csr_decoded,
+            &ca_cert,
+            &ca_priv_key,
+            &cert_validity,
+            &cert_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to issue certificate from decoded CSR");
+
+        // 验证颁发的证书
+        assert_eq!(issued_cert.subject, applicant_subject);
+        issued_cert
+            .verify_signature_with_ca(&ca_cert, DEFAULT_ID)
+            .expect("Certificate signature verification failed");
+    }
+
+    #[test]
+    fn test_csr_invalid_signature_rejects_certificate_issuance() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // 创建 CA
+        let (ca_priv_key, _) = generate_keypair(&mut rng);
+        let ca_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test CA"),
+            X500Attribute::new(X500AttributeType::CommonName, "Root CA"),
+        ]);
+        let ca_serial = SerialNumber::from(1u64);
+        let ca_validity = build_test_validity();
+        let ca_cert = generate_self_signed_cert(
+            &ca_priv_key,
+            &ca_subject,
+            &ca_validity,
+            &ca_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to generate CA certificate");
+
+        // 申请者创建 CSR
+        let (applicant_priv_key, _) = generate_keypair(&mut rng);
+        let applicant_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::CommonName, "test.example.com"),
+        ]);
+
+        let mut csr = CertificateSigningRequest::create(
+            &applicant_priv_key,
+            &applicant_subject,
+            DEFAULT_ID,
+            &mut rng,
+        )
+        .expect("Failed to create CSR");
+
+        // 篡改 CSR 签名
+        csr.signature =
+            BitString::new(0, &[0u8; 64]).expect("Failed to create tampered signature");
+
+        // CA 拒绝颁发证书（CSR 签名无效）
+        let cert_serial = SerialNumber::from(400u64);
+        let cert_validity = build_test_validity();
+        let result = issue_certificate_from_csr(
+            &csr,
+            &ca_cert,
+            &ca_priv_key,
+            &cert_validity,
+            &cert_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        );
+
+        assert!(result.is_err(), "Certificate issuance should fail with invalid CSR signature");
+    }
+
+    #[test]
+    fn test_multi_level_chain_with_csr() {
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // 步骤 1: 创建根 CA
+        let (root_priv_key, _) = generate_keypair(&mut rng);
+        let root_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test Root CA"),
+            X500Attribute::new(X500AttributeType::CommonName, "Root CA"),
+        ]);
+        let root_serial = SerialNumber::from(1u64);
+        let root_validity = build_test_validity();
+        let root_cert = generate_self_signed_cert(
+            &root_priv_key,
+            &root_subject,
+            &root_validity,
+            &root_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to generate root CA certificate");
+
+        // 步骤 2: 中间 CA 创建 CSR
+        let (intermediate_priv_key, _) = generate_keypair(&mut rng);
+        let intermediate_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::Organization, "Test Intermediate CA"),
+            X500Attribute::new(X500AttributeType::CommonName, "Intermediate CA"),
+        ]);
+
+        let intermediate_csr = CertificateSigningRequest::create(
+            &intermediate_priv_key,
+            &intermediate_subject,
+            DEFAULT_ID,
+            &mut rng,
+        )
+        .expect("Failed to create intermediate CA CSR");
+
+        // 根 CA 为中间 CA 颁发证书
+        let intermediate_cert_serial = SerialNumber::from(2u64);
+        let intermediate_cert_validity = build_test_validity();
+        let intermediate_cert = issue_certificate_from_csr(
+            &intermediate_csr,
+            &root_cert,
+            &root_priv_key,
+            &intermediate_cert_validity,
+            &intermediate_cert_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to issue intermediate CA certificate");
+
+        // 步骤 3: 终端实体创建 CSR
+        let (end_priv_key, _) = generate_keypair(&mut rng);
+        let end_subject = build_x500_name(&[
+            X500Attribute::new(X500AttributeType::CommonName, "test.example.com"),
+        ]);
+
+        let end_csr = CertificateSigningRequest::create(
+            &end_priv_key,
+            &end_subject,
+            DEFAULT_ID,
+            &mut rng,
+        )
+        .expect("Failed to create end entity CSR");
+
+        // 中间 CA 为终端实体颁发证书
+        let end_cert_serial = SerialNumber::from(3u64);
+        let end_cert_validity = build_test_validity();
+        let end_cert = issue_certificate_from_csr(
+            &end_csr,
+            &intermediate_cert,
+            &intermediate_priv_key,
+            &end_cert_validity,
+            &end_cert_serial,
+            DEFAULT_ID,
+            None,
+            &mut rng,
+        )
+        .expect("Failed to issue end entity certificate");
+
+        // 步骤 4: 验证完整证书链
+        let mut chain = CertificateChain::new();
+        chain.add_certificate(end_cert);
+        chain.add_certificate(intermediate_cert);
+
+        let mut trust_anchors = Vec::new();
+        trust_anchors.push(root_cert);
+
+        let result = chain.verify(&trust_anchors);
+        assert!(
+            result.is_valid,
+            "Multi-level certificate chain verification should succeed: {:?}",
+            result.errors
+        );
+        assert_eq!(result.chain.len(), 3, "Chain should contain 3 certificates");
     }
 }
