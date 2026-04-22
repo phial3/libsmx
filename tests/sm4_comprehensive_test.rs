@@ -51,46 +51,50 @@ fn test_sm4_standard_vector() {
     assert_eq!(decrypted, plaintext, "Decryption failed");
 }
 
-/// 测试 ECB 模式 - 基础功能
-#[test]
-fn test_sm4_ecb_basic() {
-    let key = [0xABu8; 16];
-    let plaintext = b"Hello, SM4 World!"; // 17 bytes
-
-    let ciphertext = sm4_encrypt_ecb(&key, plaintext);
-    assert!(!ciphertext.is_empty());
-    // 输入 17 字节，输出会填充到 32 字节（2 个 block）
-    assert_eq!(ciphertext.len(), 32);
-
-    let decrypted = sm4_decrypt_ecb(&key, &ciphertext);
-    // 解密后包含填充的零字节
-    assert_eq!(&decrypted[..17], plaintext);
-}
-
-/// 测试 ECB 模式 - 不同长度
+/// 测试 ECB 模式 - 不同长度（必须是 16 的倍数）
 #[test]
 fn test_sm4_ecb_various_lengths() {
     let key = [0xABu8; 16];
 
-    // 测试各种长度
-    let lengths = vec![1, 15, 16, 17, 31, 32, 48, 64, 100, 1000];
+    // 测试各种 16 倍数长度
+    let lengths = vec![16, 32, 48, 64, 80, 96, 1008]; // 1008 = 16 * 63
 
     for len in lengths {
         let plaintext = vec![0xCDu8; len];
         let ciphertext = sm4_encrypt_ecb(&key, &plaintext);
-        // 密文长度应该是 16 的倍数
-        assert_eq!(
-            ciphertext.len() % 16,
-            0,
-            "Ciphertext length should be multiple of 16"
-        );
+        assert_eq!(ciphertext.len(), len, "Ciphertext length should match input length");
         let decrypted = sm4_decrypt_ecb(&key, &ciphertext);
-        assert_eq!(
-            &decrypted[..len],
-            &plaintext[..],
-            "Failed for length {}",
-            len
-        );
+        assert_eq!(decrypted, plaintext, "Failed for length {}", len);
+    }
+}
+
+/// 测试 ECB 模式 - 各种非 16 字节倍数长度 panic（加密）
+#[test]
+fn test_sm4_ecb_encrypt_various_non_multiple_panics() {
+    let key = [0xABu8; 16];
+    let lengths = vec![1, 5, 15, 17, 31, 100, 1000];
+
+    for len in lengths {
+        let plaintext = vec![0xCDu8; len];
+        let result = std::panic::catch_unwind(|| {
+            sm4_encrypt_ecb(&key, &plaintext);
+        });
+        assert!(result.is_err(), "Encryption should panic for length {}", len);
+    }
+}
+
+/// 测试 ECB 模式 - 各种非 16 字节倍数长度 panic（解密）
+#[test]
+fn test_sm4_ecb_decrypt_various_non_multiple_panics() {
+    let key = [0xABu8; 16];
+    let lengths = vec![1, 5, 15, 17, 31, 100, 1000];
+
+    for len in lengths {
+        let ciphertext = vec![0xCDu8; len];
+        let result = std::panic::catch_unwind(|| {
+            sm4_decrypt_ecb(&key, &ciphertext);
+        });
+        assert!(result.is_err(), "Decryption should panic for length {}", len);
     }
 }
 

@@ -273,7 +273,7 @@ fn test_sm4_gb_t_b2_key_schedule() {
         let key = hex::decode(key_hex).unwrap();
         let key_array: [u8; 16] = key.try_into().unwrap();
         // 测试加密解密往返，使用 16 字节对齐的数据
-        let plaintext = b"test message 16.."; // 16 字节
+        let plaintext = b"test message 16."; // 16 bytes
         let ciphertext = sm4_encrypt_ecb(&key_array, plaintext);
         let decrypted = sm4_decrypt_ecb(&key_array, &ciphertext);
 
@@ -353,7 +353,8 @@ fn test_sm4_gb_t_c2_performance() {
     let key = hex::decode(key_hex).unwrap();
     let key_array: [u8; 16] = key.try_into().unwrap();
 
-    let msg = b"performance test message for SM4 encryption";
+    // 48 bytes
+    let msg = b"performance test message for SM4 encryption res.";
 
     let start = std::time::Instant::now();
 
@@ -381,7 +382,8 @@ fn test_sm4_gb_t_c2_mode_performance() {
     let key = hex::decode(key_hex).unwrap();
     let key_array: [u8; 16] = key.try_into().unwrap();
 
-    let msg = b"performance test message for SM4 modes comparison";
+    // 48 bytes
+    let msg = b"performance test message for SM4 mode comparison";
     let iv = [0u8; 16];
     let ctr_nonce = [0u8; 16];
     let gcm_nonce = [0u8; 12];
