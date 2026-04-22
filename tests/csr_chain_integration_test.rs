@@ -341,7 +341,7 @@ fn test_csr_to_certificate_full_workflow_integration() {
     let mut rng = StdRng::seed_from_u64(12345);
 
     // 步骤 1: 创建 CA
-    let (ca_priv_key, ca_pub_key) = generate_keypair(&mut rng);
+    let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
     let ca_subject = build_x500_name(&[
         X500Attribute::new(X500AttributeType::Organization, "Test CA"),
         X500Attribute::new(X500AttributeType::CommonName, "Root CA"),

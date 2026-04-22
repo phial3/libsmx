@@ -1011,9 +1011,7 @@ pub fn extract_sm2_public_key(cert: &GmCertificate) -> Result<PublicKey, Error> 
         return Err(Error::InvalidCertificate);
     }
 
-    let mut pub_key = [0u8; 65];
-    pub_key.copy_from_slice(pub_key_bytes);
-    PublicKey::from_bytes(&pub_key)
+    PublicKey::from_bytes(pub_key_bytes)
 }
 
 /// X.500 可分辨名称属性类型

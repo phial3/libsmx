@@ -352,13 +352,32 @@ pub struct PublicKey {
 }
 
 impl PublicKey {
-    /// 从字节构造公钥（验证格式）
-    pub fn from_bytes(bytes: &[u8; 65]) -> Result<Self, Error> {
-        // 验证未压缩格式标记
-        if bytes[0] != 0x04 {
-            return Err(Error::InvalidPublicKey);
+    /// 从字节构造公钥（支持压缩格式和未压缩格式）
+    ///
+    /// 支持两种格式：
+    /// - **未压缩格式 (65字节)**: `0x04 || X(32B) || Y(32B)`
+    /// - **压缩格式 (33字节)**: `0x02/0x03 || X(32B)`（自动解压）
+    ///
+    /// # 参数
+    /// - `bytes`: 公钥字节（65字节未压缩或33字节压缩格式）
+    ///
+    /// # 返回
+    /// - `Ok(PublicKey)`: 解压后的65字节未压缩格式公钥
+    /// - `Err(Error::InvalidPublicKey)`: 格式错误或坐标无效
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        match bytes.len() {
+            65 if bytes[0] == 0x04 => {
+                let mut pubkey = [0u8; 65];
+                pubkey.copy_from_slice(bytes);
+                Ok(PublicKey { bytes: pubkey })
+            }
+            33 if bytes[0] == 0x02 || bytes[0] == 0x03 => {
+                let mut compressed = [0u8; 33];
+                compressed.copy_from_slice(bytes);
+                Self::from_compressed(&compressed)
+            }
+            _ => Err(Error::InvalidPublicKey),
         }
-        Ok(PublicKey { bytes: *bytes })
     }
 
     /// 以字节引用访问公钥

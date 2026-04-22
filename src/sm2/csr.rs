@@ -74,14 +74,12 @@ impl CertificateSigningRequest {
 
     /// 验证 CSR 签名
     pub fn verify(&self) -> Result<(), Error> {
-        let pub_key_bytes: [u8; 65] = self
+        let pub_key_bytes = self
             .info
             .public_key
             .subject_public_key
-            .raw_bytes()
-            .try_into()
-            .map_err(|_| Error::InvalidPublicKey)?;
-        let pub_key = PublicKey::from_bytes(&pub_key_bytes).map_err(|_| Error::InvalidPublicKey)?;
+            .raw_bytes();
+        let pub_key = PublicKey::from_bytes(pub_key_bytes).map_err(|_| Error::InvalidPublicKey)?;
 
         let info_der = self.info.to_der().map_err(|_| Error::InvalidSignature)?;
 
@@ -161,14 +159,12 @@ impl CertificateSigningRequest {
 
     /// 获取公钥
     pub fn public_key(&self) -> Result<PublicKey, Error> {
-        let pub_key_bytes: [u8; 65] = self
+        let pub_key_bytes = self
             .info
             .public_key
             .subject_public_key
-            .raw_bytes()
-            .try_into()
-            .map_err(|_| Error::InvalidPublicKey)?;
-        PublicKey::from_bytes(&pub_key_bytes).map_err(|_| Error::InvalidPublicKey)
+            .raw_bytes();
+        PublicKey::from_bytes(pub_key_bytes).map_err(|_| Error::InvalidPublicKey)
     }
 }
 
@@ -521,7 +517,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(12345);
 
         // 步骤 1: 创建 CA
-        let (ca_priv_key, ca_pub_key) = generate_keypair(&mut rng);
+        let (ca_priv_key, _ca_pub_key) = generate_keypair(&mut rng);
         let ca_subject = build_x500_name(&[
             X500Attribute::new(X500AttributeType::Organization, "Test CA"),
             X500Attribute::new(X500AttributeType::CommonName, "Root CA"),

@@ -5,6 +5,8 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::rustls_provider::sign::Sm2Sm3Algorithm;
 use pki_types::PrivateKeyDer;
@@ -83,11 +85,69 @@ struct SmTicketerFactory;
 
 impl TicketerFactory for SmTicketerFactory {
     fn ticketer(&self) -> Result<Arc<dyn TicketProducer>, Error> {
-        // Reason: TLS session ticket 加密暂不支持，返回错误；
-        //   后续可用 SM4-GCM 实现 ticket 加密
-        Err(Error::General(
-            "SM ticket factory not yet implemented".into(),
-        ))
+        Ok(Arc::new(SmTicketProducer::new()?))
+    }
+}
+
+const TICKET_KEY_SIZE: usize = 16;
+const TICKET_NONCE_SIZE: usize = 12;
+const TICKET_TAG_SIZE: usize = 16;
+
+#[derive(Debug)]
+struct SmTicketProducer {
+    key: [u8; TICKET_KEY_SIZE],
+}
+
+impl SmTicketProducer {
+    fn new() -> Result<Self, Error> {
+        let mut key = [0u8; TICKET_KEY_SIZE];
+        Random
+            .fill(&mut key)
+            .map_err(|_| Error::General("rng failed".into()))?;
+        Ok(SmTicketProducer { key })
+    }
+
+    fn gcm_encrypt(&self, nonce: &[u8; 12], plaintext: &[u8]) -> (Vec<u8>, [u8; 16]) {
+        let (ct, tag) = crate::sm4::sm4_encrypt_gcm(&self.key, nonce, &[], plaintext);
+        (ct, tag)
+    }
+
+    fn gcm_decrypt(&self, nonce: &[u8; 12], ciphertext: &[u8], tag: &[u8; 16]) -> Option<Vec<u8>> {
+        crate::sm4::sm4_decrypt_gcm(&self.key, nonce, &[], ciphertext, tag).ok()
+    }
+}
+
+impl TicketProducer for SmTicketProducer {
+    fn encrypt(&self, plaintext: &[u8]) -> Option<Vec<u8>> {
+        let mut nonce = [0u8; TICKET_NONCE_SIZE];
+        Random.fill(&mut nonce).ok()?;
+
+        let (ciphertext, tag) = self.gcm_encrypt(&nonce, plaintext);
+
+        let mut result = Vec::with_capacity(TICKET_NONCE_SIZE + ciphertext.len() + TICKET_TAG_SIZE);
+        result.extend_from_slice(&nonce);
+        result.extend_from_slice(&ciphertext);
+        result.extend_from_slice(&tag);
+
+        Some(result)
+    }
+
+    fn decrypt(&self, ciphertext: &[u8]) -> Option<Vec<u8>> {
+        let min_len = TICKET_NONCE_SIZE + TICKET_TAG_SIZE;
+        if ciphertext.len() < min_len {
+            return None;
+        }
+
+        let nonce: [u8; 12] = ciphertext[..12].try_into().ok()?;
+        let tag_start = ciphertext.len() - TICKET_TAG_SIZE;
+        let ciphertext_body = &ciphertext[TICKET_NONCE_SIZE..tag_start];
+        let tag: [u8; 16] = ciphertext[tag_start..].try_into().ok()?;
+
+        self.gcm_decrypt(&nonce, ciphertext_body, &tag)
+    }
+
+    fn lifetime(&self) -> Duration {
+        Duration::from_secs(60 * 60 * 24)
     }
 }
 
