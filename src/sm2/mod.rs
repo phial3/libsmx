@@ -854,8 +854,15 @@ pub fn encrypt<R: Rng>(pub_key: &PublicKey, message: &[u8], rng: &mut R) -> Resu
         let t = crate::kdf::kdf(&z_input, message.len());
 
         // t 全零时重新选 k（空消息时跳过此检查）
-        if !t.is_empty() && t.iter().all(|&b| b == 0) {
-            continue;
+        // Reason: 使用常量时间全零检查，防止时序侧信道泄露 t 的内容
+        if !t.is_empty() {
+            let mut all_zero = 0u8;
+            for &b in &t {
+                all_zero |= b;
+            }
+            if all_zero == 0 {
+                continue;
+            }
         }
 
         // A5：C2 = M ⊕ t
@@ -913,8 +920,15 @@ pub fn decrypt(pri_key: &PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, Error
     let t = crate::kdf::kdf(&z_input, c2.len());
 
     // t 全零时解密失败（空消息时跳过此检查）
-    if !t.is_empty() && t.iter().all(|&b| b == 0) {
-        return Err(Error::DecryptFailed);
+    // Reason: 使用常量时间全零检查，防止时序侧信道泄露 t 的内容
+    if !t.is_empty() {
+        let mut all_zero = 0u8;
+        for &b in &t {
+            all_zero |= b;
+        }
+        if all_zero == 0 {
+            return Err(Error::DecryptFailed);
+        }
     }
 
     // 恢复候选明文 M' = C2 ⊕ t
@@ -996,8 +1010,15 @@ pub fn kem_encrypt<R: Rng>(
         let k_key = crate::kdf::kdf(&z_input, key_len);
 
         // K 全零时重新选 k
-        if k_key.iter().all(|&b| b == 0) {
-            continue;
+        // Reason: 使用常量时间全零检查，防止时序侧信道泄露 K 的内容
+        {
+            let mut all_zero = 0u8;
+            for &b in &k_key {
+                all_zero |= b;
+            }
+            if all_zero == 0 {
+                continue;
+            }
         }
 
         // 输出 C1（65 字节）作为封装密文
@@ -1056,8 +1077,15 @@ pub fn kem_decrypt(
     let k_key = crate::kdf::kdf(&z_input, key_len);
 
     // K 全零时解封失败
-    if k_key.iter().all(|&b| b == 0) {
-        return Err(Error::DecryptFailed);
+    // Reason: 使用常量时间全零检查，防止时序侧信道泄露 K 的内容
+    {
+        let mut all_zero = 0u8;
+        for &b in &k_key {
+            all_zero |= b;
+        }
+        if all_zero == 0 {
+            return Err(Error::DecryptFailed);
+        }
     }
 
     Ok(k_key)

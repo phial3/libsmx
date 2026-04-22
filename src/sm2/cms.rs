@@ -600,6 +600,7 @@ impl CmsSignerBuilder {
     }
 }
 
+#[cfg(feature = "std")]
 impl Default for CmsSignerBuilder {
     fn default() -> Self {
         Self::new()

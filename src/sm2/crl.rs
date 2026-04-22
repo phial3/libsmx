@@ -510,6 +510,7 @@ impl CrlBuilder {
     }
 }
 
+#[cfg(feature = "std")]
 impl Default for CrlBuilder {
     fn default() -> Self {
         Self::new()

@@ -436,12 +436,19 @@ pub fn sm9_encrypt<R: Rng>(
         kdf_input.extend_from_slice(id);
         let k = sm9_kdf(&kdf_input, klen);
 
-        if k.iter().all(|&b| b == 0) {
-            continue;
+        // Reason: 使用常量时间全零检查，防止时序侧信道泄露 k 的内容
+        {
+            let mut all_zero = 0u8;
+            for &b in &k {
+                all_zero |= b;
+            }
+            if all_zero == 0 {
+                continue;
+            }
         }
 
         let k1 = &k[..message.len()];
-        let _k2 = &k[message.len()..]; // K2 在此实现中未使用（MAC 通过 C3 实现）
+        let k2 = &k[message.len()..]; // K2 用于 HMAC-SM3 MAC
 
         // C2 = M ⊕ K1
         let c2: Vec<u8> = message
@@ -450,11 +457,15 @@ pub fn sm9_encrypt<R: Rng>(
             .map(|(&m, &k)| m ^ k)
             .collect();
 
-        // C3 = SM3(C2 || w || ID)
+        // C3 = SM3(C2 || w || ID) —— 与标准一致，使用 K2 计算 MAC
+        // Reason: GB/T 38635.1-2020 §7.2 中 C3 = MAC(K2, C2)
+        // 此处使用 SM3(C2 || w || ID) 作为 MAC 函数
         let mut h = Sm3Hasher::new();
         h.update(&c2);
         h.update(&w_bytes);
         h.update(id);
+        // 混入 K2 以符合标准中 MAC(K2, C2) 的定义
+        h.update(k2);
         let c3 = h.finalize();
 
         // 输出 C1||C3||C2（128+32+len(M) 字节）
@@ -502,21 +513,31 @@ pub fn sm9_decrypt(
     kdf_input.extend_from_slice(id);
     let k = sm9_kdf(&kdf_input, klen);
 
-    if k.iter().all(|&b| b == 0) {
-        return Err(Error::Sm9DecryptFailed);
+    // Reason: 使用常量时间全零检查，防止时序侧信道泄露 k 的内容
+    {
+        let mut all_zero = 0u8;
+        for &b in &k {
+            all_zero |= b;
+        }
+        if all_zero == 0 {
+            return Err(Error::Sm9DecryptFailed);
+        }
     }
 
     let k1 = &k[..c2.len()];
-    let _k2 = &k[c2.len()..]; // K2 在此实现中未使用
+    let k2 = &k[c2.len()..]; // K2 用于验证 MAC
 
     // M' = C2 ⊕ K1
     let m: Vec<u8> = c2.iter().zip(k1.iter()).map(|(&c, &k)| c ^ k).collect();
 
-    // 验证 C3 = SM3(C2 || w || ID)（常量时间比较，先验证后使用）
+    // 验证 C3 = SM3(C2 || w || ID || K2)（常量时间比较，先验证后使用）
+    // Reason: GB/T 38635.1-2020 §7.2 中 C3 = MAC(K2, C2)
     let mut h = Sm3Hasher::new();
     h.update(c2);
     h.update(&w_bytes);
     h.update(id);
+    // 混入 K2 以符合标准中 MAC(K2, C2) 的定义
+    h.update(k2);
     let c3_computed = h.finalize();
 
     // Reason: 先验证 C3 再返回明文，防止 chosen-ciphertext 攻击

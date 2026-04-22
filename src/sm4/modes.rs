@@ -55,13 +55,20 @@ use crate::error::Error;
 ///
 /// # 返回
 /// 密文字节向量
+///
+/// # Panics
+/// 当 `data` 长度不是 16 的倍数时 panic（无填充模式要求严格对齐）
 #[cfg(feature = "alloc")]
 pub fn sm4_encrypt_ecb(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
+    assert!(
+        data.len() % 16 == 0,
+        "sm4_encrypt_ecb: data length must be a multiple of 16"
+    );
     let sm4 = Sm4Key::new(key);
     data.chunks(16)
         .flat_map(|chunk| {
             let mut block = [0u8; 16];
-            block[..chunk.len()].copy_from_slice(chunk);
+            block.copy_from_slice(chunk);
             sm4.encrypt_block(&mut block);
             block
         })
@@ -69,13 +76,20 @@ pub fn sm4_encrypt_ecb(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
 }
 
 /// SM4-ECB 解密（无填充，`data` 必须为 16 字节整倍数）
+///
+/// # Panics
+/// 当 `data` 长度不是 16 的倍数时 panic（无填充模式要求严格对齐）
 #[cfg(feature = "alloc")]
 pub fn sm4_decrypt_ecb(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
+    assert!(
+        data.len() % 16 == 0,
+        "sm4_decrypt_ecb: data length must be a multiple of 16"
+    );
     let sm4 = Sm4Key::new(key);
     data.chunks(16)
         .flat_map(|chunk| {
             let mut block = [0u8; 16];
-            block[..chunk.len()].copy_from_slice(chunk);
+            block.copy_from_slice(chunk);
             sm4.decrypt_block(&mut block);
             block
         })
@@ -143,16 +157,22 @@ pub fn sm4_decrypt_ecb_pkcs7(key: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8
 // ── CBC ──────────────────────────────────────────────────────────────────────
 
 /// SM4-CBC 加密（`plaintext.len()` 须为 16 字节整倍数）
+///
+/// # Panics
+/// 当 `plaintext` 长度不是 16 的倍数时 panic（无填充模式要求严格对齐）
 #[cfg(feature = "alloc")]
 pub fn sm4_encrypt_cbc(key: &[u8; 16], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+    assert!(
+        plaintext.len() % 16 == 0,
+        "sm4_encrypt_cbc: plaintext length must be a multiple of 16"
+    );
     let sm4 = Sm4Key::new(key);
     let mut prev = *iv;
     plaintext
         .chunks(16)
         .flat_map(|chunk| {
             let mut block = [0u8; 16];
-            let len = chunk.len().min(16);
-            block[..len].copy_from_slice(&chunk[..len]);
+            block.copy_from_slice(chunk);
             for i in 0..16 {
                 block[i] ^= prev[i];
             }
@@ -164,15 +184,22 @@ pub fn sm4_encrypt_cbc(key: &[u8; 16], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u
 }
 
 /// SM4-CBC 解密（`ciphertext.len()` 须为 16 字节整倍数）
+///
+/// # Panics
+/// 当 `ciphertext` 长度不是 16 的倍数时 panic（无填充模式要求严格对齐）
 #[cfg(feature = "alloc")]
 pub fn sm4_decrypt_cbc(key: &[u8; 16], iv: &[u8; 16], ciphertext: &[u8]) -> Vec<u8> {
+    assert!(
+        ciphertext.len() % 16 == 0,
+        "sm4_decrypt_cbc: ciphertext length must be a multiple of 16"
+    );
     let sm4 = Sm4Key::new(key);
     let mut prev = *iv;
     ciphertext
         .chunks(16)
         .flat_map(|chunk| {
             let mut block = [0u8; 16];
-            block[..chunk.len()].copy_from_slice(chunk);
+            block.copy_from_slice(chunk);
             let ct = block;
             sm4.decrypt_block(&mut block);
             for i in 0..16 {
