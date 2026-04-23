@@ -36,19 +36,20 @@
 #![cfg(feature = "alloc")]
 
 use crate::error::Error;
-use crate::sm2::{sign, verify, PrivateKey, PublicKey};
+use crate::sm2::{verify, PublicKey};
+#[cfg(feature = "std")]
+use crate::sm2::{sign, PrivateKey};
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use x509_cert::crl::{CertificateList, RevokedCert, TbsCertList};
+use x509_cert::crl::{CertificateList, RevokedCert};
 use x509_cert::der::pem::{decode_vec, LineEnding};
 use x509_cert::der::{Decode, Encode, EncodePem};
 use x509_cert::ext::Extension;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::time::Time;
-use x509_cert::AlgorithmIdentifier;
 
 /// 被撤销的证书条目
 ///
@@ -470,13 +471,13 @@ impl CrlBuilder {
             Some(revoked)
         };
 
-        let signature_algorithm = AlgorithmIdentifier {
+        let signature_algorithm = x509_cert::AlgorithmIdentifier {
             oid: crate::sm2::SM2_SIGNATURE_OID,
             parameters: None,
         };
 
         // 构建 TBSCertList
-        let tbs_cert_list = TbsCertList {
+        let tbs_cert_list = x509_cert::crl::TbsCertList {
             version: x509_cert::certificate::Version::V2,
             signature: signature_algorithm.clone(),
             issuer,
@@ -531,6 +532,7 @@ impl Default for CrlBuilder {
 /// # 返回
 /// - `Some(Extensions)`: 构建的扩展列表
 /// - `None`: 无扩展
+#[cfg(feature = "std")]
 fn build_crl_entry_extensions(
     reason_code: Option<u8>,
     invalidity_date: Option<&Time>,
